@@ -1,0 +1,30 @@
+"""Tests for schematic PDF vision prompts (temp3.py)."""
+
+from ee_wiki.ingestion.parsers.schematic_pdf.prompt import (
+    SCHEMATIC_SYSTEM_PROMPT,
+    build_schematic_page_prompt,
+    schematic_image_slug,
+)
+
+
+def test_schematic_image_slug() -> None:
+    assert schematic_image_slug("Explorer STM32F4_V2.2_SCH") == "explorer_stm32f4_v2_2_sch"
+
+
+def test_build_schematic_page_prompt_includes_ocr_and_project() -> None:
+    prompt = build_schematic_page_prompt(
+        page=2,
+        project_id="logan_p1",
+        raw_ocr_text="U1 LAN8720 VCC_3V3",
+        slice_filenames=["explorer_p2_crop_0.png"],
+    )
+    assert "Page 2" in prompt
+    assert "logan_p1" in prompt
+    assert "U1 LAN8720" in prompt
+    assert "explorer_p2_crop_0.png" in prompt
+    assert "PDF 原始提取文本" in prompt
+
+
+def test_system_prompt_fa_expert() -> None:
+    assert "失效分析" in SCHEMATIC_SYSTEM_PROMPT
+    assert "Markdown" in SCHEMATIC_SYSTEM_PROMPT

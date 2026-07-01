@@ -185,5 +185,6 @@ When `retrieval.scope_inheritance` is true (default), a query for `{project}/{bu
 
 ## Related Documents
 
+- [docs/usage/ingest.md](../usage/ingest.md) — operator guide for `scripts/ingest.py`
 - [AGENTS.md](../../AGENTS.md) — rules for AI assistants working in this repo
 - [README.md](../../README.md) — vision, principles, and roadmap

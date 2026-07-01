@@ -8,6 +8,7 @@
 | Document | Purpose |
 |----------|---------|
 | [AGENTS.md](AGENTS.md) | Rules and boundaries for AI coding assistants |
+| [docs/usage/ingest.md](docs/usage/ingest.md) | **How to run `scripts/ingest.py`** (raw → processed) |
 | [docs/architecture/repository-structure.md](docs/architecture/repository-structure.md) | Canonical directory layout and module boundaries |
 | [docs/architecture/data-flow.md](docs/architecture/data-flow.md) | Ingestion and query pipelines |
 | [docs/architecture/api-overview.md](docs/architecture/api-overview.md) | Planned REST surface for Open WebUI |

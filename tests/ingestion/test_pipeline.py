@@ -55,5 +55,21 @@ def test_ingest_path_directory(ingest_config: AppConfig, repo_root: Path) -> Non
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"# {name}\n", encoding="utf-8")
 
-    results = ingest_path(ingest_config.raw_dir / "logan", ingest_config)
-    assert len(results) == 2
+    run = ingest_path(ingest_config.raw_dir / "logan", ingest_config)
+    assert len(run.ingested) == 2
+    assert len(run.skipped) == 0
+
+
+def test_ingest_path_skips_unchanged(ingest_config: AppConfig) -> None:
+    raw_path = ingest_config.raw_dir / "logan/p1/note/a.md"
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_text("# a\n", encoding="utf-8")
+
+    first = ingest_path(ingest_config.raw_dir, ingest_config)
+    assert len(first.ingested) == 1
+    assert len(first.skipped) == 0
+
+    second = ingest_path(ingest_config.raw_dir, ingest_config)
+    assert len(second.ingested) == 0
+    assert len(second.skipped) == 1
+    assert len(second.removed) == 0

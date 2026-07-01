@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ee_wiki.common.config import AppConfig, load_config
 from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
+from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import StandardDocument
+from ee_wiki.ingestion.cleanup import RemovedProcessed, cleanup_orphaned_processed
 from ee_wiki.ingestion.parsers.markdown import MARKDOWN_SUFFIXES, parse_markdown
+from ee_wiki.ingestion.parsers.schematic_pdf import PDF_SUFFIXES, parse_schematic_pdf
+from ee_wiki.ingestion.path_metadata import parse_path_metadata
+from ee_wiki.ingestion.sync import (
+    collect_raw_files,
+    expected_content_extension,
+    needs_ingest,
+)
 from ee_wiki.knowledge.store.processed import ProcessedPaths, write_processed_document
 
 logger = get_logger(__name__)
@@ -28,6 +37,15 @@ class IngestResult:
     raw_path: Path
     document: StandardDocument
     processed: ProcessedPaths
+
+
+@dataclass(frozen=True)
+class IngestRunResult:
+    """Batch ingest outcome."""
+
+    ingested: list[IngestResult] = field(default_factory=list)
+    skipped: list[Path] = field(default_factory=list)
+    removed: list[RemovedProcessed] = field(default_factory=list)
 
 
 def ingest_file(
@@ -55,67 +73,104 @@ def ingest_file(
         raise IngestionError(f"Hidden files are skipped: {path}")
 
     suffix = path.suffix.lower()
-    if suffix in MARKDOWN_SUFFIXES:
-        document = parse_markdown(path, layout, repo_root=config.repo_root)
-    elif suffix in TEXT_SUFFIXES:
-        document = parse_markdown(path, layout, repo_root=config.repo_root)
-    else:
-        raise IngestionError(f"Unsupported file type for V1 ingest: {path.suffix} ({path.name})")
+    try:
+        relative = path.relative_to(layout.raw_dir)
+        logger.info("Ingesting: %s", relative)
+        if suffix in MARKDOWN_SUFFIXES:
+            document = parse_markdown(path, layout, repo_root=config.repo_root)
+        elif suffix in TEXT_SUFFIXES:
+            document = parse_markdown(path, layout, repo_root=config.repo_root)
+        elif suffix in PDF_SUFFIXES:
+            metadata = parse_path_metadata(path, layout, repo_root=config.repo_root)
+            if metadata.document_type == SCHEMATIC_DOCUMENT_TYPE:
+                document = parse_schematic_pdf(
+                    path,
+                    layout,
+                    config,
+                    repo_root=config.repo_root,
+                )
+            else:
+                raise IngestionError(
+                    f"PDF ingest is supported for sch/ only in V1: {path.name}"
+                )
+        else:
+            raise IngestionError(
+                f"Unsupported file type for V1 ingest: {path.suffix} ({path.name})"
+            )
+    except EEWikiError as exc:
+        raise IngestionError(f"Failed to ingest {path.name}: {exc}") from exc
 
     processed = write_processed_document(
         document,
         path,
         layout,
         repo_root=config.repo_root,
+        content_extension=expected_content_extension(path, layout),
     )
     return IngestResult(raw_path=path, document=document, processed=processed)
 
 
 def ingest_path(
-    target: Path,
+    target: Path | None = None,
     config: AppConfig | None = None,
-) -> list[IngestResult]:
-    """Ingest a single file or all supported files under a directory.
+    *,
+    force: bool = False,
+) -> IngestRunResult:
+    """Ingest new or changed files under ``data/raw/``.
+
+    When ``target`` is omitted, walks the configured ``raw_dir``. Files whose
+    ``source_mtime`` and ``source_size`` match the existing sidecar are skipped.
 
     Args:
-        target: File or directory path. Directories are walked recursively.
+        target: Optional file or directory under ``data/raw/``. Defaults to ``raw_dir``.
         config: Optional pre-loaded config; loaded from repo when omitted.
+        force: Re-ingest all files even when fingerprints match.
 
     Returns:
-        List of ingest results in walk order.
+        Ingest and skip lists for the run.
 
     Raises:
-        IngestionError: If the target does not exist or no files were ingested.
+        IngestionError: If the target path does not exist.
     """
     app_config = config or load_config()
-    path = target.resolve()
+    path = (target or app_config.raw_dir).resolve()
+    layout = app_config.data_layout
 
     if not path.exists():
         raise IngestionError(f"Path does not exist: {path}")
 
-    files: list[Path]
     if path.is_file():
         files = [path]
+        run_cleanup = False
     else:
-        files = sorted(
-            candidate
-            for candidate in path.rglob("*")
-            if candidate.is_file()
-            and not candidate.name.startswith(".")
-            and candidate.suffix.lower() in (MARKDOWN_SUFFIXES | TEXT_SUFFIXES)
-        )
+        files = collect_raw_files(path, layout)
+        run_cleanup = True
+
+    removed = (
+        cleanup_orphaned_processed(layout, raw_scope=path)
+        if run_cleanup
+        else []
+    )
 
     if not files:
-        raise IngestionError(f"No ingestible files found under: {path}")
+        logger.info("No ingestible files found under: %s", path)
+        return IngestRunResult(removed=removed)
 
-    results: list[IngestResult] = []
+    ingested: list[IngestResult] = []
+    skipped: list[Path] = []
+
     for file_path in files:
-        try:
-            results.append(ingest_file(file_path, app_config))
-        except IngestionError:
-            raise
-        except EEWikiError as exc:
-            raise IngestionError(f"Failed to ingest {file_path}: {exc}") from exc
+        if not needs_ingest(file_path, layout, force=force):
+            skipped.append(file_path)
+            logger.info("Skipped unchanged: %s", file_path.relative_to(layout.raw_dir))
+            continue
+        ingested.append(ingest_file(file_path, app_config))
 
-    logger.info("Ingested %d file(s) from %s", len(results), path)
-    return results
+    logger.info(
+        "Ingest complete: %d ingested, %d skipped, %d removed under %s",
+        len(ingested),
+        len(skipped),
+        len(removed),
+        path,
+    )
+    return IngestRunResult(ingested=ingested, skipped=skipped, removed=removed)

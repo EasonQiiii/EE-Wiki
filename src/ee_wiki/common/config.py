@@ -10,7 +10,7 @@ import yaml
 
 from ee_wiki.common.errors import ConfigError
 from ee_wiki.common.logging import get_logger
-from ee_wiki.common.types import DataLayoutConfig
+from ee_wiki.common.types import DataLayoutConfig, ModelsConfig
 
 logger = get_logger(__name__)
 
@@ -35,6 +35,33 @@ def find_repo_root(start: Path | None = None) -> Path:
 
 
 @dataclass(frozen=True)
+class SchematicPdfConfig:
+    """Settings for schematic PDF vision parsing."""
+
+    dpi: int = 200
+    max_pages: int | None = None
+    layout_zoom: float = 2.0
+    min_figure_area: int = 10_000
+    ocr_text_max_chars: int = 1200
+    max_new_tokens: int = 4096
+    temperature: float = 0.1
+    do_sample: bool = True
+    images_rel_prefix: str = "images"
+
+
+@dataclass(frozen=True)
+class RetrievalConfig:
+    """Hybrid retrieval hyperparameters."""
+
+    top_k_embed: int
+    top_k_bm25: int
+    top_k_final: int
+    scope_inheritance: bool
+    top_k_dense: int
+    top_k_sparse: int
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Loaded application configuration."""
 
@@ -43,14 +70,27 @@ class AppConfig:
     processed_dir: Path
     indexes_dir: Path
     graph_dir: Path
-    models_dir: Path
-    scope_inheritance: bool
+    models: ModelsConfig
+    schematic_pdf: SchematicPdfConfig
+    retrieval: RetrievalConfig
     data_layout: DataLayoutConfig
+
+    @property
+    def models_dir(self) -> Path:
+        return self.models.base_dir
 
 
 def _resolve_path(repo_root: Path, value: str) -> Path:
     path = Path(value)
     return path if path.is_absolute() else (repo_root / path).resolve()
+
+
+def _models_base_dir(repo_root: Path, models: dict) -> Path:
+    override = os.environ.get("EE_WIKI_MODELS_DIR")
+    if override:
+        path = Path(override)
+        return path if path.is_absolute() else (repo_root / path).resolve()
+    return _resolve_path(repo_root, models.get("base_dir", "models"))
 
 
 def _data_root(repo_root: Path) -> Path:
@@ -60,6 +100,19 @@ def _data_root(repo_root: Path) -> Path:
         path = Path(override)
         return path if path.is_absolute() else (repo_root / path).resolve()
     return (repo_root / "data").resolve()
+
+
+def _load_models_config(repo_root: Path, models: dict) -> ModelsConfig:
+    base_dir = _models_base_dir(repo_root, models)
+    cfg = ModelsConfig(
+        base_dir=base_dir,
+        layout_model=ModelsConfig(base_dir=base_dir).resolve(models.get("layout_model")),
+        visual_model=ModelsConfig(base_dir=base_dir).resolve(models.get("visual_model")),
+        embedding_model=ModelsConfig(base_dir=base_dir).resolve(models.get("embedding_model")),
+        reranker_model=ModelsConfig(base_dir=base_dir).resolve(models.get("reranker_model")),
+        llm_model=ModelsConfig(base_dir=base_dir).resolve(models.get("llm_model")),
+    )
+    return cfg
 
 
 def load_config(
@@ -94,8 +147,10 @@ def load_config(
 
     data = raw.get("data", {})
     retrieval = raw.get("retrieval", {})
+    ingestion = raw.get("ingestion", {})
     data_layout = raw.get("data_layout", {})
     models = raw.get("models", {})
+    schematic = ingestion.get("schematic_pdf", {})
 
     document_type_folders = data_layout.get("document_type_folders", {})
     if not isinstance(document_type_folders, dict) or not document_type_folders:
@@ -121,9 +176,29 @@ def load_config(
         processed_dir=processed_dir,
         indexes_dir=indexes_dir,
         graph_dir=graph_dir,
-        models_dir=_resolve_path(root, models.get("base_dir", "models")),
-        scope_inheritance=bool(retrieval.get("scope_inheritance", True)),
+        models=_load_models_config(root, models),
+        schematic_pdf=SchematicPdfConfig(
+            dpi=int(schematic.get("dpi", 200)),
+            max_pages=schematic.get("max_pages"),
+            layout_zoom=float(schematic.get("layout_zoom", 2.0)),
+            min_figure_area=int(schematic.get("min_figure_area", 10_000)),
+            ocr_text_max_chars=int(schematic.get("ocr_text_max_chars", 1200)),
+            max_new_tokens=int(schematic.get("max_new_tokens", 4096)),
+            temperature=float(schematic.get("temperature", 0.1)),
+            do_sample=bool(schematic.get("do_sample", True)),
+            images_rel_prefix=str(schematic.get("images_rel_prefix", "images")),
+        ),
+        retrieval=RetrievalConfig(
+            top_k_embed=int(retrieval.get("top_k_embed", 20)),
+            top_k_bm25=int(retrieval.get("top_k_bm25", 20)),
+            top_k_final=int(retrieval.get("top_k_final", 8)),
+            scope_inheritance=bool(retrieval.get("scope_inheritance", True)),
+            top_k_dense=int(retrieval.get("top_k_dense", 4)),
+            top_k_sparse=int(retrieval.get("top_k_sparse", 4)),
+        ),
         data_layout=layout,
     )
     logger.debug("Loaded config from %s (raw_dir=%s)", path, config.raw_dir)
     return config
+
+

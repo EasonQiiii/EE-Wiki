@@ -13,6 +13,17 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.8",
 ]
+ml = [
+    "torch>=2.2",
+    "transformers>=4.57",
+    "sentence-transformers>=3.0",
+    "rank-bm25>=0.2",
+    "jieba>=0.42",
+    "pymupdf>=1.24",
+    "pillow>=10.0",
+    "accelerate>=0.30",
+    "numpy>=1.26",
+]
 
 [build-system]
 requires = ["hatchling"]

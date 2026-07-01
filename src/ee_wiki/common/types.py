@@ -16,6 +16,8 @@ class Metadata:
     title: str
     source_file: str
     target_file: str = ""
+    source_mtime: float = 0.0
+    source_size: int = 0
     page: int = 0
     major_components: list[str] | None = None
     nets: list[str] | None = None
@@ -71,3 +73,23 @@ class DataLayoutConfig:
     document_type_folders: dict[str, str]
     raw_dir: Path
     processed_dir: Path
+
+
+@dataclass(frozen=True)
+class ModelsConfig:
+    """Local model paths for offline ingestion and retrieval."""
+
+    base_dir: Path
+    layout_model: Path | None = None
+    visual_model: Path | None = None
+    embedding_model: Path | None = None
+    reranker_model: Path | None = None
+    llm_model: Path | None = None
+
+    def resolve(self, name: str | None) -> Path | None:
+        if not name:
+            return None
+        path = Path(name)
+        if path.is_absolute():
+            return path
+        return (self.base_dir / path).resolve()
