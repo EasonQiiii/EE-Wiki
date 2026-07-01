@@ -7,15 +7,17 @@
 
 # Vision
 
-BYDEE101 is **not another RAG demo**.
+EE-Wiki is **not another RAG demo**.
 
 It is designed to become an **AI-native Electronic Engineering Wiki**, providing a unified knowledge platform for hardware engineers, FA engineers, PCB designers, system architects and manufacturing engineers.
 
 The long-term goal is to become an engineering operating system capable of understanding engineering documents, reasoning over schematic relationships, retrieving enterprise knowledge and collaborating with modern AI assistants such as Open WebUI.
 
-Instead of simply searching documents, BYDEE101 should gradually evolve into an Engineering Knowledge Platform.
+Instead of simply searching documents, EE-Wiki should gradually evolve into an Engineering Knowledge Platform.
 
 ---
+
+
 
 # Project Goals
 
@@ -42,6 +44,8 @@ It should become the company's engineering knowledge brain.
 
 ---
 
+
+
 # Design Philosophy
 
 The project follows several core principles.
@@ -65,6 +69,8 @@ AI should implement details.
 
 ---
 
+
+
 ## Offline First
 
 The system must work completely offline.
@@ -76,6 +82,8 @@ All models are local.
 All documents remain inside enterprise infrastructure.
 
 ---
+
+
 
 ## Knowledge First
 
@@ -98,6 +106,8 @@ The LLM is only responsible for reasoning and natural language generation.
 
 ---
 
+
+
 ## Modular Architecture
 
 Every module has exactly one responsibility.
@@ -113,6 +123,8 @@ Knowledge should never depend on UI.
 Everything should be replaceable.
 
 ---
+
+
 
 # Overall Architecture
 
@@ -138,9 +150,11 @@ Everything should be replaceable.
 
 Open WebUI is only the frontend.
 
-BYDEE101 is the backend.
+EE-Wiki is the backend.
 
 ---
+
+
 
 # Core Modules
 
@@ -164,6 +178,8 @@ Standard Markdown + Metadata
 
 ---
 
+
+
 ## Knowledge Base
 
 Stores
@@ -179,6 +195,8 @@ Knowledge is the core asset.
 Everything else can be regenerated.
 
 ---
+
+
 
 ## Hybrid Retrieval
 
@@ -210,13 +228,15 @@ This architecture allows both semantic retrieval and exact component lookup.
 
 ---
 
+
+
 ## Generator
 
 The generator only receives:
 
 Question
 
-+
+- 
 
 Retrieved Context
 
@@ -234,6 +254,8 @@ Examples:
 - Explain
 
 ---
+
+
 
 ## Knowledge Graph
 
@@ -257,6 +279,8 @@ Battery
 This enables graph reasoning beyond traditional RAG.
 
 ---
+
+
 
 # Supported Knowledge Types
 
@@ -298,6 +322,8 @@ Every document should eventually share the same metadata schema.
 
 ---
 
+
+
 # Metadata Standard
 
 Every document should include standardized metadata.
@@ -323,6 +349,8 @@ Example:
 Metadata is the foundation of enterprise retrieval.
 
 ---
+
+
 
 # Engineering Knowledge Hierarchy
 
@@ -364,9 +392,11 @@ Every retrieval should understand these relationships.
 
 ---
 
+
+
 # Open WebUI Integration
 
-BYDEE101 is designed as a backend service.
+EE-Wiki is designed as a backend service.
 
 Open WebUI is responsible for:
 
@@ -377,7 +407,7 @@ Open WebUI is responsible for:
 - Tool Calling
 - MCP
 
-BYDEE101 is responsible for:
+EE-Wiki is responsible for:
 
 - Knowledge
 - Retrieval
@@ -389,6 +419,8 @@ BYDEE101 is responsible for:
 The two systems communicate through standard REST APIs (and later MCP).
 
 ---
+
+
 
 # Future MCP Integration
 
@@ -408,6 +440,8 @@ Future tools may include:
 LLMs should call tools rather than relying only on prompts.
 
 ---
+
+
 
 # Development Principles
 
@@ -435,6 +469,8 @@ Everything should be reusable.
 
 ---
 
+
+
 # Coding Standards
 
 Prefer readability over cleverness.
@@ -457,6 +493,8 @@ Every public function must include:
 - error handling
 
 ---
+
+
 
 # Long-term Roadmap
 
@@ -499,6 +537,8 @@ Enterprise Engineering Operating System
 
 ---
 
+
+
 # What This Project Is NOT
 
 This is NOT:
@@ -511,6 +551,8 @@ This is NOT:
 This project aims to become an AI-native engineering knowledge platform for modern hardware organizations.
 
 ---
+
+
 
 # Final Mission
 
@@ -535,4 +577,4 @@ And the system should understand:
 
 before producing an answer.
 
-That is the ultimate vision of BYDEE101.
+That is the ultimate vision of EE-Wiki.
