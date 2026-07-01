@@ -71,10 +71,9 @@ def test_parse_schematic_pdf_logs_page_progress(
         "ee_wiki.ingestion.parsers.schematic_pdf.build_vision_engine",
         lambda *_args, **_kwargs: mock_vision,
     )
-    monkeypatch.setattr(
-        "ee_wiki.ingestion.parsers.schematic_pdf.fitz.open",
-        lambda *_args, **_kwargs: MagicMock(page_count=2, close=MagicMock()),
-    )
+    mock_fitz = MagicMock()
+    mock_fitz.open.return_value = MagicMock(page_count=2, close=MagicMock())
+    monkeypatch.setattr("ee_wiki.ingestion.parsers.schematic_pdf.fitz", mock_fitz)
 
     with caplog.at_level("INFO"):
         parse_schematic_pdf(raw_path, schematic_config.data_layout, schematic_config)

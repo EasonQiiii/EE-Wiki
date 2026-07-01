@@ -78,10 +78,9 @@ def test_schematic_pdf_ingest_with_mock_engine(ingest_config: AppConfig, monkeyp
         "ee_wiki.ingestion.parsers.schematic_pdf.build_vision_engine",
         lambda *_args, **_kwargs: mock_vision,
     )
-    monkeypatch.setattr(
-        "ee_wiki.ingestion.parsers.schematic_pdf.fitz.open",
-        lambda *_args, **_kwargs: MagicMock(page_count=1, close=MagicMock()),
-    )
+    mock_fitz = MagicMock()
+    mock_fitz.open.return_value = MagicMock(page_count=1, close=MagicMock())
+    monkeypatch.setattr("ee_wiki.ingestion.parsers.schematic_pdf.fitz", mock_fitz)
 
     result = ingest_file(raw_path, ingest_config)
     assert result.processed.content_path.suffix == ".md"
