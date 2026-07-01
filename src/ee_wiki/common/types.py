@@ -1,0 +1,72 @@
+"""Core data types shared across EE-Wiki modules."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Metadata:
+    """Document metadata derived from path and ingestion."""
+
+    project: str
+    build: str
+    document_type: str
+    title: str
+    source_file: str
+    page: int = 0
+    major_components: list[str] = field(default_factory=list)
+    nets: list[str] = field(default_factory=list)
+    interfaces: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+    version: str = ""
+
+
+@dataclass(frozen=True)
+class StandardDocument:
+    """Normalized parser output before persistence."""
+
+    content: str
+    metadata: Metadata
+    source_ref: str
+
+
+@dataclass(frozen=True)
+class Citation:
+    """Provenance for a retrieved context block."""
+
+    source_file: str
+    chunk_id: str
+    page: int = 0
+    excerpt: str = ""
+
+
+@dataclass(frozen=True)
+class Chunk:
+    """Indexed document segment used in retrieval."""
+
+    chunk_id: str
+    content: str
+    metadata: Metadata
+    citation: Citation
+
+
+@dataclass(frozen=True)
+class MetadataFilter:
+    """Pre-retrieval constraints for project, build, and document type."""
+
+    project: str | None = None
+    build: str | None = None
+    document_type: str | None = None
+
+
+@dataclass(frozen=True)
+class DataLayoutConfig:
+    """Path segment naming for raw data layout."""
+
+    enterprise_project: str
+    project_shared_build: str
+    document_type_folders: dict[str, str]
+    raw_dir: Path
+    processed_dir: Path

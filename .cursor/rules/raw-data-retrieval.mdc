@@ -1,0 +1,34 @@
+---
+description: EE-Wiki raw data layout, metadata from paths, scope inheritance
+alwaysApply: true
+---
+
+# Raw Data & Retrieval Scope (AGENTS.md §4)
+
+Raw path layout: `data/raw/{project}/{build}/{type}/<file>`
+
+| Segment | Path | Meaning |
+|---------|------|---------|
+| `global` | `data/raw/global/` | Enterprise shared (`project=global`, `build=global`) |
+| `common` | `data/raw/{project}/common/` | All builds in that project |
+| `{build}` | e.g. `p1` | Specific hardware build |
+
+Folders `note`, `sch`, `sop`, `datasheet` → `document_type` via `config/default.yaml` → `data_layout.document_type_folders`.
+
+## Ingestion
+
+- Derive `project`, `build`, `document_type` from path — never hardcode project names in `src/`.
+- Write to `data/processed/` mirroring `data/raw/` (`.md` + optional `.meta.json`).
+- Use metadata field `build`, never `board`.
+
+## Retrieval
+
+- Honor `retrieval.scope_inheritance` (default `true`).
+- Filter `project=X, build=Y` → also search `X/common/` and `global/`.
+- Rank: build-specific > `common` > `global`.
+
+## V1 formats
+
+PDF, Markdown, TXT, Excel only. Skip `.key` / `.numbers` with a clear log until parsers exist.
+
+Full detail: [AGENTS.md](../../AGENTS.md) §4, [README.md](../../README.md#raw-data-layout).

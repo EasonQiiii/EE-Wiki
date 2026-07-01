@@ -3,6 +3,15 @@
 > AI-Native Electronic Engineering Knowledge Platform  
 > Enterprise-grade Offline Engineering Wiki for Hardware Engineers
 
+**Status:** V0 — architecture and scaffolding (see [Long-term Roadmap](#long-term-roadmap))
+
+| Document | Purpose |
+|----------|---------|
+| [AGENTS.md](AGENTS.md) | Rules and boundaries for AI coding assistants |
+| [docs/architecture/repository-structure.md](docs/architecture/repository-structure.md) | Canonical directory layout and module boundaries |
+| [docs/architecture/data-flow.md](docs/architecture/data-flow.md) | Ingestion and query pipelines |
+| [docs/architecture/api-overview.md](docs/architecture/api-overview.md) | Planned REST surface for Open WebUI |
+
 ---
 
 # Vision
@@ -322,7 +331,72 @@ Every document should eventually share the same metadata schema.
 
 ---
 
+# Raw Data Layout
 
+Raw documents live under `data/raw/` (gitignored). Paths encode metadata — no manual tagging required for project, build, or document type.
+
+## Directory Convention
+
+```
+data/raw/
+├── global/                         # enterprise-wide shared (all projects)
+│   ├── note/ sch/ sop/ datasheet/
+├── {project}/                      # e.g. logan, elias, ruby
+│   ├── common/                     # shared across all builds in this project
+│   │   └── note/ sch/ sop/
+│   └── {build}/                    # e.g. p1, p2
+│       └── note/ sch/ sop/
+└── ...
+```
+
+| Path segment | Meaning |
+|--------------|---------|
+| `global` | Enterprise-wide library — datasheets, SOPs, and notes used by every project |
+| `{project}` | A product line or program (e.g. `logan`) |
+| `common` | Documents shared by all builds within one project |
+| `{build}` | A specific hardware build or revision (e.g. `p1`, `p2`) |
+| `note` / `sch` / `sop` / `datasheet` | Document category folder |
+
+Example:
+
+```
+data/raw/logan/p1/sch/power-tree.pdf
+```
+
+Supported raw formats (V1 priority): PDF, Markdown, TXT, Excel. Keynote (`.key`) and Numbers (`.numbers`) should be exported to PDF before ingest until dedicated parsers exist.
+
+## Processed Mirror
+
+After ingestion, `data/processed/` **mirrors the same path tree** as `data/raw/`:
+
+```
+data/raw/logan/p1/sch/power-tree.pdf
+    →  data/processed/logan/p1/sch/power-tree.md   (+ sidecar metadata JSON)
+```
+
+Indexes under `data/indexes/` are flat or sharded by implementation; they reference metadata, not the folder tree.
+
+## Path → Metadata
+
+Ingestion derives metadata from the path relative to `data/raw/`:
+
+| Path | `project` | `build` | `document_type` |
+|------|-----------|---------|-----------------|
+| `global/datasheet/tps62840.pdf` | `global` | `global` | `datasheet` |
+| `logan/common/sop/bringup.md` | `logan` | `common` | `sop` |
+| `logan/p1/sch/main.pdf` | `logan` | `p1` | `schematic` |
+| `logan/p1/note/debug-log.txt` | `logan` | `p1` | `engineering_note` |
+
+Folder → `document_type` mapping:
+
+| Folder | `document_type` |
+|--------|-----------------|
+| `note` | `engineering_note` |
+| `sch` | `schematic` |
+| `sop` | `sop` |
+| `datasheet` | `datasheet` |
+
+---
 
 # Metadata Standard
 
@@ -332,9 +406,9 @@ Example:
 
 ```json
 {
-  "project": "",
-  "board": "",
-  "document_type": "",
+  "project": "logan",
+  "build": "p1",
+  "document_type": "schematic",
   "page": 0,
   "title": "",
   "major_components": [],
@@ -342,7 +416,7 @@ Example:
   "interfaces": [],
   "keywords": [],
   "version": "",
-  "source_file": ""
+  "source_file": "data/raw/logan/p1/sch/power-tree.pdf"
 }
 ```
 
@@ -350,7 +424,29 @@ Metadata is the foundation of enterprise retrieval.
 
 ---
 
+# Retrieval Scope
 
+When querying a specific project and build, retrieval **inherits upward** through shared libraries:
+
+```
+Query: project=logan, build=p1
+
+Search scope (in priority order):
+  1. logan / p1          ← build-specific
+  2. logan / common      ← project-wide shared
+  3. global / global     ← enterprise-wide shared
+```
+
+Rules:
+
+- Build-specific documents rank highest; `common` and `global` provide fallback context.
+- Querying `project=logan, build=common` searches `logan/common` + `global` only.
+- Querying `project=global` searches the enterprise library only.
+- Scope inheritance is on by default (`config/default.yaml` → `retrieval.scope_inheritance`).
+
+This ensures a question about `logan/p1` still finds datasheets in `global/datasheet/` and SOPs in `logan/common/sop/`.
+
+---
 
 # Engineering Knowledge Hierarchy
 
@@ -365,7 +461,7 @@ Project
 
     ↓
 
-Board
+Build
 
     ↓
 

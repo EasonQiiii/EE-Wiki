@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ee-wiki.local/schema/metadata.json",
+  "title": "EE-Wiki Document Metadata",
+  "type": "object",
+  "required": ["document_type", "title", "source_file"],
+  "properties": {
+    "project": { "type": "string" },
+    "build": { "type": "string" },
+    "document_type": { "type": "string" },
+    "page": { "type": "integer", "minimum": 0 },
+    "title": { "type": "string", "minLength": 1 },
+    "major_components": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "nets": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "interfaces": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "keywords": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "version": { "type": "string" },
+    "source_file": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": true
+}
