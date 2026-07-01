@@ -10,24 +10,28 @@
     "document_type": { "type": "string" },
     "page": { "type": "integer", "minimum": 0 },
     "title": { "type": "string", "minLength": 1 },
+    "source_file": { "type": "string", "minLength": 1 },
+    "target_file": { "type": "string", "minLength": 1 },
     "major_components": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string" },
+      "description": "Schematic documents only (sch/)"
     },
     "nets": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string" },
+      "description": "Schematic documents only (sch/)"
     },
     "interfaces": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string" },
+      "description": "Schematic documents only (sch/)"
     },
     "keywords": {
       "type": "array",
       "items": { "type": "string" }
     },
-    "version": { "type": "string" },
-    "source_file": { "type": "string", "minLength": 1 }
+    "version": { "type": "string" }
   },
   "additionalProperties": true
 }

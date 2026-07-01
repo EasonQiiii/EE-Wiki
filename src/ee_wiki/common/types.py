@@ -15,10 +15,11 @@ class Metadata:
     document_type: str
     title: str
     source_file: str
+    target_file: str = ""
     page: int = 0
-    major_components: list[str] = field(default_factory=list)
-    nets: list[str] = field(default_factory=list)
-    interfaces: list[str] = field(default_factory=list)
+    major_components: list[str] | None = None
+    nets: list[str] | None = None
+    interfaces: list[str] | None = None
     keywords: list[str] = field(default_factory=list)
     version: str = ""
 

@@ -34,7 +34,7 @@ def test_write_processed_mirror(layout_with_tmp_dirs, repo_root: Path) -> None:
     raw_path.write_text("# Title\n\nBody\n", encoding="utf-8")
 
     document = parse_markdown(raw_path, layout, repo_root=repo_root)
-    paths = write_processed_document(document, raw_path, layout)
+    paths = write_processed_document(document, raw_path, layout, repo_root=repo_root)
 
     assert paths.content_path == layout.processed_dir / "logan/p1/note/sample.md"
     assert paths.metadata_path == layout.processed_dir / "logan/p1/note/sample.md.meta.json"
@@ -44,6 +44,10 @@ def test_write_processed_mirror(layout_with_tmp_dirs, repo_root: Path) -> None:
     assert meta["project"] == "logan"
     assert meta["build"] == "p1"
     assert meta["document_type"] == "engineering_note"
+    assert meta["target_file"] == "data/processed/logan/p1/note/sample.md"
+    assert "major_components" not in meta
+    assert "nets" not in meta
+    assert "interfaces" not in meta
 
 
 def test_write_processed_preserves_metadata_fields(layout_with_tmp_dirs) -> None:
@@ -64,3 +68,4 @@ def test_write_processed_preserves_metadata_fields(layout_with_tmp_dirs) -> None
     paths = write_processed_document(document, raw_path, layout)
     meta = json.loads(paths.metadata_path.read_text(encoding="utf-8"))
     assert meta["keywords"] == ["test"]
+    assert meta["target_file"] == "data/processed/logan/p1/note/sample.md"

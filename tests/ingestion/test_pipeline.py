@@ -37,6 +37,8 @@ def test_ingest_file_end_to_end(ingest_config: AppConfig, repo_root: Path) -> No
     assert result.processed.metadata_path.exists()
     meta = json.loads(result.processed.metadata_path.read_text(encoding="utf-8"))
     assert meta["title"] == "sample"
+    assert "target_file" in meta
+    assert "major_components" not in meta
 
 
 def test_ingest_path_rejects_unsupported_suffix(ingest_config: AppConfig) -> None:

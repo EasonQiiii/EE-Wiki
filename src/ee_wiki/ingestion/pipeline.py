@@ -62,7 +62,12 @@ def ingest_file(
     else:
         raise IngestionError(f"Unsupported file type for V1 ingest: {path.suffix} ({path.name})")
 
-    processed = write_processed_document(document, path, layout)
+    processed = write_processed_document(
+        document,
+        path,
+        layout,
+        repo_root=config.repo_root,
+    )
     return IngestResult(raw_path=path, document=document, processed=processed)
 
 

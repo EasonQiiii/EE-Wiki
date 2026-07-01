@@ -402,7 +402,7 @@ Folder → `document_type` mapping:
 
 Every document should include standardized metadata.
 
-Example:
+Example (schematic — `sch/` folder):
 
 ```json
 {
@@ -410,15 +410,33 @@ Example:
   "build": "p1",
   "document_type": "schematic",
   "page": 0,
-  "title": "",
+  "title": "power-tree",
   "major_components": [],
   "nets": [],
   "interfaces": [],
   "keywords": [],
   "version": "",
-  "source_file": "data/raw/logan/p1/sch/power-tree.pdf"
+  "source_file": "data/raw/logan/p1/sch/power-tree.pdf",
+  "target_file": "data/processed/logan/p1/sch/power-tree.md"
 }
 ```
+
+Example (engineering note — `note/` folder; no schematic fields):
+
+```json
+{
+  "project": "logan",
+  "build": "p1",
+  "document_type": "engineering_note",
+  "title": "iPadManual",
+  "source_file": "data/raw/logan/p1/note/iPadManual.md",
+  "target_file": "data/processed/logan/p1/note/iPadManual.md"
+}
+```
+
+- **`source_file`** — original raw asset (citation / re-ingest)
+- **`target_file`** — normalized content path used for chunking and retrieval
+- **`major_components` / `nets` / `interfaces`** — schematic documents only
 
 Metadata is the foundation of enterprise retrieval.
 
