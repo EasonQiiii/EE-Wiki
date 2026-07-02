@@ -45,7 +45,7 @@ Output includes for each chunk:
 After `models.llm_mlx_model` (or `models.llm_transformers_model`) is configured, generate an answer with citations:
 
 ```bash
-python scripts/ask.py "Explorer 板的以太网接口是什么？" --project logan --build p1
+python scripts/ask.py "board 的 COMM 接口有哪些信号？" --project acme --build p2
 ```
 
 ## HTTP API

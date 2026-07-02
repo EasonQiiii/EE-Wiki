@@ -11,6 +11,7 @@ from ee_wiki.common.types import Chunk, Citation, Metadata
 from ee_wiki.knowledge.loader import ProcessedRecord
 
 _HEADING_PATTERN = re.compile(r"^(#{1,2})\s+(.+)$", re.MULTILINE)
+_H3_HEADING_PATTERN = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 _SLUG_PATTERN = re.compile(r"[^\w\-]+")
 
 
@@ -53,6 +54,74 @@ def _split_by_window(
         start = max(end - config.overlap_chars, start + 1)
         part += 1
     return sections
+
+
+def _split_by_h3_subsections(text: str) -> list[tuple[str, str]]:
+    """Split a section on ``###`` sub-headings."""
+    matches = list(_H3_HEADING_PATTERN.finditer(text))
+    if not matches:
+        return [("body", text)]
+
+    sections: list[tuple[str, str]] = []
+    if matches[0].start() > 0:
+        preamble = text[: matches[0].start()].strip()
+        if preamble:
+            sections.append(("preamble", preamble))
+
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        section_text = text[start:end].strip()
+        if not section_text:
+            continue
+        heading = match.group(1).strip()
+        suffix = _slugify_heading(heading, fallback=f"h3-{index + 1:02d}")
+        sections.append((suffix, section_text))
+    return sections
+
+
+def _split_section_for_chunking(
+    text: str,
+    suffix: str,
+    config: ChunkingConfig,
+    *,
+    schematic: bool,
+) -> list[tuple[str, str]]:
+    """Split one section into chunk-sized pieces.
+
+    Schematic sections with ``###`` children split per sub-heading without
+    overlap sliding windows. Long OCR code blocks use zero-overlap windows only.
+    """
+    if _H3_HEADING_PATTERN.search(text):
+        pieces: list[tuple[str, str]] = []
+        for sub_suffix, sub_text in _split_by_h3_subsections(text):
+            combined = f"{suffix}__{sub_suffix}" if sub_suffix != "body" else suffix
+            if len(sub_text) <= config.max_chars:
+                pieces.append((combined, sub_text))
+                continue
+            window_config = config
+            if schematic:
+                window_config = ChunkingConfig(
+                    max_chars=config.max_chars,
+                    overlap_chars=0,
+                    min_chars=config.min_chars,
+                    excerpt_chars=config.excerpt_chars,
+                )
+            pieces.extend(_split_by_window(sub_text, combined, window_config))
+        return pieces
+
+    if len(text) <= config.max_chars:
+        return [(suffix, text)]
+
+    window_config = config
+    if schematic:
+        window_config = ChunkingConfig(
+            max_chars=config.max_chars,
+            overlap_chars=0,
+            min_chars=config.min_chars,
+            excerpt_chars=config.excerpt_chars,
+        )
+    return _split_by_window(text, suffix, window_config)
 
 
 def _split_by_headings(content: str) -> list[tuple[str, str, int]]:
@@ -200,8 +269,14 @@ def chunk_processed_record(
     raw_sections = _merge_small_sections(raw_sections, config)
 
     chunks: list[Chunk] = []
+    schematic = record.metadata.document_type == SCHEMATIC_DOCUMENT_TYPE
     for suffix, text, page in raw_sections:
-        for window_suffix, window_text in _split_by_window(text, suffix, config):
+        for window_suffix, window_text in _split_section_for_chunking(
+            text,
+            suffix,
+            config,
+            schematic=schematic,
+        ):
             if not window_text.strip():
                 continue
             chunks.append(

@@ -1,0 +1,36 @@
+"""Metadata-aware keyword boosts for hybrid retrieval ranking."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+def metadata_keyword_boost(metadata: dict[str, Any], boost_tokens: list[str]) -> int:
+    """Score how many query terms appear in schematic chunk metadata.
+
+    Checks ``interfaces``, ``nets``, ``keywords``, and ``title`` list fields.
+
+    Args:
+        metadata: Chunk metadata mapping.
+        boost_tokens: Lowercased query terms from :func:`query_boost_tokens`.
+
+    Returns:
+        Match count used as a ranking boost (higher is better).
+    """
+    if not boost_tokens:
+        return 0
+
+    haystacks: list[str] = []
+    for key in ("interfaces", "nets", "keywords"):
+        values = metadata.get(key)
+        if isinstance(values, list):
+            haystacks.extend(str(value) for value in values)
+    title = metadata.get("title")
+    if isinstance(title, str):
+        haystacks.append(title)
+
+    if not haystacks:
+        return 0
+
+    combined = " ".join(haystacks).upper()
+    return sum(1 for token in boost_tokens if token.upper() in combined)

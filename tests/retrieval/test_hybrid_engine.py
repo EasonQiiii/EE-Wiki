@@ -155,3 +155,13 @@ def test_retrieve_returns_empty_when_document_type_has_no_matches(engine_with_in
         document_type="sop",
     )
     assert results == []
+
+
+def test_retrieve_pin_query_defaults_to_schematic_sources(engine_with_index) -> None:
+    results = engine_with_index.retrieve(
+        "proj_a build_b module_x pin signals",
+        target_project="logan",
+        target_build="p1",
+    )
+    assert results
+    assert all(chunk.metadata.get("document_type") == "schematic" for chunk in results)

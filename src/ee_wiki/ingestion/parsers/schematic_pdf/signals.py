@@ -16,6 +16,8 @@ _EMBEDDED_DATA_NET_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _CLEAN_PREFIX_PATTERN = re.compile(r"\b([A-Z]{2,15})_", re.IGNORECASE)
+_LABEL_SPLIT_PATTERN = re.compile(r"[&/\s]+")
+_MODULE_NEAR_WINDOW_CHARS = 3000
 
 
 def _known_prefixes_in_text(text: str) -> set[str]:
@@ -42,7 +44,7 @@ def normalize_ocr_text(text: str) -> str:
 
 
 def recover_noisy_prefix_nets(text: str, *, max_data_index: int = 15) -> set[str]:
-    """Recover ``PREFIX_Dn`` nets embedded in OCR noise (e.g. ``NLDCMI0D0``)."""
+    """Recover ``PREFIX_Dn`` nets embedded in OCR noise (e.g. ``NLIFACE0D0``)."""
     normalized = normalize_ocr_text(text)
     known_prefixes = _known_prefixes_in_text(normalized)
     recovered: set[str] = set()
@@ -95,41 +97,166 @@ def _power_nets_on_page(nets: Sequence[str]) -> list[str]:
     return sorted(set(power), key=str.upper)
 
 
+def _heading(level: int, title: str) -> str:
+    return f"{'#' * level} {title}"
+
+
+def _module_label_tokens(label: str) -> list[str]:
+    return [
+        token.upper()
+        for token in _LABEL_SPLIT_PATTERN.split(label.strip())
+        if len(token.strip()) >= 2
+    ]
+
+
+def _ocr_region_for_module(
+    label: str,
+    ocr_text: str,
+    module_labels: Sequence[str],
+    *,
+    window_chars: int = _MODULE_NEAR_WINDOW_CHARS,
+) -> str:
+    """Return OCR text after ``label`` until the next module label or window end."""
+    upper_ocr = ocr_text.upper()
+    upper_label = label.upper()
+    position = upper_ocr.find(upper_label)
+    if position < 0:
+        return ""
+
+    end = min(len(ocr_text), position + window_chars)
+    for other in module_labels:
+        if other.upper() == upper_label:
+            continue
+        other_pos = upper_ocr.find(other.upper(), position + len(upper_label))
+        if position < other_pos < end:
+            end = other_pos
+    return ocr_text[position:end]
+
+
+def nets_for_module_label(
+    label: str,
+    nets: Sequence[str],
+    ocr_text: str,
+    *,
+    module_labels: Sequence[str] | None = None,
+    window_chars: int = _MODULE_NEAR_WINDOW_CHARS,
+) -> list[str]:
+    """Return nets associated with a module zone label on the same page.
+
+    Uses OCR proximity around the label and prefix/token overlap. No configured
+    alias tables.
+    """
+    found: set[str] = set()
+    labels = list(module_labels) if module_labels is not None else [label]
+    region = _ocr_region_for_module(label, ocr_text, labels, window_chars=window_chars).upper()
+    if region:
+        for net in nets:
+            if net.upper() in region:
+                found.add(net)
+
+    tokens = _module_label_tokens(label)
+    for net in nets:
+        prefix = net.split("_", 1)[0].upper()
+        if prefix in tokens:
+            found.add(net)
+
+    return sorted(found, key=str.upper)
+
+
+def _format_prefix_groups(
+    nets_by_prefix: dict[str, list[str]],
+    *,
+    heading_level: int,
+) -> list[str]:
+    lines: list[str] = []
+    sub_level = heading_level + 1
+    for prefix in sorted(nets_by_prefix):
+        prefix_nets = nets_by_prefix[prefix]
+        data_bus, control = _partition_prefix_nets(prefix, prefix_nets)
+        if data_bus:
+            lines.append(_heading(sub_level, f"数据总线（{prefix}）"))
+            lines.extend(f"- `{net}`" for net in data_bus)
+            lines.append("")
+        if control:
+            lines.append(_heading(sub_level, f"控制与时钟（{prefix}）"))
+            lines.extend(f"- `{net}`" for net in control)
+            lines.append("")
+    return lines
+
+
+def build_module_signal_blocks(
+    module_labels: Sequence[str],
+    nets: Sequence[str],
+    ocr_text: str,
+    *,
+    heading_level: int = 3,
+) -> list[str]:
+    """Build per-module retrieval blocks with grouped interface nets."""
+    blocks: list[str] = []
+    for label in module_labels:
+        module_nets = nets_for_module_label(
+            label,
+            nets,
+            ocr_text,
+            module_labels=module_labels,
+        )
+        if not module_nets:
+            continue
+        lines = [
+            _heading(heading_level, f"模块：{label}"),
+            "",
+            "> 同页 OCR 关联网络；引脚序号请对照原理图 connector。",
+            "",
+        ]
+        lines.extend(_format_prefix_groups(group_nets_by_prefix(module_nets), heading_level=heading_level))
+        power = _power_nets_on_page(module_nets)
+        if power:
+            lines.append(_heading(heading_level + 1, "电源"))
+            lines.extend(f"- `{net}`" for net in power)
+            lines.append("")
+        blocks.append("\n".join(lines).strip())
+    return blocks
+
+
 def build_page_signal_summary(
     module_labels: Sequence[str],
     nets: Sequence[str],
+    *,
+    ocr_text: str = "",
+    heading_level: int = 2,
 ) -> str:
     """Build one page-level summary listing module zones and grouped interface nets."""
     nets_by_prefix = group_nets_by_prefix(nets)
     if not module_labels and not nets_by_prefix:
         return ""
 
+    sub_level = heading_level + 1
     lines = [
-        "## 本页模块与接口信号",
+        _heading(heading_level, "本页模块与接口信号"),
         "",
         "> 由同页 OCR 网络名按接口前缀自动分组；引脚序号请对照原理图 connector。",
         "",
     ]
     if module_labels:
-        lines.append("### 模块分区")
+        lines.append(_heading(sub_level, "模块分区"))
         lines.extend(f"- `{label}`" for label in module_labels)
         lines.append("")
 
-    for prefix in sorted(nets_by_prefix):
-        prefix_nets = nets_by_prefix[prefix]
-        data_bus, control = _partition_prefix_nets(prefix, prefix_nets)
-        if data_bus:
-            lines.append(f"### 数据总线（{prefix}）")
-            lines.extend(f"- `{net}`" for net in data_bus)
+    if ocr_text and module_labels:
+        for block in build_module_signal_blocks(
+            module_labels,
+            nets,
+            ocr_text,
+            heading_level=sub_level,
+        ):
+            lines.append(block)
             lines.append("")
-        if control:
-            lines.append(f"### 控制与时钟（{prefix}）")
-            lines.extend(f"- `{net}`" for net in control)
-            lines.append("")
+
+    lines.extend(_format_prefix_groups(nets_by_prefix, heading_level=heading_level))
 
     power = _power_nets_on_page(nets)
     if power:
-        lines.append("### 电源")
+        lines.append(_heading(sub_level, "电源"))
         lines.extend(f"- `{net}`" for net in power)
         lines.append("")
 

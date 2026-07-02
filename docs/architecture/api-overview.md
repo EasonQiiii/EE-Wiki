@@ -74,8 +74,8 @@ Response:
   "insufficient_context": false,
   "citations": [
     {
-      "source_file": "data/raw/logan/p1/sch/Explorer STM32F4_V2.2_SCH.pdf",
-      "chunk_id": "Explorer STM32F4_V2.2_SCH__p001",
+      "source_file": "data/raw/acme/p2/sch/board.pdf",
+      "chunk_id": "board__p001",
       "page": 1,
       "excerpt": "..."
     }
@@ -91,7 +91,7 @@ OpenAI-compatible request with EE-Wiki metadata filters:
 {
   "model": "ee-wiki",
   "messages": [
-    {"role": "user", "content": "Explorer 板的以太网接口是什么？"}
+    {"role": "user", "content": "board 的 COMM 接口有哪些信号？"}
   ],
   "project": "logan",
   "build": "p1"

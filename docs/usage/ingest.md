@@ -88,8 +88,8 @@ python scripts/ingest.py data/raw/logan/p1/
 ### Ingest a single file
 
 ```bash
-python scripts/ingest.py data/raw/logan/p1/sch/Explorer\ STM32F4_V2.2_SCH.pdf
-python scripts/ingest.py data/raw/logan/p1/note/iPadManual.md
+python scripts/ingest.py data/raw/acme/p2/sch/board.pdf
+python scripts/ingest.py data/raw/acme/p2/note/bringup.md
 ```
 
 - Scope: that file only
@@ -116,9 +116,9 @@ python scripts/ingest.py data/raw/logan/p1/sch/board.pdf --verbose
 Sets EE-Wiki log level to DEBUG (useful for transformers load details). Schematic PDF ingest always logs page progress at INFO:
 
 ```
-INFO  Ingesting: logan/p1/sch/Explorer STM32F4_V2.2_SCH.pdf
-INFO  Schematic PDF Explorer STM32F4_V2.2_SCH.pdf: starting vision extraction for 5 page(s)
-INFO  Schematic PDF Explorer STM32F4_V2.2_SCH.pdf: page 1/5
+INFO  Ingesting: acme/p2/sch/board.pdf
+INFO  Schematic PDF board.pdf: starting vision extraction for 5 page(s)
+INFO  Schematic PDF board.pdf: page 1/5
 INFO  Vision inference started: page 1 (image 4960x3508, 2.1 MB)
 INFO  Vision inference page 1 still running (30s elapsed)
 INFO  Vision inference finished: page 1 in 842.3s (1523 output tokens)
@@ -132,8 +132,8 @@ Each sidecar (`.meta.json`) stores a fingerprint of the raw file:
 
 ```json
 {
-  "source_file": "data/raw/logan/p1/note/iPadManual.md",
-  "target_file": "data/processed/logan/p1/note/iPadManual.md",
+  "source_file": "data/raw/acme/p2/note/bringup.md",
+  "target_file": "data/processed/acme/p2/note/bringup.md",
   "source_mtime": 1719856070.5,
   "source_size": 36941
 }

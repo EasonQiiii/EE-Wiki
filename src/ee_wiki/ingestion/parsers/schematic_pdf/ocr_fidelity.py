@@ -96,7 +96,7 @@ def extract_schematic_nets(text: str) -> list[str]:
 
 
 def extract_module_labels(text: str) -> list[str]:
-    """Extract schematic module zone labels such as ``OLED&CAMERA``."""
+    """Extract schematic module zone labels such as ``DISPLAY&SENSOR``."""
     labels: list[str] = []
     for line in text.splitlines():
         candidate = line.strip()
@@ -141,8 +141,13 @@ def extract_fields_from_ocr(text: str) -> tuple[list[str], list[str], list[str]]
     return fields.major_components, fields.nets, fields.interfaces
 
 
-def _page_summary_block(fields: FidelityFields) -> str:
-    summary = build_page_signal_summary(fields.module_labels, fields.nets)
+def _page_summary_block(fields: FidelityFields, raw_ocr_text: str) -> str:
+    summary = build_page_signal_summary(
+        fields.module_labels,
+        fields.nets,
+        ocr_text=raw_ocr_text,
+        heading_level=3,
+    )
     return f"\n\n{summary}" if summary else ""
 
 
@@ -163,7 +168,7 @@ def build_fidelity_appendix(
         "\n".join(f"- `{ref}`" for ref in fidelity.major_components)
         or "- （未识别到 IC 位号）"
     )
-    summary_block = _page_summary_block(fidelity)
+    summary_block = _page_summary_block(fidelity, raw_ocr_text)
 
     return f"""## 5. OCR 保真摘录（检索依据，禁止改写）
 
@@ -202,7 +207,7 @@ def build_fidelity_page_markdown(
         "\n".join(f"- `{ref}`" for ref in fields.major_components)
         or "- （未识别到 IC 位号）"
     )
-    summary_block = _page_summary_block(fields)
+    summary_block = _page_summary_block(fields, layout.raw_ocr_text)
 
     return f"""## 1. 模块图纸基本信息
 * **图纸页码**: Page {layout.page}

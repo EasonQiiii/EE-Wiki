@@ -18,9 +18,11 @@ from ee_wiki.common.serialization import metadata_to_dict
 from ee_wiki.common.types import Chunk
 from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
 from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
+from ee_wiki.retrieval.metadata_boost import metadata_keyword_boost
 from ee_wiki.retrieval.query_boost import query_boost_tokens
 from ee_wiki.retrieval.query_expand import expand_hw_query
-from ee_wiki.retrieval.query_intent import prefers_schematic_sources
+from ee_wiki.retrieval.query_intent import effective_document_type, prefers_schematic_sources
+from ee_wiki.retrieval.rerank_excerpt import query_focused_excerpt
 from ee_wiki.retrieval.tokenizer import tokenize_hw_text
 
 logger = get_logger(__name__)
@@ -247,10 +249,17 @@ class HybridRagEngine:
         if search_query != query:
             logger.info("Expanded retrieval query: %s", search_query)
 
+        resolved_document_type = effective_document_type(query, document_type)
+        schematic_preferred = prefers_schematic_sources(query)
+        if schematic_preferred:
+            dense_k = top_k_dense or self.config.retrieval.top_k_embed
+            sparse_k = top_k_sparse or self.config.retrieval.top_k_bm25
+            final_k = top_k_final or max(self.config.retrieval.top_k_final, 12)
+
         filtered, scope_ranks = self._filter_by_scope(
             target_project=target_project,
             target_build=target_build,
-            document_type=document_type,
+            document_type=resolved_document_type,
         )
         if not filtered:
             return []
@@ -299,7 +308,10 @@ class HybridRagEngine:
         self._load_reranker()
         import torch
 
-        pairs = [[search_query, chunk.content[:512]] for chunk in combined]
+        pairs = [
+            [search_query, query_focused_excerpt(chunk.content, search_query)]
+            for chunk in combined
+        ]
         with self._model_lock, torch.no_grad():
             inputs = self._rerank_tokenizer(
                 pairs,
@@ -315,15 +327,18 @@ class HybridRagEngine:
             return scope_ranks.get(pair, 0) if scope_ranks else 0
 
         boost_tokens = query_boost_tokens(query)
-        schematic_preferred = document_type is None and prefers_schematic_sources(query)
 
         def keyword_boost(chunk: HybridChunk) -> int:
             if not boost_tokens:
                 return 0
             upper = chunk.content.upper()
-            return sum(1 for token in boost_tokens if token.upper() in upper)
+            content_hits = sum(1 for token in boost_tokens if token.upper() in upper)
+            meta_hits = metadata_keyword_boost(chunk.metadata, boost_tokens)
+            return content_hits + (meta_hits * 2)
 
         def document_type_rank(chunk: HybridChunk) -> int:
+            if resolved_document_type is not None:
+                return 0
             if not schematic_preferred:
                 return 0
             if chunk.metadata.get("document_type") == SCHEMATIC_DOCUMENT_TYPE:

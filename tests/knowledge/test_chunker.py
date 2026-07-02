@@ -7,6 +7,11 @@ from ee_wiki.common.types import Metadata
 from ee_wiki.knowledge.chunker import chunk_processed_record
 from ee_wiki.knowledge.loader import ProcessedRecord
 
+_MODULE_A = "DISPLAY&SENSOR"
+_NET_A0 = "IFACE_D0"
+_NET_A1 = "IFACE_D1"
+_PREFIX_A = "IFACE"
+
 
 def _record(
     *,
@@ -84,6 +89,46 @@ def test_small_fragments_merge_into_previous() -> None:
 
     assert len(chunks) == 1
     assert "orphan ok" in chunks[0].content
+
+
+def test_schematic_signal_section_splits_by_h3_not_overlap() -> None:
+    module_block = "\n".join(
+        [
+            "### 模块分区",
+            f"- `{_MODULE_A}`",
+            "",
+            f"### 模块：{_MODULE_A}",
+            "",
+            f"- `{_NET_A0}`",
+            f"- `{_NET_A1}`",
+            "",
+            f"### 数据总线（{_PREFIX_A}）",
+            "",
+            f"- `{_NET_A0}`",
+            f"- `{_NET_A1}`",
+            "",
+            "### 电源",
+            "",
+            "- `GND`",
+            "- `VCC3.3`",
+        ]
+    )
+    content = (
+        "# 电子图纸分析报告：board\n\n"
+        f"## 本页模块与接口信号\n\n{module_block}\n\n"
+        "---\n\n"
+        "## 2. Other page\n\nshort"
+    )
+    config = ChunkingConfig(max_chars=1500, overlap_chars=100)
+    record = _record(stem="board", content=content, document_type="schematic")
+    chunks = chunk_processed_record(record, config)
+
+    chunk_ids = [chunk.chunk_id for chunk in chunks]
+    assert any("模块-display-sensor" in chunk_id for chunk_id in chunk_ids)
+    assert not any("__w01" in chunk_id and "电源" in chunk_id for chunk_id in chunk_ids)
+    module_chunk = next(chunk for chunk in chunks if "模块-display-sensor" in chunk.chunk_id)
+    assert _NET_A0 in module_chunk.content
+    assert _MODULE_A in module_chunk.content
 
 
 def test_citation_excerpt_truncated() -> None:

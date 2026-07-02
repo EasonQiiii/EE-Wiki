@@ -8,20 +8,20 @@ from ee_wiki.ingestion.parsers.schematic_pdf.prompt import (
 
 
 def test_schematic_image_slug() -> None:
-    assert schematic_image_slug("Explorer STM32F4_V2.2_SCH") == "explorer_stm32f4_v2_2_sch"
+    assert schematic_image_slug("Board Rev A V1.0_SCH") == "board_rev_a_v1_0_sch"
 
 
 def test_build_schematic_page_prompt_includes_ocr_and_project() -> None:
     prompt = build_schematic_page_prompt(
         page=2,
-        project_id="logan_p1",
-        raw_ocr_text="U1 LAN8720 VCC_3V3",
-        slice_filenames=["explorer_p2_crop_0.png"],
+        project_id="demo_proj",
+        raw_ocr_text="U1 IFACE_CHIP VCC_3V3",
+        slice_filenames=["board_p2_crop_0.png"],
     )
     assert "Page 2" in prompt
-    assert "logan_p1" in prompt
-    assert "U1 LAN8720" in prompt
-    assert "explorer_p2_crop_0.png" in prompt
+    assert "demo_proj" in prompt
+    assert "U1 IFACE_CHIP" in prompt
+    assert "board_p2_crop_0.png" in prompt
     assert "PDF 原始提取文本" in prompt
 
 
