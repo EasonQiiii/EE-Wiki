@@ -10,7 +10,6 @@ from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import Chunk, Citation, Metadata
 from ee_wiki.knowledge.loader import ProcessedRecord
 
-SCHEMATIC_PAGE_SEPARATOR = "\n---\n"
 _HEADING_PATTERN = re.compile(r"^(#{1,2})\s+(.+)$", re.MULTILINE)
 _SLUG_PATTERN = re.compile(r"[^\w\-]+")
 
