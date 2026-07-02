@@ -87,9 +87,58 @@ class RagService:
         context = format_context_blocks(chunks)
         prompt = render_template(template, context=context, question=question)
         logger.info("Generating answer from %d chunk(s)", len(chunks))
-        answer_text = self.llm.generate(prompt)
+        answer_text = self.llm.generate(prompt).strip()
+        if not answer_text:
+            logger.warning("LLM returned empty text; using insufficient-context fallback")
+            return RagAnswer(answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True)
         return RagAnswer(
             answer=answer_text,
             citations=chunks_to_citations(chunks),
             insufficient_context=False,
         )
+
+    def answer_stream(
+        self,
+        question: str,
+        *,
+        target_project: str | None = None,
+        target_build: str | None = None,
+        document_type: str | None = None,
+        top_k_final: int | None = None,
+    ):
+        """Retrieve context and stream a grounded answer.
+
+        Yields:
+            Text fragments from the LLM, or a single insufficient-context message.
+        """
+        chunks = self.engine.retrieve(
+            question,
+            target_project=target_project,
+            target_build=target_build,
+            document_type=document_type,
+            top_k_final=top_k_final,
+        )
+        if not chunks:
+            logger.info("No chunks retrieved for question: %s", question)
+            yield INSUFFICIENT_ANSWER
+            return
+
+        template = load_template(self.config.repo_root, self.template_task, self.template_name)
+        context = format_context_blocks(chunks)
+        prompt = render_template(template, context=context, question=question)
+        logger.info("Streaming answer from %d chunk(s)", len(chunks))
+
+        emitted = False
+        if hasattr(self.llm, "generate_stream"):
+            for fragment in self.llm.generate_stream(prompt):
+                emitted = True
+                yield fragment
+        else:
+            text = self.llm.generate(prompt).strip()
+            if text:
+                emitted = True
+                yield text
+
+        if not emitted:
+            logger.warning("LLM stream returned no text; using insufficient-context fallback")
+            yield INSUFFICIENT_ANSWER

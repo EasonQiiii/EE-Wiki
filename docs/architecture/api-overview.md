@@ -9,6 +9,7 @@ EE-Wiki serves as the backend for Open WebUI. This document tracks the HTTP surf
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/health` | Liveness for deployment |
+| `GET` | `/v1/models` | OpenAI-compatible model list |
 | `POST` | `/v1/query` | Explicit RAG query with citation payload |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat (retrieval + generation) |
 
@@ -26,6 +27,8 @@ python scripts/serve.py
 ```
 
 Default bind: `0.0.0.0:8080` (see `config/default.yaml` → `api`).
+
+Set `api.warmup_on_startup: true` to preload the index, embedding model, reranker, and LLM when the server starts (recommended for Open WebUI; first startup may take several minutes).
 
 ## `POST /v1/query`
 

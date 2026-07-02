@@ -40,6 +40,7 @@ def test_chat_completions_uses_last_user_message() -> None:
     payload = response.json()
     assert payload["choices"][0]["message"]["content"] == "RMII uses ETH_MDIO."
     assert payload["model"] == "ee-wiki"
+    assert "created" in payload
     service.answer.assert_called_once_with(
         "What is RMII?",
         target_project="logan",

@@ -44,6 +44,7 @@ class ChatCompletionRequest(BaseModel):
 
     model: str = "ee-wiki"
     messages: list[ChatMessage]
+    stream: bool = False
     project: str | None = None
     build: str | None = None
     document_type: str | None = None
@@ -70,6 +71,7 @@ class ChatCompletionResponse(BaseModel):
 
     id: str
     object: str = "chat.completion"
+    created: int
     model: str
     choices: list[ChatChoice]
     citations: list[CitationModel] = Field(default_factory=list)

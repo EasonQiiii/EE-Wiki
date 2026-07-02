@@ -77,6 +77,7 @@ class ApiConfig:
 
     host: str
     port: int
+    warmup_on_startup: bool = False
 
 
 @dataclass(frozen=True)
@@ -228,6 +229,7 @@ def load_config(
         api=ApiConfig(
             host=str(api.get("host", "0.0.0.0")),
             port=int(api.get("port", 8080)),
+            warmup_on_startup=bool(api.get("warmup_on_startup", False)),
         ),
     )
     logger.debug("Loaded config from %s (raw_dir=%s)", path, config.raw_dir)

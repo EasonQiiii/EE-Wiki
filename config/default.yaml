@@ -13,7 +13,7 @@ models:
   visual_model: Qwen3-VL-4B-Instruct
   embedding_model: bge-m3
   reranker_model: bge-reranker-v2-m3
-  # llm_model: null
+  llm_model: Qwen3-VL-4B-Instruct
 
 ingestion:
   schematic_pdf:
@@ -54,3 +54,4 @@ data_layout:
 api:
   host: 0.0.0.0
   port: 8080
+  warmup_on_startup: true

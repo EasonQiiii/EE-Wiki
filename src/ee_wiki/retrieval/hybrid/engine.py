@@ -6,6 +6,7 @@ builds from processed documents via :mod:`ee_wiki.knowledge.indexer`.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -59,6 +60,7 @@ class HybridRagEngine:
     _rerank_model: Any | None = field(default=None, repr=False)
     _rerank_tokenizer: Any | None = field(default=None, repr=False)
     _device: str | None = field(default=None, repr=False)
+    _model_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def __post_init__(self) -> None:
         self._device = self._detect_device()
@@ -247,7 +249,8 @@ class HybridRagEngine:
             return []
 
         self._load_embed_model()
-        query_emb = self._embed_model.encode(query, convert_to_numpy=True)
+        with self._model_lock:
+            query_emb = self._embed_model.encode(query, convert_to_numpy=True)
         dense_scores: list[tuple[float, HybridChunk]] = []
         for chunk in filtered:
             if chunk.embedding is None:
@@ -290,7 +293,7 @@ class HybridRagEngine:
         import torch
 
         pairs = [[query, chunk.content[:512]] for chunk in combined]
-        with torch.no_grad():
+        with self._model_lock, torch.no_grad():
             inputs = self._rerank_tokenizer(
                 pairs,
                 padding=True,
@@ -298,7 +301,7 @@ class HybridRagEngine:
                 return_tensors="pt",
                 max_length=512,
             ).to(self._device)
-            logits = self._rerank_model(inputs).logits.view(-1).float().cpu().numpy()
+            logits = self._rerank_model(**inputs).logits.view(-1).float().cpu().numpy()
 
         def scope_rank(chunk: HybridChunk) -> int:
             pair = (chunk.metadata.get("project"), chunk.metadata.get("build"))

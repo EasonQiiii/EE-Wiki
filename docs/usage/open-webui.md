@@ -68,7 +68,21 @@ python scripts/ask.py "RMII 接口说明" --project logan --build p1
 | Connection refused | `python scripts/serve.py` running; firewall allows port `8080` |
 | Empty or generic answers | Run `python scripts/query.py "..." --project logan --build p1` to verify retrieval |
 | `models.llm_model is not configured` | Uncomment/set `llm_model` in `config/default.yaml` |
-| Slow first response | First request loads embedding, reranker, and LLM weights |
+| Slow first response | Enable `api.warmup_on_startup: true`; first load of embedding, reranker, and LLM can take minutes |
+| Open WebUI shows no output | Wait for server warmup; first LLM load can take 1–3 min on Mac. Check `curl http://localhost:8080/health` first |
+| `503` LLM load error | NVFP4 models (e.g. `Qwen3.6-27B-NVFP4`) are not supported; use `Qwen3-VL-4B-Instruct` or another standard HF folder |
+| `404` on chat | Base URL must include `/v1`, e.g. `http://localhost:8080/v1` |
+
+### Why embedding / reranker load at query time
+
+Hybrid RAG uses models at two stages:
+
+| Stage | When | Models |
+|-------|------|--------|
+| **Indexing** (`scripts/index.py`) | Offline, once per index build | `bge-m3` embeds document chunks into `data/indexes/` |
+| **Query** (`/v1/chat/completions`) | Every question | `bge-m3` embeds the user query; `bge-reranker-v2-m3` reranks retrieved candidates |
+
+The index stores chunk embeddings only. Query-time embedding and reranking are required for hybrid retrieval — they are not repeated indexing work.
 
 ## Related docs
 

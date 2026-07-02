@@ -112,7 +112,9 @@ def engine_with_index(app_config):
 
     mock_reranker = MagicMock()
     _mock_rerank_logits(mock_reranker, [0.1, 0.9, 0.2, 0.3])
-    tokenizer_output = MagicMock(to=MagicMock(return_value="inputs"))
+    tokenizer_batch = {"input_ids": MagicMock(), "attention_mask": MagicMock()}
+    tokenizer_output = MagicMock()
+    tokenizer_output.to.return_value = tokenizer_batch
     engine._rerank_tokenizer = MagicMock(return_value=tokenizer_output)
     engine._rerank_model = mock_reranker
 
