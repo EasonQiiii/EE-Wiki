@@ -9,6 +9,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 
+from ee_wiki.api.citation_models import citation_to_model
 from ee_wiki.api.concurrency import QueueFullError, queue_response_headers
 from ee_wiki.api.deps import get_queue_gate, get_rag_service
 from ee_wiki.api.models import (
@@ -18,6 +19,7 @@ from ee_wiki.api.models import (
     ChatCompletionResponse,
     CitationModel,
 )
+from ee_wiki.api.open_webui_sources import citations_to_open_webui_sources
 from ee_wiki.api.rag_handler import rag_request_slot, raise_queue_full_http_error
 from ee_wiki.common.logging import get_logger
 from ee_wiki.generation.llm.errors import LlmLoadError
@@ -40,6 +42,7 @@ def _build_response(
     model: str,
     content: str,
     citations: list[CitationModel],
+    sources: list[dict[str, object]],
     insufficient_context: bool,
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
@@ -52,6 +55,7 @@ def _build_response(
             )
         ],
         citations=citations,
+        sources=sources,
         insufficient_context=insufficient_context,
     )
 
@@ -63,8 +67,9 @@ def _sse_chunk(
     created: int,
     delta: dict[str, str],
     finish_reason: str | None = None,
+    sources: list[dict[str, object]] | None = None,
 ) -> str:
-    payload = {
+    payload: dict[str, object] = {
         "id": chat_id,
         "object": "chat.completion.chunk",
         "created": created,
@@ -77,6 +82,12 @@ def _sse_chunk(
             }
         ],
     }
+    if sources:
+        payload["sources"] = sources
+        payload["event"] = {
+            "type": "chat:completion",
+            "data": {"sources": sources},
+        }
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
@@ -151,6 +162,8 @@ def chat_completions(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     content = result.answer or INSUFFICIENT_ANSWER
+    citation_models = [citation_to_model(citation) for citation in result.citations]
+    sources = citations_to_open_webui_sources(result.citations)
     logger.info(
         "Chat completion %s finished (%d chars, insufficient=%s)",
         chat_id,
@@ -161,15 +174,8 @@ def chat_completions(
         chat_id=chat_id,
         model=body.model,
         content=content,
-        citations=[
-            CitationModel(
-                source_file=citation.source_file,
-                chunk_id=citation.chunk_id,
-                page=citation.page,
-                excerpt=citation.excerpt,
-            )
-            for citation in result.citations
-        ],
+        citations=citation_models,
+        sources=sources,
         insufficient_context=result.insufficient_context,
     )
 
@@ -195,13 +201,24 @@ def _stream_answer(
     )
 
     fragments: list[str] = []
-    for fragment in service.answer_stream(
+    stream_result = service.stream_answer(
         question,
         target_project=project,
         target_build=build,
         document_type=document_type,
         top_k_final=top_k,
-    ):
+    )
+    sources = citations_to_open_webui_sources(stream_result.citations)
+    if sources:
+        yield _sse_chunk(
+            chat_id=chat_id,
+            model=model,
+            created=created,
+            delta={},
+            sources=sources,
+        )
+
+    for fragment in stream_result.text_chunks:
         fragments.append(fragment)
         yield _sse_chunk(
             chat_id=chat_id,

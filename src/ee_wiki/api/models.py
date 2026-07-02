@@ -12,6 +12,8 @@ class CitationModel(BaseModel):
     chunk_id: str
     page: int = 0
     excerpt: str = ""
+    url: str = ""
+    images: list[str] = Field(default_factory=list)
 
 
 class QueryRequest(BaseModel):
@@ -75,4 +77,5 @@ class ChatCompletionResponse(BaseModel):
     model: str
     choices: list[ChatChoice]
     citations: list[CitationModel] = Field(default_factory=list)
+    sources: list[dict[str, object]] = Field(default_factory=list)
     insufficient_context: bool = False

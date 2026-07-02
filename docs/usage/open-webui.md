@@ -38,6 +38,16 @@ curl http://localhost:8080/health
    - **API Key**: any placeholder (V1 does not enforce auth)
 4. Save and enable the connection
 
+Set `api.public_base_url` in `config/default.yaml` to the URL Open WebUI uses to reach EE-Wiki (e.g. `http://192.168.1.10:8080`). Citation links and images in answers use this base URL.
+
+### Citation links `[1]` `[2]`
+
+Answers cite context blocks with plain `[1]` markers in the assistant text. Open WebUI turns those into clickable source chips when EE-Wiki also returns a parallel `sources` array on the chat completion response.
+
+- Set `public_base_url` to a browser-reachable host when Open WebUI is not on the same machine (citation URLs use this base).
+- Click a `[1]` marker or the **N Sources** chip below the answer to open the processed document.
+- EE-Wiki also returns structured `citations[]` for API and CLI consumers.
+
 ## Create a chat model
 
 1. In Open WebUI, add or select a model backed by the connection above

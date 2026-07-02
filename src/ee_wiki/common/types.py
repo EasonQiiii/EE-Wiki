@@ -43,6 +43,8 @@ class Citation:
     chunk_id: str
     page: int = 0
     excerpt: str = ""
+    url: str = ""
+    images: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

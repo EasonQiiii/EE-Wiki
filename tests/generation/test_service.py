@@ -30,7 +30,13 @@ def test_answer_generates_from_retrieved_chunks(rag_service, repo_root) -> None:
     chunk = HybridChunk(
         chunk_id="note__power",
         content="VBAT connects to PMIC.",
-        metadata={"project": "logan", "build": "p1", "document_type": "engineering_note"},
+        metadata={
+            "project": "logan",
+            "build": "p1",
+            "document_type": "engineering_note",
+            "title": "note",
+            "target_file": "data/processed/logan/p1/note/note.md",
+        },
         citation={
             "source_file": "data/raw/logan/p1/note/note.md",
             "chunk_id": "note__power",
@@ -46,6 +52,10 @@ def test_answer_generates_from_retrieved_chunks(rag_service, repo_root) -> None:
     assert "VBAT" in result.answer
     assert len(result.citations) == 1
     assert result.citations[0].chunk_id == "note__power"
+    assert result.citations[0].url.endswith("/v1/sources/logan/p1/note/note.md#power")
+    assert "[1]" in result.answer
+    assert "<a href=" not in result.answer
+    assert "**引用 / References**" not in result.answer
     rag_service.llm.generate.assert_called_once()
     prompt = rag_service.llm.generate.call_args.args[0]
     assert "VBAT connects to PMIC." in prompt

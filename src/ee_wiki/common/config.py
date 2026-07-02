@@ -98,6 +98,7 @@ class ApiConfig:
     host: str
     port: int
     warmup_on_startup: bool = False
+    public_base_url: str | None = None
     concurrency: ApiConcurrencyConfig = field(default_factory=ApiConcurrencyConfig)
 
 
@@ -266,6 +267,7 @@ def load_config(
             host=str(api.get("host", "0.0.0.0")),
             port=int(api.get("port", 8080)),
             warmup_on_startup=bool(api.get("warmup_on_startup", False)),
+            public_base_url=api.get("public_base_url"),
             concurrency=ApiConcurrencyConfig(
                 max_concurrent=int(concurrency.get("max_concurrent", 1)),
                 max_queue_depth=int(concurrency.get("max_queue_depth", 8)),

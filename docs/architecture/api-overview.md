@@ -10,6 +10,8 @@ EE-Wiki serves as the backend for Open WebUI. This document tracks the HTTP surf
 |--------|------|---------|
 | `GET` | `/health` | Liveness for deployment |
 | `GET` | `/v1/models` | OpenAI-compatible model list |
+| `GET` | `/v1/sources/{path}` | Processed Markdown/text document for citation links |
+| `GET` | `/v1/assets/{path}` | Image or asset under `data/processed/` |
 | `POST` | `/v1/query` | Explicit RAG query with citation payload |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat (retrieval + generation) |
 
@@ -59,8 +61,24 @@ When the queue is full, the API returns **`503`** with JSON `detail.error = "que
 |---------|---------|---------|
 | `retrieval.top_k_final` | `8` | Chunk hits after rerank (before section merge) |
 | `retrieval.expand_sections` | `true` | Merge sibling chunks from the same section for LLM context |
+| `api.public_base_url` | `http://localhost:8080` | Base URL for clickable citation links in answers |
 
 Chunking rules and the full index → query pipeline are in [data-flow.md](data-flow.md).
+
+### Citations in responses
+
+Each citation may include:
+
+| Field | Meaning |
+|-------|---------|
+| `source_file` | Original raw path (provenance) |
+| `chunk_id` | Indexed chunk identifier |
+| `page` | Page number when applicable (schematics) |
+| `excerpt` | Short preview of the retrieved text |
+| `url` | Clickable link to the processed document (`GET /v1/sources/...`) |
+| `images` | Public URLs for images referenced in the chunk (`GET /v1/assets/...`) |
+
+Inline markers like ``[1]`` stay as plain text in the assistant answer. Open WebUI renders them as clickable source chips when the chat completion response includes a parallel ``sources`` array (see below).
 
 
 Request:
@@ -86,7 +104,11 @@ Response:
       "source_file": "data/raw/acme/p2/sch/board.pdf",
       "chunk_id": "board__p001",
       "page": 1,
-      "excerpt": "..."
+      "excerpt": "...",
+      "url": "http://localhost:8080/v1/sources/acme/p2/sch/board.md#p001",
+      "images": [
+        "http://localhost:8080/v1/assets/acme/p2/sch/images/board_p001_crop_0.png"
+      ]
     }
   ]
 }
@@ -122,6 +144,16 @@ Response shape:
     }
   ],
   "citations": [],
+  "sources": [
+    {
+      "document": ["..."],
+      "metadata": [{"source": "http://localhost:8080/v1/sources/...", "name": "[1] manual.md"}],
+      "source": {
+        "name": "[1] manual.md",
+        "url": "http://localhost:8080/v1/sources/..."
+      }
+    }
+  ],
   "insufficient_context": false
 }
 ```
@@ -135,7 +167,7 @@ Response shape:
 
 ## Response requirements
 
-- Answers must include `citations[]` with `source_file`, `page`, `chunk_id`, and excerpt when available.
+- Answers must include `citations[]` with `source_file`, `page`, `chunk_id`, `excerpt`, and when available `url` / `images` for clickable provenance.
 - Insufficient context → `200` with explicit message and empty citations — not fabricated content.
 
 See [open-webui.md](../usage/open-webui.md) for frontend connection steps.

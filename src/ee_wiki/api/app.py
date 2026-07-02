@@ -10,6 +10,7 @@ from ee_wiki.api.deps import get_config, warmup_rag_service
 from ee_wiki.api.routes.chat import router as chat_router
 from ee_wiki.api.routes.health import router as health_router
 from ee_wiki.api.routes.query import router as query_router
+from ee_wiki.api.routes.sources import router as sources_router
 from ee_wiki.common.logging import get_logger
 
 logger = get_logger(__name__)
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
     """
     app = FastAPI(title="EE-Wiki", version="0.1.0", lifespan=_lifespan)
     app.include_router(health_router)
+    app.include_router(sources_router)
     app.include_router(query_router)
     app.include_router(chat_router)
     logger.info("EE-Wiki API application created")

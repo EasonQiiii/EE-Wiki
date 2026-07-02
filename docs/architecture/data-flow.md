@@ -107,6 +107,15 @@ Section expansion does **not** merge chunks from different section slugs (e.g. `
 
 The generator sees **question + these blocks only** — no direct index or database access.
 
+### Citation links and images (query time)
+
+After generation, citations are enriched with public URLs (config: `api.public_base_url`):
+
+- `url` → `GET /v1/sources/{processed-path}#{section}` opens the processed document
+- `images[]` → `GET /v1/assets/{processed-path}` serves images referenced in the chunk Markdown
+
+Inline ``[N]`` markers stay in the LLM answer as plain text. Chat completions also return an Open WebUI-compatible ``sources`` array so the UI can render clickable citation chips.
+
 ## Rules
 
 - Generators receive **question + retrieved context only** — no direct DB reads.

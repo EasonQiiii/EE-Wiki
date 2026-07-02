@@ -2,20 +2,31 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from ee_wiki.common.config import AppConfig
 from ee_wiki.common.logging import get_logger
-from ee_wiki.common.types import RagAnswer
-from ee_wiki.generation.context import chunks_to_citations, format_context_blocks
+from ee_wiki.common.types import Citation, RagAnswer
+from ee_wiki.generation.citations import build_enriched_citations
+from ee_wiki.generation.context import format_context_blocks
 from ee_wiki.generation.llm.factory import build_llm_backend
+from ee_wiki.generation.references import iter_stream_chunks
 from ee_wiki.generation.templates.loader import load_template, render_template
 from ee_wiki.protocols.llm import LlmBackend
-from ee_wiki.retrieval.hybrid.engine import HybridRagEngine
+from ee_wiki.retrieval.hybrid.engine import HybridChunk, HybridRagEngine
 
 logger = get_logger(__name__)
 
 INSUFFICIENT_ANSWER = "知识库中未找到相关内容，无法回答该问题。"
+
+
+@dataclass(frozen=True)
+class AnswerStreamResult:
+    """Streamed answer text plus citation metadata for Open WebUI."""
+
+    citations: list[Citation]
+    text_chunks: Iterator[str]
 
 
 @dataclass
@@ -53,6 +64,21 @@ class RagService:
             config=config,
             engine=engine,
             llm=build_llm_backend(config),
+        )
+
+    def _finalize_answer(
+        self,
+        answer_text: str,
+        chunks: list[HybridChunk],
+        *,
+        insufficient_context: bool,
+    ) -> RagAnswer:
+        """Attach enriched citations; keep inline ``[N]`` markers as plain text."""
+        citations = build_enriched_citations(chunks, self.config)
+        return RagAnswer(
+            answer=answer_text,
+            citations=citations,
+            insufficient_context=insufficient_context,
         )
 
     def answer(
@@ -95,13 +121,9 @@ class RagService:
         if not answer_text:
             logger.warning("LLM returned empty text; using insufficient-context fallback")
             return RagAnswer(answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True)
-        return RagAnswer(
-            answer=answer_text,
-            citations=chunks_to_citations(chunks),
-            insufficient_context=False,
-        )
+        return self._finalize_answer(answer_text, chunks, insufficient_context=False)
 
-    def answer_stream(
+    def stream_answer(
         self,
         question: str,
         *,
@@ -109,11 +131,12 @@ class RagService:
         target_build: str | None = None,
         document_type: str | None = None,
         top_k_final: int | None = None,
-    ):
-        """Retrieve context and stream a grounded answer.
+    ) -> AnswerStreamResult:
+        """Retrieve context and stream a grounded answer with citation metadata.
 
-        Yields:
-            Text fragments from the LLM, or a single insufficient-context message.
+        Returns:
+            Citation list plus text fragments from the LLM. When retrieval finds
+            nothing, ``text_chunks`` yields a single insufficient-context message.
         """
         chunks = self.engine.retrieve(
             question,
@@ -124,25 +147,38 @@ class RagService:
         )
         if not chunks:
             logger.info("No chunks retrieved for question: %s", question)
-            yield INSUFFICIENT_ANSWER
-            return
+
+            def _insufficient() -> Iterator[str]:
+                yield INSUFFICIENT_ANSWER
+
+            return AnswerStreamResult(citations=[], text_chunks=_insufficient())
 
         template = load_template(self.config.repo_root, self.template_task, self.template_name)
         context = format_context_blocks(chunks)
         prompt = render_template(template, context=context, question=question)
         logger.info("Streaming answer from %d chunk(s)", len(chunks))
+        citations = build_enriched_citations(chunks, self.config)
 
-        emitted = False
+        parts: list[str] = []
         if hasattr(self.llm, "generate_stream"):
             for fragment in self.llm.generate_stream(prompt):
-                emitted = True
-                yield fragment
+                parts.append(fragment)
         else:
             text = self.llm.generate(prompt).strip()
             if text:
-                emitted = True
-                yield text
+                parts.append(text)
 
-        if not emitted:
+        if not parts:
             logger.warning("LLM stream returned no text; using insufficient-context fallback")
-            yield INSUFFICIENT_ANSWER
+
+            def _insufficient() -> Iterator[str]:
+                yield INSUFFICIENT_ANSWER
+
+            return AnswerStreamResult(citations=[], text_chunks=_insufficient())
+
+        answer_text = "".join(parts).strip()
+
+        def _chunks() -> Iterator[str]:
+            yield from iter_stream_chunks(answer_text)
+
+        return AnswerStreamResult(citations=citations, text_chunks=_chunks())
