@@ -23,4 +23,4 @@ Status: proposed | accepted | deprecated
 
 ## Index
 
-(No ADRs yet.)
+- [0001-chunking-strategy.md](0001-chunking-strategy.md) — document chunking defaults for V1 retrieval

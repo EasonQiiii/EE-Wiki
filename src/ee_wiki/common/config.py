@@ -50,6 +50,16 @@ class SchematicPdfConfig:
 
 
 @dataclass(frozen=True)
+class ChunkingConfig:
+    """Document chunking parameters for indexing."""
+
+    max_chars: int = 1500
+    overlap_chars: int = 100
+    min_chars: int = 50
+    excerpt_chars: int = 200
+
+
+@dataclass(frozen=True)
 class RetrievalConfig:
     """Hybrid retrieval hyperparameters."""
 
@@ -72,6 +82,7 @@ class AppConfig:
     graph_dir: Path
     models: ModelsConfig
     schematic_pdf: SchematicPdfConfig
+    chunking: ChunkingConfig
     retrieval: RetrievalConfig
     data_layout: DataLayoutConfig
 
@@ -149,6 +160,7 @@ def load_config(
     retrieval = raw.get("retrieval", {})
     ingestion = raw.get("ingestion", {})
     data_layout = raw.get("data_layout", {})
+    chunking = raw.get("chunking", {})
     models = raw.get("models", {})
     schematic = ingestion.get("schematic_pdf", {})
 
@@ -187,6 +199,12 @@ def load_config(
             temperature=float(schematic.get("temperature", 0.1)),
             do_sample=bool(schematic.get("do_sample", True)),
             images_rel_prefix=str(schematic.get("images_rel_prefix", "images")),
+        ),
+        chunking=ChunkingConfig(
+            max_chars=int(chunking.get("max_chars", 1500)),
+            overlap_chars=int(chunking.get("overlap_chars", 100)),
+            min_chars=int(chunking.get("min_chars", 50)),
+            excerpt_chars=int(chunking.get("excerpt_chars", 200)),
         ),
         retrieval=RetrievalConfig(
             top_k_embed=int(retrieval.get("top_k_embed", 20)),
