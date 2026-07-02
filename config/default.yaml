@@ -27,6 +27,12 @@ ingestion:
     do_sample: true
     images_rel_prefix: images
 
+chunking:
+  max_chars: 1500
+  overlap_chars: 100
+  min_chars: 50
+  excerpt_chars: 200
+
 retrieval:
   top_k_embed: 20
   top_k_bm25: 20

@@ -1,7 +1,7 @@
 """Offline hybrid retrieval engine (embedding + BM25 + reranker).
 
-Ported from legacy ``LocalFaHybridRagEngine`` in BYDEE101 ``temp.py``, adapted to
-EE-Wiki processed mirror layout and metadata schema.
+Loads persisted chunk indexes from ``data/indexes/`` when available; otherwise
+builds from processed documents via :mod:`ee_wiki.knowledge.indexer`.
 """
 
 from __future__ import annotations
@@ -13,7 +13,9 @@ import numpy as np
 
 from ee_wiki.common.config import AppConfig
 from ee_wiki.common.logging import get_logger
-from ee_wiki.retrieval.processed_loader import load_processed_records
+from ee_wiki.common.serialization import metadata_to_dict
+from ee_wiki.common.types import Chunk
+from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
 from ee_wiki.retrieval.tokenizer import tokenize_hw_text
 
 logger = get_logger(__name__)
@@ -26,16 +28,33 @@ class HybridChunk:
     chunk_id: str
     content: str
     metadata: dict[str, Any]
+    citation: dict[str, Any]
     embedding: np.ndarray | None = None
+
+
+def _chunk_to_hybrid(chunk: Chunk, embedding: np.ndarray | None = None) -> HybridChunk:
+    return HybridChunk(
+        chunk_id=chunk.chunk_id,
+        content=chunk.content,
+        metadata=metadata_to_dict(chunk.metadata),
+        citation={
+            "source_file": chunk.citation.source_file,
+            "chunk_id": chunk.citation.chunk_id,
+            "page": chunk.citation.page,
+            "excerpt": chunk.citation.excerpt,
+        },
+        embedding=embedding,
+    )
 
 
 @dataclass
 class HybridRagEngine:
-    """Hybrid retrieval over processed documents."""
+    """Hybrid retrieval over chunked, indexed documents."""
 
     config: AppConfig
     knowledge_base: list[HybridChunk] = field(default_factory=list)
     bm25: Any | None = None
+    _chunk_positions: dict[str, int] = field(default_factory=dict, repr=False)
     _embed_model: Any | None = field(default=None, repr=False)
     _rerank_model: Any | None = field(default=None, repr=False)
     _rerank_tokenizer: Any | None = field(default=None, repr=False)
@@ -79,51 +98,107 @@ class HybridRagEngine:
         )
         self._rerank_model.eval()
 
-    def build_index(self) -> None:
-        """Load processed docs and build BM25 + embedding indexes."""
-        records = load_processed_records(self.config.processed_dir)
-        if not records:
-            self.knowledge_base = []
-            self.bm25 = None
-            return
-
-        self._load_embed_model()
-        texts = [record.content for record in records]
-        embeddings = self._embed_model.encode(texts, convert_to_numpy=True)
-
-        corpus_tokenized = [tokenize_hw_text(text) for text in texts]
+    def _apply_loaded_index(
+        self,
+        chunks: list[Chunk],
+        embeddings: np.ndarray,
+        bm25_corpus: list[list[str]],
+    ) -> None:
         from rank_bm25 import BM25Okapi
 
-        self.bm25 = BM25Okapi(corpus_tokenized)
         self.knowledge_base = [
-            HybridChunk(
-                chunk_id=record.chunk_id,
-                content=record.content,
-                metadata={
-                    "project": record.metadata.project,
-                    "build": record.metadata.build,
-                    "document_type": record.metadata.document_type,
-                    "source_file": record.metadata.source_file,
-                    "target_file": record.metadata.target_file,
-                },
-                embedding=embeddings[index],
-            )
-            for index, record in enumerate(records)
+            _chunk_to_hybrid(chunk, embeddings[index])
+            for index, chunk in enumerate(chunks)
         ]
-        logger.info("Hybrid index built with %d chunk(s)", len(self.knowledge_base))
+        self._chunk_positions = {
+            chunk.chunk_id: index for index, chunk in enumerate(self.knowledge_base)
+        }
+        self.bm25 = BM25Okapi(bm25_corpus) if bm25_corpus else None
+        logger.info("Hybrid index loaded with %d chunk(s)", len(self.knowledge_base))
+
+    def load_index(self) -> None:
+        """Load a persisted index or build one from processed documents."""
+        from ee_wiki.knowledge.indexer.store import index_exists, load_index
+
+        if index_exists(self.config.indexes_dir):
+            persisted = load_index(self.config.indexes_dir)
+            self._apply_loaded_index(
+                persisted.chunks,
+                persisted.embeddings,
+                persisted.bm25_corpus,
+            )
+            return
+
+        logger.info("No persisted index found; building from processed documents")
+        from ee_wiki.knowledge.indexer.build import build_index_from_processed
+        from ee_wiki.knowledge.indexer.store import load_index
+
+        build_index_from_processed(self.config)
+        persisted = load_index(self.config.indexes_dir)
+        self._apply_loaded_index(
+            persisted.chunks,
+            persisted.embeddings,
+            persisted.bm25_corpus,
+        )
+
+    def build_index(self) -> None:
+        """Rebuild and load the hybrid index from processed documents."""
+        from ee_wiki.knowledge.indexer.build import build_index_from_processed
+        from ee_wiki.knowledge.indexer.store import load_index
+
+        build_index_from_processed(self.config)
+        persisted = load_index(self.config.indexes_dir)
+        self._apply_loaded_index(
+            persisted.chunks,
+            persisted.embeddings,
+            persisted.bm25_corpus,
+        )
+
+    def _filter_by_scope(
+        self,
+        *,
+        target_project: str | None,
+        target_build: str | None,
+    ) -> tuple[list[HybridChunk], dict[tuple[str, str], int]]:
+        if not target_project:
+            return self.knowledge_base, {}
+
+        if self.config.retrieval.scope_inheritance and target_build:
+            scopes = expand_retrieval_scope(
+                target_project,
+                target_build,
+                self.config.data_layout,
+            )
+            scope_set = set(scopes)
+            scope_ranks = {pair: rank for rank, pair in enumerate(scopes)}
+            filtered = [
+                chunk
+                for chunk in self.knowledge_base
+                if (chunk.metadata.get("project"), chunk.metadata.get("build")) in scope_set
+            ]
+            return filtered, scope_ranks
+
+        filtered = [
+            chunk
+            for chunk in self.knowledge_base
+            if chunk.metadata.get("project") == target_project
+            and (target_build is None or chunk.metadata.get("build") == target_build)
+        ]
+        return filtered, {}
 
     def retrieve(
         self,
         query: str,
         *,
         target_project: str | None = None,
+        target_build: str | None = None,
         top_k_dense: int | None = None,
         top_k_sparse: int | None = None,
         top_k_final: int | None = None,
     ) -> list[HybridChunk]:
-        """Run metadata filter → dense + sparse recall → rerank."""
+        """Run scope filter → dense + sparse recall → rerank → scope priority."""
         if not self.knowledge_base:
-            self.build_index()
+            self.load_index()
         if not self.knowledge_base:
             return []
 
@@ -131,16 +206,14 @@ class HybridRagEngine:
         sparse_k = top_k_sparse or self.config.retrieval.top_k_sparse
         final_k = top_k_final or self.config.retrieval.top_k_final
 
-        filtered = self.knowledge_base
-        if target_project:
-            filtered = [
-                chunk
-                for chunk in self.knowledge_base
-                if chunk.metadata.get("project") == target_project
-            ]
-            if not filtered:
-                return []
+        filtered, scope_ranks = self._filter_by_scope(
+            target_project=target_project,
+            target_build=target_build,
+        )
+        if not filtered:
+            return []
 
+        self._load_embed_model()
         query_emb = self._embed_model.encode(query, convert_to_numpy=True)
         dense_scores: list[tuple[float, HybridChunk]] = []
         for chunk in filtered:
@@ -159,8 +232,10 @@ class HybridRagEngine:
             all_scores = self.bm25.get_scores(query_tokens)
             sparse_scores: list[tuple[float, HybridChunk]] = []
             for chunk in filtered:
-                idx = self.knowledge_base.index(chunk)
-                sparse_scores.append((float(all_scores[idx]), chunk))
+                position = self._chunk_positions.get(chunk.chunk_id)
+                if position is None:
+                    continue
+                sparse_scores.append((float(all_scores[position]), chunk))
             sparse_selected = [
                 item[1] for item in sorted(sparse_scores, reverse=True)[:sparse_k]
             ]
@@ -187,5 +262,16 @@ class HybridRagEngine:
                 max_length=512,
             ).to(self._device)
             logits = self._rerank_model(inputs).logits.view(-1).float().cpu().numpy()
-        reranked = [item[1] for item in sorted(zip(logits, combined), reverse=True)]
+
+        def scope_rank(chunk: HybridChunk) -> int:
+            pair = (chunk.metadata.get("project"), chunk.metadata.get("build"))
+            return scope_ranks.get(pair, 0) if scope_ranks else 0
+
+        reranked = [
+            item[1]
+            for item in sorted(
+                zip(logits, combined),
+                key=lambda item: (scope_rank(item[1]), -float(item[0])),
+            )
+        ]
         return reranked[:final_k]
