@@ -1,6 +1,12 @@
 """Shared utilities and types for EE-Wiki."""
 
-from ee_wiki.common.config import AppConfig, SchematicPdfConfig, find_repo_root, load_config
+from ee_wiki.common.config import (
+    ApiConfig,
+    AppConfig,
+    SchematicPdfConfig,
+    find_repo_root,
+    load_config,
+)
 from ee_wiki.common.types import (
     Chunk,
     Citation,
@@ -8,10 +14,12 @@ from ee_wiki.common.types import (
     Metadata,
     MetadataFilter,
     ModelsConfig,
+    RagAnswer,
     StandardDocument,
 )
 
 __all__ = [
+    "ApiConfig",
     "AppConfig",
     "Chunk",
     "Citation",
@@ -19,6 +27,7 @@ __all__ = [
     "Metadata",
     "MetadataFilter",
     "ModelsConfig",
+    "RagAnswer",
     "SchematicPdfConfig",
     "StandardDocument",
     "find_repo_root",

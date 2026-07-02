@@ -154,14 +154,29 @@ class HybridRagEngine:
             persisted.bm25_corpus,
         )
 
+    def _apply_document_type_filter(
+        self,
+        chunks: list[HybridChunk],
+        document_type: str | None,
+    ) -> list[HybridChunk]:
+        if not document_type:
+            return chunks
+        return [
+            chunk
+            for chunk in chunks
+            if chunk.metadata.get("document_type") == document_type
+        ]
+
     def _filter_by_scope(
         self,
         *,
         target_project: str | None,
         target_build: str | None,
+        document_type: str | None = None,
     ) -> tuple[list[HybridChunk], dict[tuple[str, str], int]]:
         if not target_project:
-            return self.knowledge_base, {}
+            filtered = self.knowledge_base
+            return self._apply_document_type_filter(filtered, document_type), {}
 
         if self.config.retrieval.scope_inheritance and target_build:
             scopes = expand_retrieval_scope(
@@ -176,7 +191,10 @@ class HybridRagEngine:
                 for chunk in self.knowledge_base
                 if (chunk.metadata.get("project"), chunk.metadata.get("build")) in scope_set
             ]
-            return filtered, scope_ranks
+            return (
+                self._apply_document_type_filter(filtered, document_type),
+                scope_ranks,
+            )
 
         filtered = [
             chunk
@@ -184,7 +202,7 @@ class HybridRagEngine:
             if chunk.metadata.get("project") == target_project
             and (target_build is None or chunk.metadata.get("build") == target_build)
         ]
-        return filtered, {}
+        return self._apply_document_type_filter(filtered, document_type), {}
 
     def retrieve(
         self,
@@ -192,11 +210,25 @@ class HybridRagEngine:
         *,
         target_project: str | None = None,
         target_build: str | None = None,
+        document_type: str | None = None,
         top_k_dense: int | None = None,
         top_k_sparse: int | None = None,
         top_k_final: int | None = None,
     ) -> list[HybridChunk]:
-        """Run scope filter → dense + sparse recall → rerank → scope priority."""
+        """Run scope filter → dense + sparse recall → rerank → scope priority.
+
+        Args:
+            query: Natural language or keyword search string.
+            target_project: Optional project metadata filter.
+            target_build: Optional build metadata filter.
+            document_type: Optional document type filter (e.g. ``schematic``).
+            top_k_dense: Dense recall count override.
+            top_k_sparse: Sparse recall count override.
+            top_k_final: Final reranked result count override.
+
+        Returns:
+            Ranked chunks with citation metadata attached.
+        """
         if not self.knowledge_base:
             self.load_index()
         if not self.knowledge_base:
@@ -209,6 +241,7 @@ class HybridRagEngine:
         filtered, scope_ranks = self._filter_by_scope(
             target_project=target_project,
             target_build=target_build,
+            document_type=document_type,
         )
         if not filtered:
             return []
@@ -224,7 +257,10 @@ class HybridRagEngine:
                 / (np.linalg.norm(query_emb) * np.linalg.norm(chunk.embedding) + 1e-12)
             )
             dense_scores.append((score, chunk))
-        dense_selected = [item[1] for item in sorted(dense_scores, reverse=True)[:dense_k]]
+        dense_selected = [
+            item[1]
+            for item in sorted(dense_scores, key=lambda item: item[0], reverse=True)[:dense_k]
+        ]
 
         sparse_selected: list[HybridChunk] = []
         if self.bm25 is not None:
@@ -237,7 +273,8 @@ class HybridRagEngine:
                     continue
                 sparse_scores.append((float(all_scores[position]), chunk))
             sparse_selected = [
-                item[1] for item in sorted(sparse_scores, reverse=True)[:sparse_k]
+                item[1]
+                for item in sorted(sparse_scores, key=lambda item: item[0], reverse=True)[:sparse_k]
             ]
 
         combined: list[HybridChunk] = []

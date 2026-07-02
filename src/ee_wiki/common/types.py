@@ -56,6 +56,15 @@ class Chunk:
 
 
 @dataclass(frozen=True)
+class RagAnswer:
+    """Generated answer grounded in retrieved chunks."""
+
+    answer: str
+    citations: list[Citation]
+    insufficient_context: bool = False
+
+
+@dataclass(frozen=True)
 class MetadataFilter:
     """Pre-retrieval constraints for project, build, and document type."""
 

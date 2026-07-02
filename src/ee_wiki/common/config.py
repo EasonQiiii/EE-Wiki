@@ -72,6 +72,14 @@ class RetrievalConfig:
 
 
 @dataclass(frozen=True)
+class ApiConfig:
+    """HTTP server settings."""
+
+    host: str
+    port: int
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Loaded application configuration."""
 
@@ -85,6 +93,7 @@ class AppConfig:
     chunking: ChunkingConfig
     retrieval: RetrievalConfig
     data_layout: DataLayoutConfig
+    api: ApiConfig
 
     @property
     def models_dir(self) -> Path:
@@ -163,6 +172,7 @@ def load_config(
     chunking = raw.get("chunking", {})
     models = raw.get("models", {})
     schematic = ingestion.get("schematic_pdf", {})
+    api = raw.get("api", {})
 
     document_type_folders = data_layout.get("document_type_folders", {})
     if not isinstance(document_type_folders, dict) or not document_type_folders:
@@ -215,6 +225,10 @@ def load_config(
             top_k_sparse=int(retrieval.get("top_k_sparse", 4)),
         ),
         data_layout=layout,
+        api=ApiConfig(
+            host=str(api.get("host", "0.0.0.0")),
+            port=int(api.get("port", 8080)),
+        ),
     )
     logger.debug("Loaded config from %s (raw_dir=%s)", path, config.raw_dir)
     return config
