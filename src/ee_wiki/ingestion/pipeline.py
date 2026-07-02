@@ -12,7 +12,9 @@ from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import StandardDocument
 from ee_wiki.ingestion.cleanup import RemovedProcessed, cleanup_orphaned_processed
 from ee_wiki.ingestion.parsers.markdown import MARKDOWN_SUFFIXES, parse_markdown
-from ee_wiki.ingestion.parsers.schematic_pdf import PDF_SUFFIXES, parse_schematic_pdf
+from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
+from ee_wiki.ingestion.parsers.prose_pdf import parse_prose_pdf
+from ee_wiki.ingestion.parsers.schematic_pdf import parse_schematic_pdf
 from ee_wiki.ingestion.path_metadata import parse_path_metadata
 from ee_wiki.ingestion.sync import (
     collect_raw_files,
@@ -90,8 +92,11 @@ def ingest_file(
                     repo_root=config.repo_root,
                 )
             else:
-                raise IngestionError(
-                    f"PDF ingest is supported for sch/ only in V1: {path.name}"
+                document = parse_prose_pdf(
+                    path,
+                    layout,
+                    config,
+                    repo_root=config.repo_root,
                 )
         else:
             raise IngestionError(

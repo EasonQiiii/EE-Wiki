@@ -17,6 +17,14 @@ python scripts/ingest.py
 python scripts/index.py
 ```
 
+By default, `index.py` only re-chunks and re-embeds processed documents whose `source_mtime` / `source_size` changed since the last build (same fingerprint fields ingest uses). Unchanged documents reuse existing chunk rows and embeddings. Use `--force` for a full rebuild after chunker config changes or when you want to refresh every vector.
+
+```bash
+python scripts/index.py --force
+```
+
+On Apple Silicon, index embedding defaults to **CPU** (`indexing.embed_device: cpu` in `config/default.yaml`) to avoid PyTorch MPS errors such as `Invalid buffer size: 32.00 GiB`. Override with `EE_WIKI_EMBED_DEVICE=mps` if you prefer GPU embedding.
+
 Requires local models configured in `config/default.yaml`:
 
 - `embedding_model` — dense recall (e.g. `bge-m3`)

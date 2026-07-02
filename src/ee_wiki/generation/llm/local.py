@@ -230,11 +230,15 @@ class LocalLlmBackend:
         prompt: str,
         *,
         max_new_tokens: int | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> Iterator[str]:
         """Stream generated text chunks for the given prompt."""
-        import torch
         from threading import Thread
+
         from transformers import TextIteratorStreamer
+
+        if cancel_event and cancel_event.is_set():
+            return
 
         self._ensure_loaded()
         assert self._model is not None
@@ -256,10 +260,17 @@ class LocalLlmBackend:
             "streamer": streamer,
         }
 
+        cancelled = False
         with self._generate_lock:
             thread = Thread(target=self._model.generate, kwargs=generation_kwargs)
             thread.start()
             for text in streamer:
+                if cancel_event and cancel_event.is_set():
+                    cancelled = True
+                    break
                 if text:
                     yield text
             thread.join()
+
+        if cancelled:
+            logger.info("LLM stream generation cancelled")

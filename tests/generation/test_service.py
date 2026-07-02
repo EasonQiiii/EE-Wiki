@@ -60,3 +60,34 @@ def test_answer_generates_from_retrieved_chunks(rag_service, repo_root) -> None:
     prompt = rag_service.llm.generate.call_args.args[0]
     assert "VBAT connects to PMIC." in prompt
     assert "What is VBAT?" in prompt
+
+
+def test_stream_answer_yields_llm_fragments_directly(rag_service) -> None:
+    chunk = HybridChunk(
+        chunk_id="note__power",
+        content="VBAT connects to PMIC.",
+        metadata={"project": "logan", "build": "p1", "document_type": "engineering_note"},
+        citation={"source_file": "data/raw/logan/p1/note/note.md", "chunk_id": "note__power"},
+    )
+    rag_service.engine.retrieve.return_value = [chunk]
+
+    def _fake_stream(prompt: str, cancel_event=None):
+        yield "VBAT "
+        yield "answer."
+
+    rag_service.llm.generate_stream = _fake_stream
+
+    result = rag_service.stream_answer("What is VBAT?")
+    assert "".join(result.text_chunks) == "VBAT answer."
+
+
+def test_stream_answer_honours_cancel_before_generation(rag_service) -> None:
+    import threading
+
+    cancel = threading.Event()
+    cancel.set()
+    rag_service.engine.retrieve.return_value = []
+
+    result = rag_service.stream_answer("ignored", cancel_event=cancel)
+    assert list(result.text_chunks) == []
+    rag_service.engine.retrieve.assert_not_called()

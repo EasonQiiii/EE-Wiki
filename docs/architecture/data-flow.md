@@ -15,6 +15,13 @@ Raw file under data/raw/{project}/{build}/{type}/…
     → indexes on disk under data/indexes/
 ```
 
+**Incremental index** (default): `scripts/index.py` compares each processed document’s `source_mtime` and `source_size` to the last build’s `manifest.json` fingerprints. New or changed documents are re-chunked and re-embedded; unchanged documents reuse existing rows; documents removed from `data/processed/` are dropped from the index. Pass `--force` to rebuild everything (required after chunker config changes).
+
+```bash
+python scripts/index.py          # incremental
+python scripts/index.py --force  # full rebuild
+```
+
 ## Query (read path)
 
 ```
@@ -67,10 +74,10 @@ Config: `config/default.yaml` → `chunking.*` (`max_chars`, `overlap_chars`, `m
 **Re-index after chunker changes**
 
 ```bash
-python scripts/index.py
+python scripts/index.py --force
 ```
 
-Chunk boundaries are fixed at index time; retrieval does not re-chunk.
+Chunk boundaries are fixed at index time; retrieval does not re-chunk. Incremental runs (`python scripts/index.py` without `--force`) skip unchanged processed documents.
 
 ### Query time: section expansion
 

@@ -35,6 +35,26 @@ def find_repo_root(start: Path | None = None) -> Path:
 
 
 @dataclass(frozen=True)
+class IndexingConfig:
+    """Index build settings for embedding and BM25."""
+
+    embed_device: str = "cpu"
+    embed_batch_size: int = 8
+
+
+@dataclass(frozen=True)
+class ProsePdfConfig:
+    """Settings for prose PDF text extraction and OCR fallback."""
+
+    max_pages: int | None = None
+    min_text_chars: int = 40
+    ocr_dpi: int = 200
+    ocr_language: str = "auto"
+    ocr_language_fallback: str = "eng+chi_sim"
+    tessdata_dir: Path | None = None
+
+
+@dataclass(frozen=True)
 class SchematicPdfConfig:
     """Settings for schematic PDF vision parsing."""
 
@@ -112,8 +132,10 @@ class AppConfig:
     indexes_dir: Path
     graph_dir: Path
     models: ModelsConfig
+    prose_pdf: ProsePdfConfig
     schematic_pdf: SchematicPdfConfig
     chunking: ChunkingConfig
+    indexing: IndexingConfig
     retrieval: RetrievalConfig
     data_layout: DataLayoutConfig
     generation: GenerationConfig
@@ -199,7 +221,9 @@ def load_config(
     ingestion = raw.get("ingestion", {})
     data_layout = raw.get("data_layout", {})
     chunking = raw.get("chunking", {})
+    indexing = raw.get("indexing", {})
     models = raw.get("models", {})
+    prose = ingestion.get("prose_pdf", {})
     schematic = ingestion.get("schematic_pdf", {})
     api = raw.get("api", {})
     concurrency = api.get("concurrency", {})
@@ -223,6 +247,17 @@ def load_config(
         processed_dir=processed_dir,
     )
 
+    tessdata_override = os.environ.get("EE_WIKI_TESSDATA_DIR")
+    tessdata_dir: Path | None = None
+    if tessdata_override:
+        tessdata_dir = Path(tessdata_override).expanduser()
+        if not tessdata_dir.is_absolute():
+            tessdata_dir = (root / tessdata_dir).resolve()
+    elif prose.get("tessdata_dir"):
+        tessdata_dir = _resolve_path(root, str(prose.get("tessdata_dir")))
+
+    embed_device = os.environ.get("EE_WIKI_EMBED_DEVICE", indexing.get("embed_device", "cpu"))
+
     config = AppConfig(
         repo_root=root,
         raw_dir=raw_dir,
@@ -230,6 +265,14 @@ def load_config(
         indexes_dir=indexes_dir,
         graph_dir=graph_dir,
         models=_load_models_config(root, models),
+        prose_pdf=ProsePdfConfig(
+            max_pages=prose.get("max_pages"),
+            min_text_chars=int(prose.get("min_text_chars", 40)),
+            ocr_dpi=int(prose.get("ocr_dpi", 200)),
+            ocr_language=str(prose.get("ocr_language", "auto")),
+            ocr_language_fallback=str(prose.get("ocr_language_fallback", "eng+chi_sim")),
+            tessdata_dir=tessdata_dir,
+        ),
         schematic_pdf=SchematicPdfConfig(
             dpi=int(schematic.get("dpi", 200)),
             max_pages=schematic.get("max_pages"),
@@ -248,6 +291,10 @@ def load_config(
             overlap_chars=int(chunking.get("overlap_chars", 100)),
             min_chars=int(chunking.get("min_chars", 50)),
             excerpt_chars=int(chunking.get("excerpt_chars", 200)),
+        ),
+        indexing=IndexingConfig(
+            embed_device=str(embed_device),
+            embed_batch_size=int(indexing.get("embed_batch_size", 8)),
         ),
         retrieval=RetrievalConfig(
             top_k_embed=int(retrieval.get("top_k_embed", 20)),

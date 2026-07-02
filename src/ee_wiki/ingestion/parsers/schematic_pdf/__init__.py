@@ -10,6 +10,7 @@ from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import DataLayoutConfig, StandardDocument
+from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
 from ee_wiki.ingestion.parsers.schematic_pdf.engine import (
     SchematicVisionEngine,
     build_vision_engine,
@@ -38,8 +39,6 @@ if TYPE_CHECKING:
     from ee_wiki.common.config import AppConfig
 
 logger = get_logger(__name__)
-
-PDF_SUFFIXES = {".pdf"}
 
 
 class SchematicPdfParserError(EEWikiError):

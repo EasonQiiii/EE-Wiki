@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 import time
 import uuid
+from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from ee_wiki.api.citation_models import citation_to_model
@@ -21,6 +24,7 @@ from ee_wiki.api.models import (
 )
 from ee_wiki.api.open_webui_sources import citations_to_open_webui_sources
 from ee_wiki.api.rag_handler import rag_request_slot, raise_queue_full_http_error
+from ee_wiki.api.stream_cancel import iter_sync_text_chunks, watch_client_disconnect
 from ee_wiki.common.logging import get_logger
 from ee_wiki.generation.llm.errors import LlmLoadError
 from ee_wiki.generation.service import INSUFFICIENT_ANSWER, RagService
@@ -107,8 +111,9 @@ def list_models() -> dict:
 
 
 @router.post("/chat/completions")
-def chat_completions(
+async def chat_completions(
     body: ChatCompletionRequest,
+    request: Request,
     response: Response,
     service: RagService = Depends(get_rag_service),
     gate=Depends(get_queue_gate),
@@ -125,9 +130,10 @@ def chat_completions(
         except QueueFullError as exc:
             raise raise_queue_full_http_error(exc) from exc
 
-        def wrapped_stream():
+        async def wrapped_stream() -> AsyncIterator[str]:
             try:
-                yield from _stream_answer(
+                async for chunk in _stream_answer(
+                    request=request,
                     service=service,
                     chat_id=chat_id,
                     created=created,
@@ -137,7 +143,8 @@ def chat_completions(
                     build=body.build,
                     document_type=body.document_type,
                     top_k=body.top_k,
-                )
+                ):
+                    yield chunk
             finally:
                 slot_ctx.__exit__(None, None, None)
 
@@ -150,7 +157,8 @@ def chat_completions(
     with rag_request_slot(gate) as snapshot:
         response.headers.update(queue_response_headers(snapshot))
         try:
-            result = service.answer(
+            result = await asyncio.to_thread(
+                service.answer,
                 question,
                 target_project=body.project,
                 target_build=body.build,
@@ -160,6 +168,10 @@ def chat_completions(
         except LlmLoadError as exc:
             logger.error("LLM load failed: %s", exc)
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if await request.is_disconnected():
+        logger.info("Chat completion %s abandoned: client disconnected", chat_id)
+        return Response(status_code=204)
 
     content = result.answer or INSUFFICIENT_ANSWER
     citation_models = [citation_to_model(citation) for citation in result.citations]
@@ -180,8 +192,9 @@ def chat_completions(
     )
 
 
-def _stream_answer(
+async def _stream_answer(
     *,
+    request: Request,
     service: RagService,
     chat_id: str,
     created: int,
@@ -191,49 +204,70 @@ def _stream_answer(
     build: str | None,
     document_type: str | None,
     top_k: int | None,
-):
+) -> AsyncIterator[str]:
     """Yield OpenAI-compatible SSE chunks for a streamed RAG answer."""
-    yield _sse_chunk(
-        chat_id=chat_id,
-        model=model,
-        created=created,
-        delta={"role": "assistant"},
+    cancel = threading.Event()
+    watcher = asyncio.create_task(
+        watch_client_disconnect(request, cancel, label=f"Chat stream {chat_id}")
     )
-
     fragments: list[str] = []
-    stream_result = service.stream_answer(
-        question,
-        target_project=project,
-        target_build=build,
-        document_type=document_type,
-        top_k_final=top_k,
-    )
-    sources = citations_to_open_webui_sources(stream_result.citations)
-    if sources:
+
+    try:
+        yield _sse_chunk(
+            chat_id=chat_id,
+            model=model,
+            created=created,
+            delta={"role": "assistant"},
+        )
+
+        stream_result = service.stream_answer(
+            question,
+            target_project=project,
+            target_build=build,
+            document_type=document_type,
+            top_k_final=top_k,
+            cancel_event=cancel,
+        )
+        if cancel.is_set():
+            logger.info("Chat stream %s cancelled before generation", chat_id)
+            return
+
+        sources = citations_to_open_webui_sources(stream_result.citations)
+        if sources:
+            yield _sse_chunk(
+                chat_id=chat_id,
+                model=model,
+                created=created,
+                delta={},
+                sources=sources,
+            )
+
+        async for fragment in iter_sync_text_chunks(
+            stream_result.text_chunks,
+            cancel=cancel,
+            request=request,
+        ):
+            fragments.append(fragment)
+            yield _sse_chunk(
+                chat_id=chat_id,
+                model=model,
+                created=created,
+                delta={"content": fragment},
+            )
+
+        if cancel.is_set():
+            logger.info("Chat stream %s cancelled (%d chars partial)", chat_id, len(fragments))
+            return
+
+        content = "".join(fragments).strip() or INSUFFICIENT_ANSWER
+        logger.info("Chat stream %s finished (%d chars)", chat_id, len(content))
         yield _sse_chunk(
             chat_id=chat_id,
             model=model,
             created=created,
             delta={},
-            sources=sources,
+            finish_reason="stop",
         )
-
-    for fragment in stream_result.text_chunks:
-        fragments.append(fragment)
-        yield _sse_chunk(
-            chat_id=chat_id,
-            model=model,
-            created=created,
-            delta={"content": fragment},
-        )
-
-    content = "".join(fragments).strip() or INSUFFICIENT_ANSWER
-    logger.info("Chat stream %s finished (%d chars)", chat_id, len(content))
-    yield _sse_chunk(
-        chat_id=chat_id,
-        model=model,
-        created=created,
-        delta={},
-        finish_reason="stop",
-    )
-    yield "data: [DONE]\n\n"
+        yield "data: [DONE]\n\n"
+    finally:
+        watcher.cancel()

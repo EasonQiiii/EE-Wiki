@@ -7,10 +7,9 @@ from pathlib import Path
 
 from ee_wiki.common.fingerprint import raw_fingerprint
 from ee_wiki.common.logging import get_logger
-from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import DataLayoutConfig
 from ee_wiki.ingestion.parsers.markdown import MARKDOWN_SUFFIXES
-from ee_wiki.ingestion.parsers.schematic_pdf import PDF_SUFFIXES
+from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
 from ee_wiki.ingestion.path_metadata import PathMetadataError, parse_path_metadata
 from ee_wiki.ingestion.processed_paths import resolve_processed_paths
 
@@ -27,17 +26,15 @@ def expected_content_extension(raw_path: Path, layout: DataLayoutConfig) -> str 
         layout: Data layout for path metadata parsing.
 
     Returns:
-        ``\".md\"`` for schematic PDFs, otherwise ``None``.
+        ``\".md\"`` for PDF sources, otherwise ``None``.
     """
     if raw_path.suffix.lower() not in PDF_SUFFIXES:
         return None
     try:
-        metadata = parse_path_metadata(raw_path, layout)
+        parse_path_metadata(raw_path, layout)
     except PathMetadataError:
         return None
-    if metadata.document_type == SCHEMATIC_DOCUMENT_TYPE:
-        return ".md"
-    return None
+    return ".md"
 
 
 def is_supported_raw_file(raw_path: Path) -> bool:
@@ -52,10 +49,10 @@ def is_ingestible_raw_file(raw_path: Path, layout: DataLayoutConfig) -> bool:
         return False
     if raw_path.suffix.lower() in PDF_SUFFIXES:
         try:
-            metadata = parse_path_metadata(raw_path, layout)
+            parse_path_metadata(raw_path, layout)
         except PathMetadataError:
             return False
-        return metadata.document_type == SCHEMATIC_DOCUMENT_TYPE
+        return True
     try:
         parse_path_metadata(raw_path, layout)
     except PathMetadataError:

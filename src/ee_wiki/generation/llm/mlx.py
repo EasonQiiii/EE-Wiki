@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ee_wiki.common.logging import get_logger
 from ee_wiki.generation.llm.errors import LlmLoadError
+from ee_wiki.generation.prompt_stats import prompt_size_fields
 
 logger = get_logger(__name__)
 
@@ -85,8 +86,14 @@ class MlxLlmBackend:
 
         token_budget = max_new_tokens or self._max_new_tokens
         formatted = _format_prompt(self._tokenizer, prompt)
+        size = prompt_size_fields(formatted)
         started = time.monotonic()
-        logger.info("MLX generation started (max_new_tokens=%d)", token_budget)
+        logger.info(
+            "MLX generation started (max_new_tokens=%d, prompt_chars=%d, prompt_tokens_est=%d)",
+            token_budget,
+            size["prompt_chars"],
+            size["prompt_tokens_est"],
+        )
 
         with self._generate_lock:
             text = mlx_lm.generate(
@@ -110,6 +117,7 @@ class MlxLlmBackend:
         prompt: str,
         *,
         max_new_tokens: int | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> Iterator[str]:
         """Stream generated text chunks for the given prompt."""
         mlx_lm = _import_mlx_lm()
@@ -117,9 +125,21 @@ class MlxLlmBackend:
         assert self._model is not None
         assert self._tokenizer is not None
 
+        if cancel_event and cancel_event.is_set():
+            return
+
         token_budget = max_new_tokens or self._max_new_tokens
         formatted = _format_prompt(self._tokenizer, prompt)
+        size = prompt_size_fields(formatted)
+        logger.info(
+            "MLX stream generation started "
+            "(max_new_tokens=%d, prompt_chars=%d, prompt_tokens_est=%d)",
+            token_budget,
+            size["prompt_chars"],
+            size["prompt_tokens_est"],
+        )
 
+        cancelled = False
         with self._generate_lock:
             for response in mlx_lm.stream_generate(
                 self._model,
@@ -127,7 +147,11 @@ class MlxLlmBackend:
                 formatted,
                 max_tokens=token_budget,
             ):
-                # mlx-lm yields incremental segments (detokenizer.last_segment), not
-                # cumulative text — see mlx_lm.generate.stream_generate.
+                if cancel_event and cancel_event.is_set():
+                    cancelled = True
+                    break
                 if response.text:
                     yield response.text
+
+        if cancelled:
+            logger.info("MLX stream generation cancelled")

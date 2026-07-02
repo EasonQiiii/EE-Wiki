@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ee_wiki.common.config import AppConfig
 from ee_wiki.ingestion.parsers.schematic_pdf.layout import PageLayoutResult
 from ee_wiki.ingestion.parsers.schematic_pdf.merge import PageExtraction
-from ee_wiki.ingestion.pipeline import IngestionError, ingest_file
+from ee_wiki.ingestion.pipeline import ingest_file
 
 
 @pytest.fixture
@@ -41,12 +41,23 @@ def ingest_config(app_config, tmp_path: Path) -> AppConfig:
     )
 
 
-def test_pdf_in_note_folder_rejected(ingest_config: AppConfig) -> None:
+def test_pdf_in_note_folder_uses_prose_parser(ingest_config: AppConfig) -> None:
     raw_path = ingest_config.raw_dir / "logan/p1/note/doc.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
-    with pytest.raises(IngestionError, match="sch/ only"):
-        ingest_file(raw_path, ingest_config)
+
+    mock_doc = MagicMock()
+    mock_doc.page_count = 1
+    mock_doc.__getitem__.return_value = MagicMock()
+    mock_doc.__getitem__.return_value.get_text.return_value = (
+        "Engineering note with enough embedded text for prose PDF ingest."
+    )
+
+    with patch("ee_wiki.ingestion.parsers.prose_pdf.fitz.open", return_value=mock_doc):
+        document = ingest_file(raw_path, ingest_config).document
+
+    assert document.metadata.document_type == "engineering_note"
+    assert "Engineering note" in document.content
 
 
 def test_schematic_pdf_ingest_with_mock_engine(ingest_config: AppConfig, monkeypatch) -> None:

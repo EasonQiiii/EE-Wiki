@@ -47,8 +47,29 @@ Supported formats (V1):
 
 | Folder | Formats |
 |--------|---------|
-| `note/`, `sop/`, etc. | `.md`, `.markdown`, `.txt` |
-| `sch/` | `.pdf` (schematic PDF only) |
+| `note/`, `sop/`, `datasheet/`, etc. | `.md`, `.markdown`, `.txt`, `.pdf` (text + OCR) |
+| `sch/` | `.pdf` (schematic vision pipeline) |
+
+Prose PDFs (`note/`, `sop/`, `datasheet/`, …) extract embedded text per page. Pages with little selectable text fall back to **Tesseract OCR** via PyMuPDF. Install Tesseract locally for scanned documents:
+
+```bash
+# macOS
+brew install tesseract tesseract-lang
+
+# Debian/Ubuntu
+sudo apt install tesseract-ocr tesseract-ocr-chi-sim
+```
+
+OCR language defaults to **`auto`** (`ingestion.prose_pdf.ocr_language`):
+
+| Situation | Behavior |
+|-----------|----------|
+| Embedded text contains Chinese | Uses `eng+chi_sim` |
+| Embedded text is Latin only | Uses `eng` |
+| Image-only scan | Tesseract OSD on page 1, then `ocr_language_fallback` (`eng+chi_sim` by default) |
+| Mixed pages in one PDF | Per-page override when a sparse page still has CJK/Latin hints |
+
+Set `ocr_language: eng` or `eng+chi_sim` to force a fixed language pack. Tune `min_text_chars`, `ocr_dpi`, and `ocr_language_fallback` in `config/default.yaml` → `ingestion.prose_pdf`.
 
 ## Basic command
 
@@ -170,6 +191,10 @@ Empty directories under `data/processed/` are pruned afterward.
 ## Output layout
 
 ```
+data/raw/logan/p1/note/manual.pdf
+    →  data/processed/logan/p1/note/manual.md
+    →  data/processed/logan/p1/note/manual.md.meta.json
+
 data/raw/logan/p1/sch/board.pdf
     →  data/processed/logan/p1/sch/board.md
     →  data/processed/logan/p1/sch/board.md.meta.json
@@ -179,7 +204,7 @@ data/raw/logan/p1/note/manual.md
     →  data/processed/logan/p1/note/manual.md.meta.json
 ```
 
-Schematic PDFs use the **temp3 two-stage pipeline**:
+Prose PDFs (`note/`, `sop/`, `datasheet/`, …) emit per-page `## Page N` sections for chunking. Schematic PDFs use the **temp3 two-stage pipeline**:
 
 1. **LayoutLMv3** — OCR text + figure region crop → `data/processed/.../sch/images/<pdf>_p<N>_crop_*.png`
 2. **Qwen3-VL** — reconstruct Markdown from OCR text + crop image (system FA expert prompt)
@@ -202,7 +227,8 @@ Output merges per-page reports under one `# 电子图纸分析报告：{title}` 
 
 | Issue | Check |
 |-------|-------|
-| PDF not ingested | File must be under `.../sch/`; other PDF paths are rejected in V1 |
+| Prose PDF empty / OCR fails | Ensure tessdata exists (`ls /opt/homebrew/share/tessdata/eng.traineddata` on Apple Silicon). Set `ingestion.prose_pdf.tessdata_dir` or `EE_WIKI_TESSDATA_DIR` if auto-detect fails. Install `chi_sim` / `osd` language packs for Chinese scans. |
+| Schematic PDF not ingested | File must be under `.../sch/` |
 | PDF ingest slow / OOM | Qwen3-VL-8B is heavy; ensure `EE_WIKI_MODELS_DIR` points to local weights. Watch INFO logs for `page N/M` and 30s heartbeats during inference. On Apple Silicon, device may show `mps`; otherwise `cpu` (very slow). |
 | File always re-ingested | Sidecar missing or `source_mtime`/`source_size` absent (old run) |
 | Processed not deleted after raw removed | Run full `python scripts/ingest.py` or directory scope, not single-file mode |

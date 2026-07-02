@@ -23,6 +23,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rebuild the full index even when processed sources are unchanged",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -37,13 +42,16 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger("ee_wiki").setLevel(logging.DEBUG)
     try:
         config = load_config()
-        result = build_index_from_processed(config)
+        result = build_index_from_processed(config, force=args.force)
     except (EEWikiError, RuntimeError) as exc:
         logger.error("%s", exc)
         return 1
 
     print(
-        f"Indexed: {result.chunk_count} chunk(s) → {config.indexes_dir}",
+        f"Indexed: {result.indexed_documents} document(s), "
+        f"skipped (unchanged): {result.skipped_documents}, "
+        f"removed (processed deleted): {result.removed_documents} "
+        f"→ {result.chunk_count} chunk(s) in {config.indexes_dir}",
         file=sys.stderr,
     )
     print(result.manifest.built_at)

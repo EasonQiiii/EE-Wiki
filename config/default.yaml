@@ -21,6 +21,13 @@ generation:
   max_new_tokens: 1024
 
 ingestion:
+  prose_pdf:
+    max_pages: null
+    min_text_chars: 40       # per-page embedded text below this triggers OCR
+    ocr_dpi: 200
+    ocr_language: auto       # auto | eng | eng+chi_sim | other tesseract codes
+    ocr_language_fallback: eng+chi_sim  # used when auto cannot infer script (image-only PDFs)
+    # tessdata_dir: null     # auto-detect Homebrew/Linux paths; or set explicitly
   schematic_pdf:
     layout_zoom: 2.0          # temp3.py render zoom for LayoutLM + crops
     min_figure_area: 10000
@@ -39,6 +46,10 @@ chunking:
   overlap_chars: 100
   min_chars: 50
   excerpt_chars: 200
+
+indexing:
+  embed_device: cpu        # cpu | mps | cuda | auto — CPU avoids MPS embedding bugs on Apple Silicon
+  embed_batch_size: 8
 
 retrieval:
   top_k_embed: 20
