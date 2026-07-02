@@ -53,6 +53,15 @@ When the queue is full, the API returns **`503`** with JSON `detail.error = "que
 
 `GET /health` includes the same counters under `queue` for monitoring.
 
+## Retrieval context
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `retrieval.top_k_final` | `8` | Chunk hits after rerank (before section merge) |
+| `retrieval.expand_sections` | `true` | Merge sibling chunks from the same section for LLM context |
+
+Chunking rules and the full index → query pipeline are in [data-flow.md](data-flow.md).
+
 
 Request:
 

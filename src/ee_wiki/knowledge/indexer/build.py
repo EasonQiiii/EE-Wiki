@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,24 +38,48 @@ def _record_fingerprints(records: list[ProcessedRecord]) -> dict[str, dict[str, 
     }
 
 
+def _resolve_embed_device() -> str:
+    """Pick the best available torch device for offline embedding."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+    except ImportError:
+        pass
+    return "cpu"
+
+
 def _encode_embeddings(chunks: list[Chunk], config: AppConfig) -> np.ndarray:
     path = config.models.embedding_model
     if path is None:
         raise RuntimeError("models.embedding_model is not configured")
     from sentence_transformers import SentenceTransformer
 
-    device = "cpu"
-    try:
-        import torch
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    except ImportError:
-        pass
-
-    logger.info("Encoding %d chunk(s) with embedding model %s", len(chunks), path)
+    device = _resolve_embed_device()
+    logger.info("Loading embedding model from %s (device=%s)", path, device)
     model = SentenceTransformer(str(path), device=device)
     texts = [chunk.content for chunk in chunks]
-    return model.encode(texts, convert_to_numpy=True)
+    logger.info(
+        "Embedding %d chunk(s); this may take a few minutes on CPU — progress bar below",
+        len(texts),
+    )
+    started = time.monotonic()
+    embeddings = model.encode(
+        texts,
+        convert_to_numpy=True,
+        show_progress_bar=True,
+        batch_size=8,
+    )
+    logger.info(
+        "Embedding finished in %.1fs (%d vectors, dim=%d)",
+        time.monotonic() - started,
+        len(texts),
+        embeddings.shape[1] if embeddings.ndim == 2 else 0,
+    )
+    return embeddings
 
 
 def build_index_from_processed(
@@ -87,7 +112,12 @@ def build_index_from_processed(
     else:
         embeddings = _encode_embeddings(chunks, config)
 
+    logger.info("Tokenizing %d chunk(s) for BM25", len(chunks))
+    started = time.monotonic()
     bm25_corpus = [tokenize_hw_text(chunk.content) for chunk in chunks]
+    logger.info("BM25 tokenization finished in %.1fs", time.monotonic() - started)
+
+    logger.info("Writing index to %s", config.indexes_dir)
     manifest = save_index(
         config.indexes_dir,
         chunks=chunks,

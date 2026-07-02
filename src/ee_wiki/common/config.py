@@ -71,6 +71,7 @@ class RetrievalConfig:
     scope_inheritance: bool
     top_k_dense: int
     top_k_sparse: int
+    expand_sections: bool = True
 
 
 @dataclass(frozen=True)
@@ -254,6 +255,7 @@ def load_config(
             scope_inheritance=bool(retrieval.get("scope_inheritance", True)),
             top_k_dense=int(retrieval.get("top_k_dense", 4)),
             top_k_sparse=int(retrieval.get("top_k_sparse", 4)),
+            expand_sections=bool(retrieval.get("expand_sections", True)),
         ),
         data_layout=layout,
         generation=GenerationConfig(

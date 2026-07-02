@@ -15,6 +15,46 @@ _H3_HEADING_PATTERN = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 _SLUG_PATTERN = re.compile(r"[^\w\-]+")
 
 
+def _iter_lines_outside_fences(content: str):
+    """Yield ``(line_start, line_text)`` for lines not inside fenced code blocks."""
+    in_fence = False
+    offset = 0
+    for line in content.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence:
+            yield offset, line.rstrip("\r\n")
+        offset += len(line)
+
+
+def _find_heading_matches(content: str, pattern: re.Pattern[str]) -> list[_MatchAt]:
+    """Find heading regex matches only on lines outside fenced code blocks."""
+    matches: list[_MatchAt] = []
+    for line_start, line_text in _iter_lines_outside_fences(content):
+        match = pattern.match(line_text)
+        if match:
+            matches.append(_MatchAt(match, line_start))
+    return matches
+
+
+class _MatchAt:
+    """Wrap a regex match with an absolute start offset in the parent document."""
+
+    def __init__(self, match: re.Match[str], start: int) -> None:
+        self._match = match
+        self._start = start
+
+    def start(self) -> int:
+        return self._start
+
+    def end(self) -> int:
+        return self._start + self._match.end()
+
+    def group(self, index: int = 0) -> str:
+        return self._match.group(index)
+
+
 def _slugify_heading(text: str, *, fallback: str) -> str:
     slug = _SLUG_PATTERN.sub("-", text.strip().lower()).strip("-")
     return slug or fallback
@@ -27,15 +67,31 @@ def _excerpt(content: str, max_chars: int) -> str:
     return text[:max_chars].rstrip() + "…"
 
 
-def _split_by_window(
+def _split_into_atomic_blocks(text: str) -> list[str]:
+    """Split text into prose spans and intact fenced code blocks."""
+    fence_pattern = re.compile(r"(^```[\s\S]*?^```\n?)", re.MULTILINE)
+    blocks: list[str] = []
+    last = 0
+    for match in fence_pattern.finditer(text):
+        if match.start() > last:
+            prose = text[last : match.start()]
+            if prose.strip():
+                blocks.append(prose)
+        blocks.append(match.group(0))
+        last = match.end()
+    if last < len(text):
+        tail = text[last:]
+        if tail.strip():
+            blocks.append(tail)
+    return blocks if blocks else ([text] if text.strip() else [])
+
+
+def _split_prose_window(
     text: str,
     base_suffix: str,
     config: ChunkingConfig,
 ) -> list[tuple[str, str]]:
-    """Split long text with paragraph-aware windows and overlap."""
-    if len(text) <= config.max_chars:
-        return [(base_suffix, text)]
-
+    """Split prose with paragraph-aware windows and overlap."""
     sections: list[tuple[str, str]] = []
     start = 0
     part = 0
@@ -56,9 +112,56 @@ def _split_by_window(
     return sections
 
 
+def _split_by_window(
+    text: str,
+    base_suffix: str,
+    config: ChunkingConfig,
+) -> list[tuple[str, str]]:
+    """Split long text with paragraph-aware windows and overlap.
+
+    Fenced code blocks are kept intact; only prose spans are windowed.
+    """
+    if len(text) <= config.max_chars:
+        return [(base_suffix, text)]
+
+    blocks = _split_into_atomic_blocks(text)
+    if len(blocks) == 1:
+        return _split_prose_window(text, base_suffix, config)
+
+    packed: list[tuple[str, str]] = []
+    current = ""
+    part = 0
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        if len(block) > config.max_chars:
+            if current.strip():
+                suffix = base_suffix if part == 0 else f"{base_suffix}__w{part:02d}"
+                packed.extend(_split_prose_window(current.strip(), suffix, config))
+                part += 1
+                current = ""
+            oversized_suffix = base_suffix if part == 0 else f"{base_suffix}__w{part:02d}"
+            packed.append((oversized_suffix, block))
+            part += 1
+            continue
+        candidate = f"{current}\n\n{block}".strip() if current else block
+        if current and len(candidate) > config.max_chars:
+            suffix = base_suffix if part == 0 else f"{base_suffix}__w{part:02d}"
+            packed.append((suffix, current.strip()))
+            part += 1
+            current = block
+        else:
+            current = candidate
+    if current.strip():
+        suffix = base_suffix if part == 0 else f"{base_suffix}__w{part:02d}"
+        packed.append((suffix, current.strip()))
+    return packed if packed else _split_prose_window(text, base_suffix, config)
+
+
 def _split_by_h3_subsections(text: str) -> list[tuple[str, str]]:
-    """Split a section on ``###`` sub-headings."""
-    matches = list(_H3_HEADING_PATTERN.finditer(text))
+    """Split a section on ``###`` sub-headings outside fenced code blocks."""
+    matches = _find_heading_matches(text, _H3_HEADING_PATTERN)
     if not matches:
         return [("body", text)]
 
@@ -92,7 +195,7 @@ def _split_section_for_chunking(
     Schematic sections with ``###`` children split per sub-heading without
     overlap sliding windows. Long OCR code blocks use zero-overlap windows only.
     """
-    if _H3_HEADING_PATTERN.search(text):
+    if _find_heading_matches(text, _H3_HEADING_PATTERN):
         pieces: list[tuple[str, str]] = []
         for sub_suffix, sub_text in _split_by_h3_subsections(text):
             combined = f"{suffix}__{sub_suffix}" if sub_suffix != "body" else suffix
@@ -125,8 +228,8 @@ def _split_section_for_chunking(
 
 
 def _split_by_headings(content: str) -> list[tuple[str, str, int]]:
-    """Split prose Markdown on ``#`` / ``##`` headings."""
-    matches = list(_HEADING_PATTERN.finditer(content))
+    """Split prose Markdown on ``#`` / ``##`` headings outside fenced code blocks."""
+    matches = _find_heading_matches(content, _HEADING_PATTERN)
     if not matches:
         body = content.strip()
         return [("body", body, 0)] if body else []

@@ -61,16 +61,17 @@ def test_mlx_generate_stream_yields_deltas(tmp_path: Path) -> None:
     mock_tokenizer.chat_template = None
 
     first = MagicMock(text="Hel")
-    second = MagicMock(text="Hello")
+    second = MagicMock(text="lo")
+    third = MagicMock(text="!")
 
     mock_mlx = MagicMock()
     mock_mlx.load.return_value = (mock_model, mock_tokenizer)
-    mock_mlx.stream_generate.return_value = [first, second]
+    mock_mlx.stream_generate.return_value = [first, second, third]
 
     with patch.dict(sys.modules, {"mlx_lm": mock_mlx}):
         chunks = list(backend.generate_stream("Question?"))
 
-    assert chunks == ["Hel", "lo"]
+    assert chunks == ["Hel", "lo", "!"]
     mock_mlx.stream_generate.assert_called_once()
 
 

@@ -23,6 +23,7 @@ from ee_wiki.retrieval.query_boost import query_boost_tokens
 from ee_wiki.retrieval.query_expand import expand_hw_query
 from ee_wiki.retrieval.query_intent import effective_document_type, prefers_schematic_sources
 from ee_wiki.retrieval.rerank_excerpt import query_focused_excerpt
+from ee_wiki.retrieval.section_expand import build_section_index, expand_retrieved_sections
 from ee_wiki.retrieval.tokenizer import tokenize_hw_text
 
 logger = get_logger(__name__)
@@ -67,6 +68,7 @@ class HybridRagEngine:
     _rerank_tokenizer: Any | None = field(default=None, repr=False)
     _device: str | None = field(default=None, repr=False)
     _model_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _section_index: dict[str, list[HybridChunk]] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         self._device = self._detect_device()
@@ -122,6 +124,7 @@ class HybridRagEngine:
             chunk.chunk_id: index for index, chunk in enumerate(self.knowledge_base)
         }
         self.bm25 = BM25Okapi(bm25_corpus) if bm25_corpus else None
+        self._section_index = build_section_index(self.knowledge_base)
         logger.info("Hybrid index loaded with %d chunk(s)", len(self.knowledge_base))
 
     def load_index(self) -> None:
@@ -357,4 +360,7 @@ class HybridRagEngine:
                 ),
             )
         ]
-        return reranked[:final_k]
+        hits = reranked[:final_k]
+        if self.config.retrieval.expand_sections:
+            hits = expand_retrieved_sections(hits, self._section_index)
+        return hits

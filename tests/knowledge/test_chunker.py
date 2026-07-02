@@ -138,3 +138,48 @@ def test_citation_excerpt_truncated() -> None:
 
     assert len(chunks[0].citation.excerpt) <= 51
     assert chunks[0].citation.source_file.endswith("excerpt.md")
+
+
+def test_shell_comments_inside_fence_do_not_split_sections() -> None:
+    content = (
+        "## Get DUT SN:\n\n"
+        "```shell\n"
+        "# OS Mode:\n"
+        "sysconfig read -k SrNm\n"
+        "#or\n"
+        "Component\n\n"
+        "# Diags Mode:\n"
+        "sn\n"
+        "syscfg print mlb\n"
+        "```\n\n"
+        "## Next Section\n\n"
+        "Other notes."
+    )
+    config = ChunkingConfig()
+    chunks = chunk_processed_record(_record(stem="iPadManual", content=content), config)
+
+    sn_chunks = [chunk for chunk in chunks if chunk.chunk_id == "iPadManual__get-dut-sn"]
+    assert len(sn_chunks) == 1
+    assert "sysconfig read -k SrNm" in sn_chunks[0].content
+    assert "syscfg print mlb" in sn_chunks[0].content
+    assert not any("os-mode" in chunk.chunk_id for chunk in chunks)
+
+
+def test_long_section_keeps_fenced_code_block_intact() -> None:
+    prose = "Intro paragraph.\n\n" * 40
+    code = (
+        "```shell\n"
+        "# OS Mode:\n"
+        "sysconfig read -k SrNm\n"
+        "# Diags Mode:\n"
+        "sn\n"
+        "```"
+    )
+    content = f"## Commands\n\n{prose}{code}"
+    config = ChunkingConfig(max_chars=400, overlap_chars=50, min_chars=20)
+    chunks = chunk_processed_record(_record(stem="manual", content=content), config)
+
+    code_chunks = [chunk for chunk in chunks if "sysconfig read -k SrNm" in chunk.content]
+    assert code_chunks
+    for chunk in code_chunks:
+        assert chunk.content.count("```") >= 2 or "sn" in chunk.content

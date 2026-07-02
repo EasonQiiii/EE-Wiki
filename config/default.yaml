@@ -13,11 +13,11 @@ models:
   visual_model: Qwen3-VL-4B-Instruct
   embedding_model: bge-m3
   reranker_model: bge-reranker-v2-m3
-  llm_transformers_model: Qwen3-VL-8B-Instruct
+  llm_transformers_model: Qwen3.5-4B
   llm_mlx_model: Qwen3.5-9B-MLX-4bit
 
 generation:
-  llm_backend: transformers          # mlx | transformers (MLX 4-bit weights require mlx)
+  llm_backend: mlx          # mlx | transformers (MLX 4-bit weights require mlx)
   max_new_tokens: 1024
 
 ingestion:
@@ -47,6 +47,7 @@ retrieval:
   scope_inheritance: true
   top_k_dense: 4
   top_k_sparse: 4
+  expand_sections: true   # merge sibling chunks from the same heading section
 
 # Path segment names for shared libraries (must match data/raw/ folders)
 data_layout:

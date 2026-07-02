@@ -121,17 +121,13 @@ class MlxLlmBackend:
         formatted = _format_prompt(self._tokenizer, prompt)
 
         with self._generate_lock:
-            previous = ""
             for response in mlx_lm.stream_generate(
                 self._model,
                 self._tokenizer,
                 formatted,
                 max_tokens=token_budget,
             ):
-                current = response.text
-                if len(current) <= len(previous):
-                    continue
-                chunk = current[len(previous) :]
-                previous = current
-                if chunk:
-                    yield chunk
+                # mlx-lm yields incremental segments (detokenizer.last_segment), not
+                # cumulative text — see mlx_lm.generate.stream_generate.
+                if response.text:
+                    yield response.text
