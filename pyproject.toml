@@ -29,6 +29,10 @@ api = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
 ]
+mlx = [
+    "mlx-lm>=0.21",
+    "mlx>=0.22",
+]
 
 [build-system]
 requires = ["hatchling"]

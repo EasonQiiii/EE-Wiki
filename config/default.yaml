@@ -13,18 +13,25 @@ models:
   visual_model: Qwen3-VL-4B-Instruct
   embedding_model: bge-m3
   reranker_model: bge-reranker-v2-m3
-  llm_model: Qwen3-VL-4B-Instruct
+  llm_transformers_model: Qwen3-VL-8B-Instruct
+  llm_mlx_model: Qwen3.5-9B-MLX-4bit
+
+generation:
+  llm_backend: transformers          # mlx | transformers (MLX 4-bit weights require mlx)
+  max_new_tokens: 1024
 
 ingestion:
   schematic_pdf:
     layout_zoom: 2.0          # temp3.py render zoom for LayoutLM + crops
     min_figure_area: 10000
-    ocr_text_max_chars: 1200
+    ocr_text_max_chars: 2500  # VLM prompt OCR budget (vlm_plus_ocr only)
+    fidelity_mode: vlm_plus_ocr   # ocr_only | vlm_plus_ocr (layout + VLM + OCR appendix)
     # max_pages: null         # null = all pages
-    max_pages: 1
-    max_new_tokens: 4096
+    max_pages: null
+    max_new_tokens: 1536
+    vlm_max_image_side: 1280   # downscale full-page renders before VLM to save MPS memory
     temperature: 0.1
-    do_sample: true
+    do_sample: false
     images_rel_prefix: images
 
 chunking:
@@ -55,3 +62,7 @@ api:
   host: 0.0.0.0
   port: 8080
   warmup_on_startup: true
+  concurrency:
+    max_concurrent: 1       # active RAG requests (match single MLX LLM slot)
+    max_queue_depth: 8      # additional requests allowed to wait
+    retry_after_seconds: 15 # Retry-After header when queue is full

@@ -9,12 +9,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from ee_wiki.common.logging import get_logger
+from ee_wiki.generation.llm.errors import LlmLoadError
 
 logger = get_logger(__name__)
-
-
-class LlmLoadError(RuntimeError):
-    """Local LLM weights could not be loaded."""
 
 
 def _resolve_torch_device() -> tuple[str, object]:
@@ -55,8 +52,8 @@ def detect_model_kind(model_path: Path) -> str:
     if config.get("quantization_config") and any("Qwen3_5" in arch for arch in architectures):
         raise LlmLoadError(
             f"{model_path.name} is an NVFP4 quantized checkpoint and is not supported by "
-            "EE-Wiki's transformers backend. Set models.llm_model to a standard Hugging Face "
-            "weights folder such as Qwen3-VL-4B-Instruct in config/default.yaml."
+            "EE-Wiki's transformers backend. Set models.llm_transformers_model to a standard "
+            "Hugging Face weights folder such as Qwen3-VL-8B-Instruct in config/default.yaml."
         )
 
     if model_type == "qwen3_vl" or any("Qwen3VL" in arch for arch in architectures):

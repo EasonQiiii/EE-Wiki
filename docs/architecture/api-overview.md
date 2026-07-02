@@ -22,15 +22,37 @@ EE-Wiki serves as the backend for Open WebUI. This document tracks the HTTP surf
 ## Start the server
 
 ```bash
-pip install -e ".[dev,ml,api]"
+pip install -e ".[dev,ml,mlx,api]"
 python scripts/serve.py
 ```
+
+RAG/chat uses `generation.llm_backend` (default `mlx`) with `models.llm_mlx_model` or `models.llm_transformers_model` depending on backend. Schematic PDF ingest still uses `models.visual_model` (Qwen3-VL via transformers).
 
 Default bind: `0.0.0.0:8080` (see `config/default.yaml` → `api`).
 
 Set `api.warmup_on_startup: true` to preload the index, embedding model, reranker, and LLM when the server starts (recommended for Open WebUI; first startup may take several minutes).
 
-## `POST /v1/query`
+## Concurrency and queue limits
+
+LAN deployments use a bounded queue on `/v1/query` and `/v1/chat/completions`:
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `api.concurrency.max_concurrent` | `1` | Active RAG requests |
+| `api.concurrency.max_queue_depth` | `8` | Additional requests allowed to wait |
+| `api.concurrency.retry_after_seconds` | `15` | `Retry-After` when queue is full |
+
+When the queue is full, the API returns **`503`** with JSON `detail.error = "queue_full"` and headers:
+
+- `Retry-After`
+- `X-EE-Wiki-Queue-Active`
+- `X-EE-Wiki-Queue-Waiting`
+- `X-EE-Wiki-Queue-Max-Concurrent`
+- `X-EE-Wiki-Queue-Max-Depth`
+- `X-EE-Wiki-Queue-Capacity-Remaining`
+
+`GET /health` includes the same counters under `queue` for monitoring.
+
 
 Request:
 

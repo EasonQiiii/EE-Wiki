@@ -37,6 +37,7 @@ def ingest_config(app_config, tmp_path: Path) -> AppConfig:
         processed_dir=processed_dir,
         data_layout=layout,
         models=models,
+        schematic_pdf=replace(app_config.schematic_pdf, fidelity_mode="vlm_plus_ocr"),
     )
 
 

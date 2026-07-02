@@ -131,6 +131,10 @@ class SchematicLayoutEngine:
         slice_filenames: list[str] = []
         best_crop_bytes: bytes | None = None
 
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        best_crop_bytes = buffer.getvalue()
+
         if self._ensure_loaded():
             assert self._processor is not None
             assert self._model is not None
@@ -195,8 +199,14 @@ class SchematicLayoutEngine:
                     slice_filenames.append(slice_name)
                     if images_dir is not None:
                         (images_dir / slice_name).write_bytes(png_bytes)
-                    if best_crop_bytes is None:
+                    if len(slice_filenames) == 1:
                         best_crop_bytes = png_bytes
+
+        if not slice_filenames:
+            logger.info(
+                "Layout analysis page %d: no figure crop, using full-page render for VLM",
+                page_id,
+            )
 
         logger.info(
             "Layout analysis page %d: ocr_chars=%d, crops=%d",

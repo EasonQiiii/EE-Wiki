@@ -17,6 +17,10 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import metadata_to_dict
 from ee_wiki.common.types import Chunk
 from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
+from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
+from ee_wiki.retrieval.query_boost import query_boost_tokens
+from ee_wiki.retrieval.query_expand import expand_hw_query
+from ee_wiki.retrieval.query_intent import prefers_schematic_sources
 from ee_wiki.retrieval.tokenizer import tokenize_hw_text
 
 logger = get_logger(__name__)
@@ -239,6 +243,9 @@ class HybridRagEngine:
         dense_k = top_k_dense or self.config.retrieval.top_k_dense
         sparse_k = top_k_sparse or self.config.retrieval.top_k_sparse
         final_k = top_k_final or self.config.retrieval.top_k_final
+        search_query = expand_hw_query(query)
+        if search_query != query:
+            logger.info("Expanded retrieval query: %s", search_query)
 
         filtered, scope_ranks = self._filter_by_scope(
             target_project=target_project,
@@ -250,7 +257,7 @@ class HybridRagEngine:
 
         self._load_embed_model()
         with self._model_lock:
-            query_emb = self._embed_model.encode(query, convert_to_numpy=True)
+            query_emb = self._embed_model.encode(search_query, convert_to_numpy=True)
         dense_scores: list[tuple[float, HybridChunk]] = []
         for chunk in filtered:
             if chunk.embedding is None:
@@ -267,7 +274,7 @@ class HybridRagEngine:
 
         sparse_selected: list[HybridChunk] = []
         if self.bm25 is not None:
-            query_tokens = tokenize_hw_text(query)
+            query_tokens = tokenize_hw_text(search_query)
             all_scores = self.bm25.get_scores(query_tokens)
             sparse_scores: list[tuple[float, HybridChunk]] = []
             for chunk in filtered:
@@ -292,7 +299,7 @@ class HybridRagEngine:
         self._load_reranker()
         import torch
 
-        pairs = [[query, chunk.content[:512]] for chunk in combined]
+        pairs = [[search_query, chunk.content[:512]] for chunk in combined]
         with self._model_lock, torch.no_grad():
             inputs = self._rerank_tokenizer(
                 pairs,
@@ -307,11 +314,32 @@ class HybridRagEngine:
             pair = (chunk.metadata.get("project"), chunk.metadata.get("build"))
             return scope_ranks.get(pair, 0) if scope_ranks else 0
 
+        boost_tokens = query_boost_tokens(query)
+        schematic_preferred = document_type is None and prefers_schematic_sources(query)
+
+        def keyword_boost(chunk: HybridChunk) -> int:
+            if not boost_tokens:
+                return 0
+            upper = chunk.content.upper()
+            return sum(1 for token in boost_tokens if token.upper() in upper)
+
+        def document_type_rank(chunk: HybridChunk) -> int:
+            if not schematic_preferred:
+                return 0
+            if chunk.metadata.get("document_type") == SCHEMATIC_DOCUMENT_TYPE:
+                return 0
+            return 1
+
         reranked = [
             item[1]
             for item in sorted(
                 zip(logits, combined),
-                key=lambda item: (scope_rank(item[1]), -float(item[0])),
+                key=lambda item: (
+                    scope_rank(item[1]),
+                    document_type_rank(item[1]),
+                    -keyword_boost(item[1]),
+                    -float(item[0]),
+                ),
             )
         ]
         return reranked[:final_k]

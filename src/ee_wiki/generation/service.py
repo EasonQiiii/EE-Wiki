@@ -8,7 +8,7 @@ from ee_wiki.common.config import AppConfig
 from ee_wiki.common.logging import get_logger
 from ee_wiki.common.types import RagAnswer
 from ee_wiki.generation.context import chunks_to_citations, format_context_blocks
-from ee_wiki.generation.llm.local import LocalLlmBackend
+from ee_wiki.generation.llm.factory import build_llm_backend
 from ee_wiki.generation.templates.loader import load_template, render_template
 from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.retrieval.hybrid.engine import HybridRagEngine
@@ -39,16 +39,20 @@ class RagService:
             Configured :class:`RagService`.
 
         Raises:
-            RuntimeError: If ``models.llm_model`` is not configured.
+            RuntimeError: If the model path for ``generation.llm_backend`` is not configured.
         """
-        llm_path = config.models.llm_model
+        backend = config.generation.llm_backend
+        llm_path = config.models.resolve_llm_model(backend)
         if llm_path is None:
-            raise RuntimeError("models.llm_model is not configured")
+            key = config.models.llm_config_key(backend)
+            raise RuntimeError(
+                f"models.{key} is not configured for generation.llm_backend={backend!r}"
+            )
         engine = HybridRagEngine(config)
         return cls(
             config=config,
             engine=engine,
-            llm=LocalLlmBackend(llm_path),
+            llm=build_llm_backend(config),
         )
 
     def answer(

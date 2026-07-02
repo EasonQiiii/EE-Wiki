@@ -42,7 +42,7 @@ Output includes for each chunk:
 
 ## End-to-end RAG (`scripts/ask.py`)
 
-After `models.llm_model` is configured, generate an answer with citations:
+After `models.llm_mlx_model` (or `models.llm_transformers_model`) is configured, generate an answer with citations:
 
 ```bash
 python scripts/ask.py "Explorer 板的以太网接口是什么？" --project logan --build p1

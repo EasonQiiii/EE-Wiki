@@ -93,7 +93,8 @@ class ModelsConfig:
     visual_model: Path | None = None
     embedding_model: Path | None = None
     reranker_model: Path | None = None
-    llm_model: Path | None = None
+    llm_transformers_model: Path | None = None
+    llm_mlx_model: Path | None = None
 
     def resolve(self, name: str | None) -> Path | None:
         if not name:
@@ -102,3 +103,22 @@ class ModelsConfig:
         if path.is_absolute():
             return path
         return (self.base_dir / path).resolve()
+
+    def resolve_llm_model(self, backend: str) -> Path | None:
+        """Return the LLM path for ``generation.llm_backend``."""
+        normalized = backend.casefold()
+        if normalized == "mlx":
+            return self.llm_mlx_model
+        if normalized == "transformers":
+            return self.llm_transformers_model
+        return None
+
+    @staticmethod
+    def llm_config_key(backend: str) -> str:
+        """YAML key name for the given ``generation.llm_backend`` value."""
+        normalized = backend.casefold()
+        if normalized == "mlx":
+            return "llm_mlx_model"
+        if normalized == "transformers":
+            return "llm_transformers_model"
+        return f"llm_{normalized}_model"

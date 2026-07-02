@@ -8,11 +8,13 @@ Connect Open WebUI to EE-Wiki as a custom OpenAI-compatible backend.
 2. Local models are configured in `config/default.yaml`:
    - `embedding_model`
    - `reranker_model`
-   - `llm_model` (uncomment and set your local model directory name)
+   - `llm_mlx_model` — MLX 4-bit weights for RAG/chat when `generation.llm_backend: mlx`
+   - `llm_transformers_model` — Hugging Face weights when `generation.llm_backend: transformers`
+   - `visual_model` — Qwen3-VL for schematic PDF ingest only
 3. API dependencies installed:
 
 ```bash
-pip install -e ".[dev,ml,api]"
+pip install -e ".[dev,ml,mlx,api]"
 ```
 
 ## Start EE-Wiki API
@@ -67,10 +69,11 @@ python scripts/ask.py "RMII 接口说明" --project logan --build p1
 |-------|-------|
 | Connection refused | `python scripts/serve.py` running; firewall allows port `8080` |
 | Empty or generic answers | Run `python scripts/query.py "..." --project logan --build p1` to verify retrieval |
-| `models.llm_model is not configured` | Uncomment/set `llm_model` in `config/default.yaml` |
+| `models.llm_mlx_model is not configured` | Set `llm_mlx_model` (or `llm_transformers_model` if using transformers backend) in `config/default.yaml` |
 | Slow first response | Enable `api.warmup_on_startup: true`; first load of embedding, reranker, and LLM can take minutes |
 | Open WebUI shows no output | Wait for server warmup; first LLM load can take 1–3 min on Mac. Check `curl http://localhost:8080/health` first |
-| `503` LLM load error | NVFP4 models (e.g. `Qwen3.6-27B-NVFP4`) are not supported; use `Qwen3-VL-4B-Instruct` or another standard HF folder |
+| `503` queue full | Server busy; retry after `Retry-After` seconds. Check `GET /health` → `queue`. Increase `api.concurrency.max_queue_depth` if needed |
+| `503` LLM load error | Ensure MLX weights exist under `models.base_dir`; run `pip install -e '.[mlx]'` |
 | `404` on chat | Base URL must include `/v1`, e.g. `http://localhost:8080/v1` |
 
 ### Why embedding / reranker load at query time

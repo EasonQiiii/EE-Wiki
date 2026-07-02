@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from ee_wiki.api.concurrency import RequestQueueGate
 from ee_wiki.common.config import AppConfig, load_config
 from ee_wiki.common.logging import get_logger
 from ee_wiki.generation.service import RagService
@@ -15,6 +16,17 @@ logger = get_logger(__name__)
 def get_config() -> AppConfig:
     """Return cached application configuration."""
     return load_config()
+
+
+@lru_cache
+def get_queue_gate() -> RequestQueueGate:
+    """Return cached request queue gate configured from ``api.concurrency``."""
+    cfg = get_config().api.concurrency
+    return RequestQueueGate(
+        max_concurrent=cfg.max_concurrent,
+        max_queue_depth=cfg.max_queue_depth,
+        retry_after_seconds=cfg.retry_after_seconds,
+    )
 
 
 @lru_cache
@@ -31,6 +43,7 @@ def warmup_rag_service() -> None:
     service.engine._load_embed_model()
     service.engine._load_reranker()
     logger.info(
-        "Retrieval warmup complete. LLM (%s) loads on first chat request.",
-        get_config().models.llm_model,
+        "Retrieval warmup complete. LLM (%s, backend=%s) loads on first chat request.",
+        get_config().models.resolve_llm_model(get_config().generation.llm_backend),
+        get_config().generation.llm_backend,
     )

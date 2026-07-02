@@ -6,10 +6,11 @@ import json
 import time
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 
-from ee_wiki.api.deps import get_rag_service
+from ee_wiki.api.concurrency import QueueFullError, queue_response_headers
+from ee_wiki.api.deps import get_queue_gate, get_rag_service
 from ee_wiki.api.models import (
     ChatChoice,
     ChatChoiceMessage,
@@ -17,8 +18,9 @@ from ee_wiki.api.models import (
     ChatCompletionResponse,
     CitationModel,
 )
+from ee_wiki.api.rag_handler import rag_request_slot, raise_queue_full_http_error
 from ee_wiki.common.logging import get_logger
-from ee_wiki.generation.llm.local import LlmLoadError
+from ee_wiki.generation.llm.errors import LlmLoadError
 from ee_wiki.generation.service import INSUFFICIENT_ANSWER, RagService
 
 router = APIRouter(prefix="/v1", tags=["chat"])
@@ -96,7 +98,9 @@ def list_models() -> dict:
 @router.post("/chat/completions")
 def chat_completions(
     body: ChatCompletionRequest,
+    response: Response,
     service: RagService = Depends(get_rag_service),
+    gate=Depends(get_queue_gate),
 ):
     """Run RAG using the last user message as the query."""
     question = _extract_user_question(body.messages)
@@ -104,32 +108,48 @@ def chat_completions(
     created = int(time.time())
 
     if body.stream:
+        try:
+            slot_ctx = gate.slot()
+            snapshot = slot_ctx.__enter__()
+        except QueueFullError as exc:
+            raise raise_queue_full_http_error(exc) from exc
+
+        def wrapped_stream():
+            try:
+                yield from _stream_answer(
+                    service=service,
+                    chat_id=chat_id,
+                    created=created,
+                    model=body.model,
+                    question=question,
+                    project=body.project,
+                    build=body.build,
+                    document_type=body.document_type,
+                    top_k=body.top_k,
+                )
+            finally:
+                slot_ctx.__exit__(None, None, None)
+
         return StreamingResponse(
-            _stream_answer(
-                service=service,
-                chat_id=chat_id,
-                created=created,
-                model=body.model,
-                question=question,
-                project=body.project,
-                build=body.build,
-                document_type=body.document_type,
-                top_k=body.top_k,
-            ),
+            wrapped_stream(),
             media_type="text/event-stream",
+            headers=queue_response_headers(snapshot),
         )
 
-    try:
-        result = service.answer(
-            question,
-            target_project=body.project,
-            target_build=body.build,
-            document_type=body.document_type,
-            top_k_final=body.top_k,
-        )
-    except LlmLoadError as exc:
-        logger.error("LLM load failed: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    with rag_request_slot(gate) as snapshot:
+        response.headers.update(queue_response_headers(snapshot))
+        try:
+            result = service.answer(
+                question,
+                target_project=body.project,
+                target_build=body.build,
+                document_type=body.document_type,
+                top_k_final=body.top_k,
+            )
+        except LlmLoadError as exc:
+            logger.error("LLM load failed: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     content = result.answer or INSUFFICIENT_ANSWER
     logger.info(
         "Chat completion %s finished (%d chars, insufficient=%s)",

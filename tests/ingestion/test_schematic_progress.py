@@ -38,7 +38,11 @@ def schematic_config(app_config, tmp_path: Path) -> AppConfig:
         processed_dir=processed_dir,
         data_layout=layout,
         models=models,
-        schematic_pdf=replace(app_config.schematic_pdf, max_pages=2),
+        schematic_pdf=replace(
+            app_config.schematic_pdf,
+            max_pages=2,
+            fidelity_mode="vlm_plus_ocr",
+        ),
     )
     return schematic_config
 

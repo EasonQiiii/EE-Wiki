@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -42,11 +42,13 @@ class SchematicPdfConfig:
     max_pages: int | None = None
     layout_zoom: float = 2.0
     min_figure_area: int = 10_000
-    ocr_text_max_chars: int = 1200
-    max_new_tokens: int = 4096
+    ocr_text_max_chars: int = 2500
+    max_new_tokens: int = 1536
     temperature: float = 0.1
-    do_sample: bool = True
+    do_sample: bool = False
     images_rel_prefix: str = "images"
+    fidelity_mode: str = "vlm_plus_ocr"
+    vlm_max_image_side: int = 1280
 
 
 @dataclass(frozen=True)
@@ -72,12 +74,30 @@ class RetrievalConfig:
 
 
 @dataclass(frozen=True)
+class GenerationConfig:
+    """Answer generation settings."""
+
+    llm_backend: str = "mlx"
+    max_new_tokens: int = 1024
+
+
+@dataclass(frozen=True)
+class ApiConcurrencyConfig:
+    """Concurrency limits for LAN-facing RAG endpoints."""
+
+    max_concurrent: int = 1
+    max_queue_depth: int = 8
+    retry_after_seconds: int = 15
+
+
+@dataclass(frozen=True)
 class ApiConfig:
     """HTTP server settings."""
 
     host: str
     port: int
     warmup_on_startup: bool = False
+    concurrency: ApiConcurrencyConfig = field(default_factory=ApiConcurrencyConfig)
 
 
 @dataclass(frozen=True)
@@ -94,6 +114,7 @@ class AppConfig:
     chunking: ChunkingConfig
     retrieval: RetrievalConfig
     data_layout: DataLayoutConfig
+    generation: GenerationConfig
     api: ApiConfig
 
     @property
@@ -125,13 +146,18 @@ def _data_root(repo_root: Path) -> Path:
 
 def _load_models_config(repo_root: Path, models: dict) -> ModelsConfig:
     base_dir = _models_base_dir(repo_root, models)
+    resolver = ModelsConfig(base_dir=base_dir)
+    legacy_llm = models.get("llm_model")
+    mlx_name = models.get("llm_mlx_model") or legacy_llm
+    transformers_name = models.get("llm_transformers_model")
     cfg = ModelsConfig(
         base_dir=base_dir,
-        layout_model=ModelsConfig(base_dir=base_dir).resolve(models.get("layout_model")),
-        visual_model=ModelsConfig(base_dir=base_dir).resolve(models.get("visual_model")),
-        embedding_model=ModelsConfig(base_dir=base_dir).resolve(models.get("embedding_model")),
-        reranker_model=ModelsConfig(base_dir=base_dir).resolve(models.get("reranker_model")),
-        llm_model=ModelsConfig(base_dir=base_dir).resolve(models.get("llm_model")),
+        layout_model=resolver.resolve(models.get("layout_model")),
+        visual_model=resolver.resolve(models.get("visual_model")),
+        embedding_model=resolver.resolve(models.get("embedding_model")),
+        reranker_model=resolver.resolve(models.get("reranker_model")),
+        llm_transformers_model=resolver.resolve(transformers_name),
+        llm_mlx_model=resolver.resolve(mlx_name),
     )
     return cfg
 
@@ -174,6 +200,8 @@ def load_config(
     models = raw.get("models", {})
     schematic = ingestion.get("schematic_pdf", {})
     api = raw.get("api", {})
+    concurrency = api.get("concurrency", {})
+    generation = raw.get("generation", {})
 
     document_type_folders = data_layout.get("document_type_folders", {})
     if not isinstance(document_type_folders, dict) or not document_type_folders:
@@ -205,11 +233,13 @@ def load_config(
             max_pages=schematic.get("max_pages"),
             layout_zoom=float(schematic.get("layout_zoom", 2.0)),
             min_figure_area=int(schematic.get("min_figure_area", 10_000)),
-            ocr_text_max_chars=int(schematic.get("ocr_text_max_chars", 1200)),
-            max_new_tokens=int(schematic.get("max_new_tokens", 4096)),
+            ocr_text_max_chars=int(schematic.get("ocr_text_max_chars", 2500)),
+            max_new_tokens=int(schematic.get("max_new_tokens", 1536)),
             temperature=float(schematic.get("temperature", 0.1)),
-            do_sample=bool(schematic.get("do_sample", True)),
+            do_sample=bool(schematic.get("do_sample", False)),
             images_rel_prefix=str(schematic.get("images_rel_prefix", "images")),
+            fidelity_mode=str(schematic.get("fidelity_mode", "vlm_plus_ocr")),
+            vlm_max_image_side=int(schematic.get("vlm_max_image_side", 1280)),
         ),
         chunking=ChunkingConfig(
             max_chars=int(chunking.get("max_chars", 1500)),
@@ -226,10 +256,19 @@ def load_config(
             top_k_sparse=int(retrieval.get("top_k_sparse", 4)),
         ),
         data_layout=layout,
+        generation=GenerationConfig(
+            llm_backend=str(generation.get("llm_backend", "mlx")),
+            max_new_tokens=int(generation.get("max_new_tokens", 1024)),
+        ),
         api=ApiConfig(
             host=str(api.get("host", "0.0.0.0")),
             port=int(api.get("port", 8080)),
             warmup_on_startup=bool(api.get("warmup_on_startup", False)),
+            concurrency=ApiConcurrencyConfig(
+                max_concurrent=int(concurrency.get("max_concurrent", 1)),
+                max_queue_depth=int(concurrency.get("max_queue_depth", 8)),
+                retry_after_seconds=int(concurrency.get("retry_after_seconds", 15)),
+            ),
         ),
     )
     logger.debug("Loaded config from %s (raw_dir=%s)", path, config.raw_dir)

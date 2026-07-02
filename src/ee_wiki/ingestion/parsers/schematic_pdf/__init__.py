@@ -16,10 +16,15 @@ from ee_wiki.ingestion.parsers.schematic_pdf.engine import (
 )
 from ee_wiki.ingestion.parsers.schematic_pdf.fallback import build_fallback_report
 from ee_wiki.ingestion.parsers.schematic_pdf.layout import (
+    PageLayoutResult,
     SchematicLayoutEngine,
     build_layout_engine,
 )
 from ee_wiki.ingestion.parsers.schematic_pdf.merge import PageExtraction, merge_page_extractions
+from ee_wiki.ingestion.parsers.schematic_pdf.ocr_fidelity import (
+    build_fidelity_extraction,
+    enrich_with_fidelity,
+)
 from ee_wiki.ingestion.parsers.schematic_pdf.prompt import schematic_image_slug
 from ee_wiki.ingestion.path_metadata import parse_path_metadata
 from ee_wiki.knowledge.store.processed import resolve_processed_paths
@@ -95,20 +100,43 @@ def parse_schematic_pdf(
         raise SchematicPdfParserError(f"PDF has no pages: {raw_path}")
 
     layout_engine = layout_engine or build_layout_engine(config)
-    vision_engine = vision_engine or build_vision_engine(config)
     images_dir = _images_dir(raw_path, layout)
     project_id = _project_id(base_metadata.title, raw_path)
     images_rel_prefix = config.schematic_pdf.images_rel_prefix
+    fidelity_mode = config.schematic_pdf.fidelity_mode
+    use_vlm = fidelity_mode != "ocr_only"
+    if use_vlm and vision_engine is None:
+        vision_engine = build_vision_engine(config)
 
     logger.info(
-        "Schematic PDF %s: two-stage pipeline for %d page(s)",
+        "Schematic PDF %s: pipeline for %d page(s) (fidelity_mode=%s)",
         raw_path.name,
         limit,
+        fidelity_mode,
     )
 
     extractions: list[PageExtraction] = []
     for page_index in range(limit):
         page_num = page_index + 1
+        if fidelity_mode == "ocr_only":
+            logger.info(
+                "Schematic PDF %s: page %d/%d — OCR fidelity",
+                raw_path.name,
+                page_num,
+                limit,
+            )
+            raw_ocr_text = document[page_index].get_text()
+            page_layout = PageLayoutResult(
+                page=page_num,
+                raw_ocr_text=raw_ocr_text,
+                crop_image_bytes=None,
+                slice_filenames=[],
+            )
+            extractions.append(
+                build_fidelity_extraction(page_layout, project_id=project_id)
+            )
+            continue
+
         logger.info("Schematic PDF %s: page %d/%d — layout analysis", raw_path.name, page_num, limit)
         page_layout = layout_engine.analyze_page(
             raw_path,
@@ -130,6 +158,8 @@ def parse_schematic_pdf(
                 project_id=project_id,
                 images_rel_prefix=images_rel_prefix,
             )
+        if fidelity_mode == "vlm_plus_ocr":
+            extraction = enrich_with_fidelity(extraction, page_layout)
         extractions.append(extraction)
 
     document.close()

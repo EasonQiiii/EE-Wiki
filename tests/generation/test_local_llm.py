@@ -7,7 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ee_wiki.generation.llm.local import LlmLoadError, _format_causal_prompt, detect_model_kind
+from ee_wiki.generation.llm.errors import LlmLoadError
+from ee_wiki.generation.llm.local import _format_causal_prompt, detect_model_kind
 
 
 def test_format_causal_prompt_uses_chat_template_when_available() -> None:

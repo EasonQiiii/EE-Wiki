@@ -64,6 +64,83 @@ def _move_inputs_to_device(inputs: object, device: object) -> dict:
     return inputs.to(device)
 
 
+def _build_vision_messages(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    crop_image: object | None,
+) -> list[dict]:
+    """Build Qwen3-VL chat messages (user role only; system text is inlined)."""
+    user_content: list[dict] = []
+    if crop_image is not None:
+        user_content.append({"type": "image", "image": crop_image})
+    combined_prompt = f"{system_prompt.strip()}\n\n{user_prompt.strip()}"
+    user_content.append({"type": "text", "text": combined_prompt})
+    return [{"role": "user", "content": user_content}]
+
+
+def _prepare_vision_inputs(
+    processor: object,
+    messages: list[dict],
+    *,
+    crop_image: object | None,
+) -> dict:
+    """Tokenize Qwen3-VL chat messages for generation."""
+    prompt_text = processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    if crop_image is not None:
+        return processor(
+            text=[prompt_text],
+            images=[crop_image],
+            return_tensors="pt",
+        )
+    return processor(text=[prompt_text], return_tensors="pt")
+
+
+def _release_inference_memory() -> None:
+    """Return cached GPU/MPS memory between page inferences."""
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+
+
+def _resize_for_vlm(image: object, *, max_side: int) -> object:
+    """Downscale large page renders to reduce VLM vision-token memory."""
+    from PIL import Image
+
+    if not isinstance(image, Image.Image):
+        return image
+    width, height = image.size
+    longest = max(width, height)
+    if longest <= max_side:
+        return image
+    scale = max_side / longest
+    resized = image.resize(
+        (max(1, int(width * scale)), max(1, int(height * scale))),
+        Image.Resampling.LANCZOS,
+    )
+    logger.info(
+        "Resized VLM input image from %dx%d to %dx%d (max_side=%d)",
+        width,
+        height,
+        resized.size[0],
+        resized.size[1],
+        max_side,
+    )
+    return resized
+
+
 class SchematicVisionError(EEWikiError):
     """Vision model failed to analyze a schematic page."""
 
@@ -78,6 +155,7 @@ class SchematicVisionEngine:
     do_sample: bool = True
     ocr_text_max_chars: int = 1200
     images_rel_prefix: str = "images"
+    vlm_max_image_side: int = 1280
     _model: object | None = None
     _processor: object | None = None
 
@@ -143,7 +221,10 @@ class SchematicVisionEngine:
 
         crop_image = None
         if layout.crop_image_bytes:
-            crop_image = Image.open(BytesIO(layout.crop_image_bytes)).convert("RGB")
+            crop_image = _resize_for_vlm(
+                Image.open(BytesIO(layout.crop_image_bytes)).convert("RGB"),
+                max_side=self.vlm_max_image_side,
+            )
             width, height = crop_image.size
             logger.info(
                 "Vision inference started: page %d crop (%dx%d, %s)",
@@ -158,35 +239,25 @@ class SchematicVisionEngine:
                 layout.page,
             )
 
-        user_content: list[dict] = []
-        if crop_image is not None:
-            user_content.append({"type": "image", "image": crop_image})
-        user_content.append(
-            {
-                "type": "text",
-                "text": build_schematic_page_prompt(
-                    page=layout.page,
-                    project_id=project_id,
-                    raw_ocr_text=layout.raw_ocr_text,
-                    ocr_text_max_chars=self.ocr_text_max_chars,
-                    slice_filenames=layout.slice_filenames,
-                    images_rel_prefix=self.images_rel_prefix,
-                ),
-            }
+        user_prompt = build_schematic_page_prompt(
+            page=layout.page,
+            project_id=project_id,
+            raw_ocr_text=layout.raw_ocr_text,
+            ocr_text_max_chars=self.ocr_text_max_chars,
+            slice_filenames=layout.slice_filenames,
+            images_rel_prefix=self.images_rel_prefix,
+        )
+        messages = _build_vision_messages(
+            system_prompt=SCHEMATIC_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            crop_image=crop_image,
         )
 
-        messages = [
-            {"role": "system", "content": SCHEMATIC_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ]
-
         try:
-            inputs = self._processor.apply_chat_template(
+            inputs = _prepare_vision_inputs(
+                self._processor,
                 messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt",
+                crop_image=crop_image,
             )
             inputs = _move_inputs_to_device(inputs, self._model.device)
 
@@ -200,6 +271,7 @@ class SchematicVisionEngine:
             )
             started = time.monotonic()
             heartbeat_thread.start()
+            generated = None
             try:
                 generation_config = GenerationConfig(
                     max_new_tokens=self.max_new_tokens,
@@ -227,7 +299,10 @@ class SchematicVisionEngine:
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False,
             )[0]
+            del inputs, generated, trimmed, input_ids
+            _release_inference_memory()
         except Exception as exc:
+            _release_inference_memory()
             logger.error("VLM inference failed on page %d: %s", layout.page, exc)
             return None
 
@@ -265,4 +340,5 @@ def build_vision_engine(config: AppConfig) -> SchematicVisionEngine:
         do_sample=pdf_cfg.do_sample,
         ocr_text_max_chars=pdf_cfg.ocr_text_max_chars,
         images_rel_prefix=pdf_cfg.images_rel_prefix,
+        vlm_max_image_side=pdf_cfg.vlm_max_image_side,
     )
