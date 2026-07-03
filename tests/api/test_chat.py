@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from ee_wiki.api.app import create_app
 from ee_wiki.api.deps import get_rag_service
+from ee_wiki.api.stream_status import GENERATION_STATUS, RETRIEVAL_STATUS
 from ee_wiki.common.types import Citation
 from ee_wiki.generation.service import AnswerStreamResult
 
@@ -127,8 +128,36 @@ def test_chat_completions_stream_emits_sources_chunk() -> None:
     body = response.text
     assert '"sources"' in body
     assert '"event"' in body
+    assert RETRIEVAL_STATUS in body
+    assert GENERATION_STATUS in body
+    assert '"type": "status"' in body
     assert "VBAT answer [1]." in body
     assert "<a href=" not in body
+
+
+def test_chat_completions_stream_emits_retrieval_status() -> None:
+    service = MagicMock()
+    service.stream_answer.return_value = _stream_result("Quick answer.")
+
+    app = create_app()
+    app.dependency_overrides[get_rag_service] = lambda: service
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "ee-wiki",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Test question"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.text
+    assert RETRIEVAL_STATUS in body
+    assert GENERATION_STATUS in body
+    assert '"done": false' in body.lower()
+    assert '"done": true' in body.lower()
+    assert '"hidden": true' in body.lower()
 
 
 def test_chat_completions_meta_question_uses_service_fast_path() -> None:

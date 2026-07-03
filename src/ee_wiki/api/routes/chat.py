@@ -25,6 +25,12 @@ from ee_wiki.api.models import (
 from ee_wiki.api.open_webui_sources import citations_to_open_webui_sources
 from ee_wiki.api.rag_handler import rag_request_slot, raise_queue_full_http_error
 from ee_wiki.api.stream_cancel import iter_sync_text_chunks
+from ee_wiki.api.stream_status import (
+    GENERATION_STATUS,
+    RETRIEVAL_STATUS,
+    clear_stream_status_sse,
+    format_stream_status_sse,
+)
 from ee_wiki.api.timeout import (
     REQUEST_TIMEOUT_MESSAGE,
     RequestTimeoutError,
@@ -273,6 +279,7 @@ async def _stream_answer(
             created=created,
             delta={"role": "assistant"},
         )
+        yield format_stream_status_sse(description=RETRIEVAL_STATUS, done=False, hidden=False)
 
         if _timed_out():
             raise RequestTimeoutError("Request timed out before retrieval")
@@ -296,7 +303,14 @@ async def _stream_answer(
         )
         if cancel.is_set():
             logger.info("Chat stream %s cancelled before generation", chat_id)
+            yield clear_stream_status_sse(description=GENERATION_STATUS)
             return
+
+        yield format_stream_status_sse(
+            description=GENERATION_STATUS,
+            done=False,
+            hidden=False,
+        )
 
         sources = citations_to_open_webui_sources(stream_result.citations)
         if sources:
@@ -308,6 +322,7 @@ async def _stream_answer(
                 sources=sources,
             )
 
+        generation_status_active = True
         async for fragment in iter_sync_text_chunks(
             stream_result.text_chunks,
             cancel=cancel,
@@ -315,6 +330,9 @@ async def _stream_answer(
         ):
             if _timed_out():
                 raise RequestTimeoutError("Request timed out during streaming")
+            if generation_status_active:
+                yield clear_stream_status_sse(description=GENERATION_STATUS)
+                generation_status_active = False
             fragments.append(fragment)
             yield _sse_chunk(
                 chat_id=chat_id,
@@ -325,7 +343,12 @@ async def _stream_answer(
 
         if cancel.is_set():
             logger.info("Chat stream %s cancelled (%d chars partial)", chat_id, len(fragments))
+            if generation_status_active:
+                yield clear_stream_status_sse(description=GENERATION_STATUS)
             return
+
+        if generation_status_active:
+            yield clear_stream_status_sse(description=GENERATION_STATUS)
 
         content = "".join(fragments).strip() or INSUFFICIENT_ANSWER
         logger.info("Chat stream %s finished (%d chars)", chat_id, len(content))
@@ -339,6 +362,7 @@ async def _stream_answer(
         yield "data: [DONE]\n\n"
     except (RequestTimeoutError, LlmTimeoutError) as exc:
         logger.error("Chat stream %s timed out: %s", chat_id, exc)
+        yield clear_stream_status_sse()
         yield _sse_chunk(
             chat_id=chat_id,
             model=model,

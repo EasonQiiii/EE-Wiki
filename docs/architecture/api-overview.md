@@ -49,7 +49,8 @@ Generation timeouts:
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `generation.llm_timeout_seconds` | `120` | LLM generation cap (`504` via request handler; `null` or `0` disables) |
+| `generation.max_new_tokens` | `2048` | Maximum LLM output tokens per answer |
+| `generation.llm_timeout_seconds` | `180` | LLM generation cap (`504` via request handler; `null` or `0` disables) |
 | `generation.intent_routing` | `true` | Classify assistant-meta vs engineering before retrieval |
 | `generation.assistant_task` | `assistant` | Prompt folder for assistant-meta answers (`prompts/assistant/`) |
 | `generation.intent_similarity_margin` | `0.02` | Embedding margin for intent routing (see `config/intent_exemplars.yaml`) |
@@ -70,7 +71,7 @@ When the queue is full, the API returns **`503`** with JSON `detail.error = "que
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `retrieval.top_k_final` | `8` | Chunk hits after rerank (before section merge) |
+| `retrieval.top_k_final` | `5` | Chunk hits after rerank (before section merge) |
 | `retrieval.expand_sections` | `true` | Merge sibling chunks from the same section for LLM context |
 | `api.public_base_url` | `http://localhost:8080` | Base URL for clickable citation links in answers |
 

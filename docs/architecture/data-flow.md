@@ -104,7 +104,7 @@ Section key = `chunk_id` with trailing `__wNN` removed.
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `retrieval.expand_sections` | `true` | Merge sibling chunks before prompt assembly |
-| `retrieval.top_k_final` | `8` | Number of chunk *hits* before section merge |
+| `retrieval.top_k_final` | `5` | Number of chunk *hits* before section merge |
 
 Why both chunking and expansion?
 
