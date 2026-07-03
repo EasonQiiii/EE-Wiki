@@ -63,3 +63,17 @@ def render_template(template: str, *, context: str, question: str) -> str:
     return (
         template.replace("{{context}}", context).replace("{{question}}", question).strip()
     )
+
+
+def render_assistant_template(template: str, *, role: str, question: str) -> str:
+    """Substitute ``{{role}}`` and ``{{question}}`` for assistant-meta prompts.
+
+    Args:
+        template: Raw assistant prompt template.
+        role: Static role description text.
+        question: User question.
+
+    Returns:
+        Rendered prompt ready for the LLM.
+    """
+    return template.replace("{{role}}", role).replace("{{question}}", question).strip()

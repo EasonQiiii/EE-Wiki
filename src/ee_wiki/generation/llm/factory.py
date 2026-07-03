@@ -39,7 +39,11 @@ def build_llm_backend(config: AppConfig) -> LlmBackend:
     if backend == "mlx":
         from ee_wiki.generation.llm.mlx import MlxLlmBackend
 
-        return MlxLlmBackend(llm_path, max_new_tokens=max_new_tokens)
+        return MlxLlmBackend(
+            llm_path,
+            max_new_tokens=max_new_tokens,
+            timeout_seconds=config.generation.llm_timeout_seconds,
+        )
 
     if backend == "transformers":
         if is_mlx_quantized_checkpoint(llm_path):
@@ -50,4 +54,8 @@ def build_llm_backend(config: AppConfig) -> LlmBackend:
             )
         from ee_wiki.generation.llm.local import LocalLlmBackend
 
-        return LocalLlmBackend(llm_path, max_new_tokens=max_new_tokens)
+        return LocalLlmBackend(
+            llm_path,
+            max_new_tokens=max_new_tokens,
+            timeout_seconds=config.generation.llm_timeout_seconds,
+        )

@@ -128,8 +128,8 @@ def test_retrieve_filters_by_document_type(engine_with_index) -> None:
         target_build="p1",
         document_type="schematic",
     )
-    assert len(results) == 1
-    assert results[0].chunk_id == "sch__rmii"
+    assert len(results.chunks) == 1
+    assert results.chunks[0].chunk_id == "sch__rmii"
 
 
 def test_retrieve_scope_includes_common_and_global(engine_with_index) -> None:
@@ -143,7 +143,7 @@ def test_retrieve_scope_includes_common_and_global(engine_with_index) -> None:
         target_project="logan",
         target_build="p1",
     )
-    chunk_ids = {chunk.chunk_id for chunk in results}
+    chunk_ids = {chunk.chunk_id for chunk in results.chunks}
     assert "common__sop" in chunk_ids
 
 
@@ -154,7 +154,7 @@ def test_retrieve_returns_empty_when_document_type_has_no_matches(engine_with_in
         target_build="p1",
         document_type="sop",
     )
-    assert results == []
+    assert results.chunks == []
 
 
 def test_retrieve_pin_query_defaults_to_schematic_sources(engine_with_index) -> None:
@@ -163,5 +163,5 @@ def test_retrieve_pin_query_defaults_to_schematic_sources(engine_with_index) -> 
         target_project="logan",
         target_build="p1",
     )
-    assert results
-    assert all(chunk.metadata.get("document_type") == "schematic" for chunk in results)
+    assert results.chunks
+    assert all(chunk.metadata.get("document_type") == "schematic" for chunk in results.chunks)

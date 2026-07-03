@@ -43,6 +43,17 @@ LAN deployments use a bounded queue on `/v1/query` and `/v1/chat/completions`:
 | `api.concurrency.max_concurrent` | `1` | Active RAG requests |
 | `api.concurrency.max_queue_depth` | `8` | Additional requests allowed to wait |
 | `api.concurrency.retry_after_seconds` | `15` | `Retry-After` when queue is full |
+| `api.request_timeout_seconds` | `300` | Whole RAG request wall-clock cap (`504` when exceeded; `null` or `0` disables) |
+
+Generation timeouts:
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `generation.llm_timeout_seconds` | `120` | LLM generation cap (`504` via request handler; `null` or `0` disables) |
+| `generation.intent_routing` | `true` | Classify assistant-meta vs engineering before retrieval |
+| `generation.assistant_task` | `assistant` | Prompt folder for assistant-meta answers (`prompts/assistant/`) |
+| `generation.intent_similarity_margin` | `0.02` | Embedding margin for intent routing (see `config/intent_exemplars.yaml`) |
+| `retrieval.min_rerank_score` | `null` | Drop low-confidence retrieval (no chunks) when top rerank logit is below this |
 
 When the queue is full, the API returns **`503`** with JSON `detail.error = "queue_full"` and headers:
 
@@ -172,6 +183,7 @@ Response shape:
 
 - Answers must include `citations[]` with `source_file`, `page`, `chunk_id`, `excerpt`, and when available `url` / `images` for clickable provenance.
 - Insufficient context → `200` with explicit message and empty citations — not fabricated content.
+- Request or LLM timeout → `504` with `detail.error = "request_timeout"` and message `请求超时，请重试`.
 
 See [open-webui.md](../usage/open-webui.md) for frontend connection steps.
 

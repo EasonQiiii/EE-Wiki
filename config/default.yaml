@@ -21,6 +21,10 @@ generation:
   max_new_tokens: 1024
   default_task: wiki
   default_template: default
+  llm_timeout_seconds: 120  # LLM generation cap; null or 0 disables
+  intent_routing: true       # route assistant-meta vs engineering before retrieval
+  assistant_task: assistant  # prompts/{task}/ for identity/capability questions
+  intent_similarity_margin: 0.02
 
 ingestion:
   excel:
@@ -67,6 +71,7 @@ retrieval:
   top_k_dense: 4
   top_k_sparse: 4
   expand_sections: true   # merge sibling chunks from the same heading section
+  min_rerank_score: null  # drop retrieval when top rerank logit is below this; null disables
 
 # Path segment names for shared libraries (must match data/raw/ folders)
 data_layout:
@@ -83,6 +88,7 @@ api:
   port: 8080
   public_base_url: http://localhost:8080
   warmup_on_startup: true
+  request_timeout_seconds: 300  # whole RAG request cap; null or 0 disables
   concurrency:
     max_concurrent: 1       # active RAG requests (match single MLX LLM slot)
     max_queue_depth: 8      # additional requests allowed to wait

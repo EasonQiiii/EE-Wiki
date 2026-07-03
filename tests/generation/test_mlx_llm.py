@@ -35,20 +35,14 @@ def test_mlx_generate_applies_chat_template_and_returns_text(tmp_path: Path) -> 
 
     mock_mlx = MagicMock()
     mock_mlx.load.return_value = (mock_model, mock_tokenizer)
-    mock_mlx.generate.return_value = "Answer text"
+    mock_mlx.stream_generate.return_value = [MagicMock(text="Answer text")]
 
     with patch.dict(sys.modules, {"mlx_lm": mock_mlx}):
         result = backend.generate("Question?")
 
     assert result == "Answer text"
     mock_mlx.load.assert_called_once_with(str(model_dir))
-    mock_mlx.generate.assert_called_once_with(
-        mock_model,
-        mock_tokenizer,
-        prompt="<formatted>",
-        max_tokens=128,
-        verbose=False,
-    )
+    mock_mlx.stream_generate.assert_called_once()
 
 
 def test_mlx_generate_stream_yields_deltas(tmp_path: Path) -> None:

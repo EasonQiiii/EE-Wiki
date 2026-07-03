@@ -8,18 +8,24 @@ from fastapi.testclient import TestClient
 
 from ee_wiki.api.app import create_app
 from ee_wiki.api.deps import get_rag_service
-from ee_wiki.common.types import Citation, RagAnswer
+from ee_wiki.common.types import Citation
 from ee_wiki.generation.service import AnswerStreamResult
 
 
+def _stream_result(
+    text: str,
+    *,
+    citations: list[Citation] | None = None,
+) -> AnswerStreamResult:
+    def _chunks():
+        yield text
+
+    return AnswerStreamResult(citations=citations or [], text_chunks=_chunks())
+
+
 def test_chat_completions_uses_last_user_message() -> None:
-    mock_answer = RagAnswer(
-        answer="RMII uses ETH_MDIO.",
-        citations=[],
-        insufficient_context=False,
-    )
     service = MagicMock()
-    service.answer.return_value = mock_answer
+    service.stream_answer.return_value = _stream_result("RMII uses ETH_MDIO.")
 
     app = create_app()
     app.dependency_overrides[get_rag_service] = lambda: service
@@ -43,14 +49,11 @@ def test_chat_completions_uses_last_user_message() -> None:
     assert payload["model"] == "ee-wiki"
     assert payload["sources"] == []
     assert "created" in payload
-    service.answer.assert_called_once_with(
-        "What is RMII?",
-        target_project="logan",
-        target_build="p1",
-        document_type=None,
-        top_k_final=None,
-        task=None,
-    )
+    service.stream_answer.assert_called_once()
+    call_kwargs = service.stream_answer.call_args.kwargs
+    assert call_kwargs["target_project"] == "logan"
+    assert call_kwargs["target_build"] == "p1"
+    assert "cancel_event" in call_kwargs
 
 
 def test_chat_completions_returns_open_webui_sources() -> None:
@@ -63,13 +66,11 @@ def test_chat_completions_returns_open_webui_sources() -> None:
             url="http://localhost:8080/v1/sources/logan/p1/note/manual.md#power",
         ),
     ]
-    mock_answer = RagAnswer(
-        answer="VBAT is connected to the PMIC [1].",
-        citations=citations,
-        insufficient_context=False,
-    )
     service = MagicMock()
-    service.answer.return_value = mock_answer
+    service.stream_answer.return_value = _stream_result(
+        "VBAT is connected to the PMIC [1].",
+        citations=citations,
+    )
 
     app = create_app()
     app.dependency_overrides[get_rag_service] = lambda: service
@@ -128,3 +129,25 @@ def test_chat_completions_stream_emits_sources_chunk() -> None:
     assert '"event"' in body
     assert "VBAT answer [1]." in body
     assert "<a href=" not in body
+
+
+def test_chat_completions_meta_question_uses_service_fast_path() -> None:
+    service = MagicMock()
+    service.stream_answer.return_value = _stream_result(
+        "我是 EE-Wiki 的电子工程知识助手。",
+    )
+
+    app = create_app()
+    app.dependency_overrides[get_rag_service] = lambda: service
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "ee-wiki",
+            "messages": [{"role": "user", "content": "你的角色是什么？"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert "EE-Wiki" in response.json()["choices"][0]["message"]["content"]
+    service.stream_answer.assert_called_once()

@@ -92,6 +92,7 @@ class RetrievalConfig:
     top_k_dense: int
     top_k_sparse: int
     expand_sections: bool = True
+    min_rerank_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,10 @@ class GenerationConfig:
     max_new_tokens: int = 1024
     default_task: str = "wiki"
     default_template: str = "default"
+    llm_timeout_seconds: int | None = 120
+    intent_routing: bool = True
+    assistant_task: str = "assistant"
+    intent_similarity_margin: float = 0.02
 
 
 @dataclass(frozen=True)
@@ -137,6 +142,7 @@ class ApiConfig:
     port: int
     warmup_on_startup: bool = False
     public_base_url: str | None = None
+    request_timeout_seconds: int | None = 300
     concurrency: ApiConcurrencyConfig = field(default_factory=ApiConcurrencyConfig)
 
 
@@ -164,6 +170,23 @@ class AppConfig:
     @property
     def models_dir(self) -> Path:
         return self.models.base_dir
+
+
+def _optional_positive_int(value: object) -> int | None:
+    """Parse a positive integer timeout, or ``None`` when disabled."""
+    if value is None:
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _optional_float(value: object) -> float | None:
+    """Parse a float threshold, or ``None`` when disabled."""
+    if value is None:
+        return None
+    return float(value)
 
 
 def _resolve_path(repo_root: Path, value: str) -> Path:
@@ -338,6 +361,7 @@ def load_config(
             top_k_dense=int(retrieval.get("top_k_dense", 4)),
             top_k_sparse=int(retrieval.get("top_k_sparse", 4)),
             expand_sections=bool(retrieval.get("expand_sections", True)),
+            min_rerank_score=_optional_float(retrieval.get("min_rerank_score")),
         ),
         data_layout=layout,
         generation=GenerationConfig(
@@ -345,12 +369,19 @@ def load_config(
             max_new_tokens=int(generation.get("max_new_tokens", 1024)),
             default_task=str(generation.get("default_task", "wiki")),
             default_template=str(generation.get("default_template", "default")),
+            llm_timeout_seconds=_optional_positive_int(generation.get("llm_timeout_seconds", 120)),
+            intent_routing=bool(generation.get("intent_routing", True)),
+            assistant_task=str(generation.get("assistant_task", "assistant")),
+            intent_similarity_margin=float(generation.get("intent_similarity_margin", 0.02)),
         ),
         api=ApiConfig(
             host=str(api.get("host", "0.0.0.0")),
             port=int(api.get("port", 8080)),
             warmup_on_startup=bool(api.get("warmup_on_startup", False)),
             public_base_url=api.get("public_base_url"),
+            request_timeout_seconds=_optional_positive_int(
+                api.get("request_timeout_seconds", 300)
+            ),
             concurrency=ApiConcurrencyConfig(
                 max_concurrent=int(concurrency.get("max_concurrent", 1)),
                 max_queue_depth=int(concurrency.get("max_queue_depth", 8)),

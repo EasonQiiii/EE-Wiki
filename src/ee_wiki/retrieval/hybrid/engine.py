@@ -14,10 +14,9 @@ import numpy as np
 
 from ee_wiki.common.config import AppConfig
 from ee_wiki.common.logging import get_logger
-from ee_wiki.common.serialization import metadata_to_dict
+from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE, metadata_to_dict
 from ee_wiki.common.types import Chunk
 from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
-from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.retrieval.metadata_boost import metadata_keyword_boost
 from ee_wiki.retrieval.query_boost import query_boost_tokens
 from ee_wiki.retrieval.query_expand import expand_hw_query
@@ -38,6 +37,14 @@ class HybridChunk:
     metadata: dict[str, Any]
     citation: dict[str, Any]
     embedding: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
+class RetrievalResult:
+    """Ranked chunks plus the best reranker score from the candidate set."""
+
+    chunks: list[HybridChunk]
+    top_rerank_score: float | None = None
 
 
 def _chunk_to_hybrid(chunk: Chunk, embedding: np.ndarray | None = None) -> HybridChunk:
@@ -225,7 +232,7 @@ class HybridRagEngine:
         top_k_dense: int | None = None,
         top_k_sparse: int | None = None,
         top_k_final: int | None = None,
-    ) -> list[HybridChunk]:
+    ) -> RetrievalResult:
         """Run scope filter → dense + sparse recall → rerank → scope priority.
 
         Args:
@@ -238,12 +245,12 @@ class HybridRagEngine:
             top_k_final: Final reranked result count override.
 
         Returns:
-            Ranked chunks with citation metadata attached.
+            Ranked chunks with citation metadata and top rerank score.
         """
         if not self.knowledge_base:
             self.load_index()
         if not self.knowledge_base:
-            return []
+            return RetrievalResult(chunks=[], top_rerank_score=None)
 
         dense_k = top_k_dense or self.config.retrieval.top_k_dense
         sparse_k = top_k_sparse or self.config.retrieval.top_k_sparse
@@ -265,7 +272,7 @@ class HybridRagEngine:
             document_type=resolved_document_type,
         )
         if not filtered:
-            return []
+            return RetrievalResult(chunks=[], top_rerank_score=None)
 
         self._load_embed_model()
         with self._model_lock:
@@ -306,7 +313,7 @@ class HybridRagEngine:
                 seen.add(chunk.chunk_id)
                 combined.append(chunk)
         if not combined:
-            return []
+            return RetrievalResult(chunks=[], top_rerank_score=None)
 
         self._load_reranker()
         import torch
@@ -324,6 +331,20 @@ class HybridRagEngine:
                 max_length=512,
             ).to(self._device)
             logits = self._rerank_model(**inputs).logits.view(-1).float().cpu().numpy()
+
+        top_rerank_score = float(np.max(logits)) if len(logits) else None
+        min_score = self.config.retrieval.min_rerank_score
+        if (
+            min_score is not None
+            and top_rerank_score is not None
+            and top_rerank_score < min_score
+        ):
+            logger.info(
+                "Retrieval skipped: top rerank score %.3f below min_rerank_score %.3f",
+                top_rerank_score,
+                min_score,
+            )
+            return RetrievalResult(chunks=[], top_rerank_score=top_rerank_score)
 
         def scope_rank(chunk: HybridChunk) -> int:
             pair = (chunk.metadata.get("project"), chunk.metadata.get("build"))
@@ -363,4 +384,4 @@ class HybridRagEngine:
         hits = reranked[:final_k]
         if self.config.retrieval.expand_sections:
             hits = expand_retrieved_sections(hits, self._section_index)
-        return hits
+        return RetrievalResult(chunks=hits, top_rerank_score=top_rerank_score)

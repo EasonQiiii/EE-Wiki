@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ee_wiki.common.logging import get_logger
 from ee_wiki.generation.llm.errors import LlmLoadError
+from ee_wiki.generation.llm.timeout import check_stream_timeout
 
 logger = get_logger(__name__)
 
@@ -87,9 +88,16 @@ def _format_causal_prompt(tokenizer: object, prompt: str) -> str:
 class LocalLlmBackend:
     """Generate text with a local ``transformers`` model."""
 
-    def __init__(self, model_path: Path, *, max_new_tokens: int = 1024) -> None:
+    def __init__(
+        self,
+        model_path: Path,
+        *,
+        max_new_tokens: int = 1024,
+        timeout_seconds: float | None = None,
+    ) -> None:
         self._model_path = model_path
         self._max_new_tokens = max_new_tokens
+        self._timeout_seconds = timeout_seconds
         self._device_name, self._device = _resolve_torch_device()
         self._model_kind = detect_model_kind(model_path)
         self._tokenizer = None
@@ -198,26 +206,23 @@ class LocalLlmBackend:
         generated = output[0][input_len:]
         return self._tokenizer.decode(generated, skip_special_tokens=True).strip()
 
-    def generate(self, prompt: str, *, max_new_tokens: int | None = None) -> str:
+    def generate(
+        self,
+        prompt: str,
+        *,
+        max_new_tokens: int | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         """Generate a completion for the given prompt."""
-        import torch
-
-        self._ensure_loaded()
-        assert self._model is not None
-
-        token_budget = max_new_tokens or self._max_new_tokens
-        inputs, input_len = self._prepare_generation_inputs(prompt)
         started = time.monotonic()
-        logger.info("LLM generation started (max_new_tokens=%d)", token_budget)
-
-        with self._generate_lock, torch.no_grad():
-            output = self._model.generate(
-                **inputs,
-                max_new_tokens=token_budget,
-                do_sample=False,
-            )
-
-        text = self._decode_generation(inputs, output, input_len)
+        parts: list[str] = []
+        for chunk in self.generate_stream(
+            prompt,
+            max_new_tokens=max_new_tokens,
+            cancel_event=cancel_event,
+        ):
+            parts.append(chunk)
+        text = "".join(parts).strip()
         logger.info(
             "LLM generation finished in %.1fs (%d chars)",
             time.monotonic() - started,
@@ -261,16 +266,32 @@ class LocalLlmBackend:
         }
 
         cancelled = False
+        started = time.monotonic()
+        logger.info("LLM stream generation started (max_new_tokens=%d)", token_budget)
         with self._generate_lock:
-            thread = Thread(target=self._model.generate, kwargs=generation_kwargs)
+            thread = Thread(
+                target=self._model.generate,
+                kwargs=generation_kwargs,
+                daemon=True,
+            )
             thread.start()
-            for text in streamer:
-                if cancel_event and cancel_event.is_set():
-                    cancelled = True
-                    break
-                if text:
-                    yield text
-            thread.join()
+            try:
+                for text in streamer:
+                    check_stream_timeout(
+                        started,
+                        timeout_seconds=self._timeout_seconds,
+                        label="LLM stream generation",
+                    )
+                    if cancel_event and cancel_event.is_set():
+                        cancelled = True
+                        break
+                    if text:
+                        yield text
+            finally:
+                if not cancelled:
+                    thread.join()
+                elif thread.is_alive():
+                    logger.info("LLM stream generation abandoned (daemon thread)")
 
         if cancelled:
             logger.info("LLM stream generation cancelled")

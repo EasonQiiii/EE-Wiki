@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ee_wiki.common.logging import get_logger
 from ee_wiki.generation.llm.errors import LlmLoadError
+from ee_wiki.generation.llm.timeout import check_stream_timeout
 from ee_wiki.generation.prompt_stats import prompt_size_fields
 
 logger = get_logger(__name__)
@@ -52,9 +53,16 @@ def _format_prompt(tokenizer: object, prompt: str) -> str:
 class MlxLlmBackend:
     """Generate text with a local ``mlx-lm`` quantized model."""
 
-    def __init__(self, model_path: Path, *, max_new_tokens: int = 1024) -> None:
+    def __init__(
+        self,
+        model_path: Path,
+        *,
+        max_new_tokens: int = 1024,
+        timeout_seconds: float | None = None,
+    ) -> None:
         self._model_path = model_path
         self._max_new_tokens = max_new_tokens
+        self._timeout_seconds = timeout_seconds
         self._model = None
         self._tokenizer = None
         self._load_lock = threading.Lock()
@@ -77,34 +85,23 @@ class MlxLlmBackend:
             self._model, self._tokenizer = mlx_lm.load(model_ref)
             logger.info("MLX LLM ready in %.1fs", time.monotonic() - started)
 
-    def generate(self, prompt: str, *, max_new_tokens: int | None = None) -> str:
+    def generate(
+        self,
+        prompt: str,
+        *,
+        max_new_tokens: int | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         """Generate a completion for the given prompt."""
-        mlx_lm = _import_mlx_lm()
-        self._ensure_loaded()
-        assert self._model is not None
-        assert self._tokenizer is not None
-
-        token_budget = max_new_tokens or self._max_new_tokens
-        formatted = _format_prompt(self._tokenizer, prompt)
-        size = prompt_size_fields(formatted)
         started = time.monotonic()
-        logger.info(
-            "MLX generation started (max_new_tokens=%d, prompt_chars=%d, prompt_tokens_est=%d)",
-            token_budget,
-            size["prompt_chars"],
-            size["prompt_tokens_est"],
-        )
-
-        with self._generate_lock:
-            text = mlx_lm.generate(
-                self._model,
-                self._tokenizer,
-                prompt=formatted,
-                max_tokens=token_budget,
-                verbose=False,
-            )
-
-        result = str(text).strip()
+        parts: list[str] = []
+        for chunk in self.generate_stream(
+            prompt,
+            max_new_tokens=max_new_tokens,
+            cancel_event=cancel_event,
+        ):
+            parts.append(chunk)
+        result = "".join(parts).strip()
         logger.info(
             "MLX generation finished in %.1fs (%d chars)",
             time.monotonic() - started,
@@ -140,18 +137,30 @@ class MlxLlmBackend:
         )
 
         cancelled = False
+        started = time.monotonic()
         with self._generate_lock:
-            for response in mlx_lm.stream_generate(
+            token_stream = mlx_lm.stream_generate(
                 self._model,
                 self._tokenizer,
                 formatted,
                 max_tokens=token_budget,
-            ):
-                if cancel_event and cancel_event.is_set():
-                    cancelled = True
-                    break
-                if response.text:
-                    yield response.text
+            )
+            try:
+                for response in token_stream:
+                    check_stream_timeout(
+                        started,
+                        timeout_seconds=self._timeout_seconds,
+                        label="MLX stream generation",
+                    )
+                    if cancel_event and cancel_event.is_set():
+                        cancelled = True
+                        break
+                    if response.text:
+                        yield response.text
+            finally:
+                close = getattr(token_stream, "close", None)
+                if callable(close):
+                    close()
 
         if cancelled:
             logger.info("MLX stream generation cancelled")

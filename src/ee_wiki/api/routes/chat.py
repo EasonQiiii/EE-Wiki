@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import threading
 import time
@@ -12,9 +11,10 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
+from ee_wiki.api.cancel import start_disconnect_watcher
 from ee_wiki.api.citation_models import citation_to_model
 from ee_wiki.api.concurrency import QueueFullError, queue_response_headers
-from ee_wiki.api.deps import get_queue_gate, get_rag_service
+from ee_wiki.api.deps import get_config, get_queue_gate, get_rag_service
 from ee_wiki.api.models import (
     ChatChoice,
     ChatChoiceMessage,
@@ -24,9 +24,15 @@ from ee_wiki.api.models import (
 )
 from ee_wiki.api.open_webui_sources import citations_to_open_webui_sources
 from ee_wiki.api.rag_handler import rag_request_slot, raise_queue_full_http_error
-from ee_wiki.api.stream_cancel import iter_sync_text_chunks, watch_client_disconnect
+from ee_wiki.api.stream_cancel import iter_sync_text_chunks
+from ee_wiki.api.timeout import (
+    REQUEST_TIMEOUT_MESSAGE,
+    RequestTimeoutError,
+    raise_request_timeout_http_error,
+    run_sync_with_request_timeout,
+)
 from ee_wiki.common.logging import get_logger
-from ee_wiki.generation.llm.errors import LlmLoadError
+from ee_wiki.generation.llm.errors import LlmLoadError, LlmTimeoutError
 from ee_wiki.generation.service import INSUFFICIENT_ANSWER, RagService
 
 router = APIRouter(prefix="/v1", tags=["chat"])
@@ -117,11 +123,13 @@ async def chat_completions(
     response: Response,
     service: RagService = Depends(get_rag_service),
     gate=Depends(get_queue_gate),
+    config=Depends(get_config),
 ):
     """Run RAG using the last user message as the query."""
     question = _extract_user_question(body.messages)
     chat_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
+    request_timeout = config.api.request_timeout_seconds
 
     if body.stream:
         try:
@@ -144,6 +152,7 @@ async def chat_completions(
                     document_type=body.document_type,
                     top_k=body.top_k,
                     task=body.task,
+                    request_timeout_seconds=request_timeout,
                 ):
                     yield chunk
             finally:
@@ -155,43 +164,78 @@ async def chat_completions(
             headers=queue_response_headers(snapshot),
         )
 
-    with rag_request_slot(gate) as snapshot:
-        response.headers.update(queue_response_headers(snapshot))
-        try:
-            result = await asyncio.to_thread(
-                service.answer,
-                question,
-                target_project=body.project,
-                target_build=body.build,
-                document_type=body.document_type,
-                top_k_final=body.top_k,
-                task=body.task,
+    cancel = threading.Event()
+    watcher = start_disconnect_watcher(
+        request,
+        cancel,
+        label=f"Chat completion {chat_id}",
+    )
+    try:
+        with rag_request_slot(gate) as snapshot:
+            response.headers.update(queue_response_headers(snapshot))
+            try:
+                stream_result = await run_sync_with_request_timeout(
+                    service.stream_answer,
+                    question,
+                    timeout_seconds=request_timeout,
+                    target_project=body.project,
+                    target_build=body.build,
+                    document_type=body.document_type,
+                    top_k_final=body.top_k,
+                    cancel_event=cancel,
+                    task=body.task,
+                )
+            except (RequestTimeoutError, LlmTimeoutError) as exc:
+                logger.error("Chat completion %s timed out: %s", chat_id, exc)
+                raise raise_request_timeout_http_error(exc) from exc
+            except LlmLoadError as exc:
+                logger.error("LLM load failed: %s", exc)
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+            if cancel.is_set():
+                logger.info("Chat completion %s cancelled after retrieval", chat_id)
+                return Response(status_code=204)
+
+            fragments: list[str] = []
+            try:
+                async for fragment in iter_sync_text_chunks(
+                    stream_result.text_chunks,
+                    cancel=cancel,
+                    request=request,
+                ):
+                    if cancel.is_set():
+                        logger.info(
+                            "Chat completion %s cancelled during generation",
+                            chat_id,
+                        )
+                        return Response(status_code=204)
+                    fragments.append(fragment)
+            except LlmTimeoutError as exc:
+                logger.error("Chat completion %s timed out: %s", chat_id, exc)
+                raise raise_request_timeout_http_error(exc) from exc
+
+            if cancel.is_set():
+                return Response(status_code=204)
+
+            content = "".join(fragments).strip() or INSUFFICIENT_ANSWER
+            citation_models = [citation_to_model(citation) for citation in stream_result.citations]
+            sources = citations_to_open_webui_sources(stream_result.citations)
+            logger.info(
+                "Chat completion %s finished (%d chars, insufficient=%s)",
+                chat_id,
+                len(content),
+                not fragments,
             )
-        except LlmLoadError as exc:
-            logger.error("LLM load failed: %s", exc)
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    if await request.is_disconnected():
-        logger.info("Chat completion %s abandoned: client disconnected", chat_id)
-        return Response(status_code=204)
-
-    content = result.answer or INSUFFICIENT_ANSWER
-    citation_models = [citation_to_model(citation) for citation in result.citations]
-    sources = citations_to_open_webui_sources(result.citations)
-    logger.info(
-        "Chat completion %s finished (%d chars, insufficient=%s)",
-        chat_id,
-        len(content),
-        result.insufficient_context,
-    )
-    return _build_response(
-        chat_id=chat_id,
-        model=body.model,
-        content=content,
-        citations=citation_models,
-        sources=sources,
-        insufficient_context=result.insufficient_context,
-    )
+            return _build_response(
+                chat_id=chat_id,
+                model=body.model,
+                content=content,
+                citations=citation_models,
+                sources=sources,
+                insufficient_context=content == INSUFFICIENT_ANSWER and not stream_result.citations,
+            )
+    finally:
+        watcher.cancel()
 
 
 async def _stream_answer(
@@ -207,13 +251,20 @@ async def _stream_answer(
     document_type: str | None,
     top_k: int | None,
     task: str | None,
+    request_timeout_seconds: float | None,
 ) -> AsyncIterator[str]:
     """Yield OpenAI-compatible SSE chunks for a streamed RAG answer."""
     cancel = threading.Event()
-    watcher = asyncio.create_task(
-        watch_client_disconnect(request, cancel, label=f"Chat stream {chat_id}")
-    )
+    watcher = start_disconnect_watcher(request, cancel, label=f"Chat stream {chat_id}")
     fragments: list[str] = []
+    deadline = (
+        time.monotonic() + request_timeout_seconds
+        if request_timeout_seconds and request_timeout_seconds > 0
+        else None
+    )
+
+    def _timed_out() -> bool:
+        return deadline is not None and time.monotonic() > deadline
 
     try:
         yield _sse_chunk(
@@ -223,8 +274,19 @@ async def _stream_answer(
             delta={"role": "assistant"},
         )
 
-        stream_result = service.stream_answer(
+        if _timed_out():
+            raise RequestTimeoutError("Request timed out before retrieval")
+
+        remaining_timeout = None
+        if deadline is not None:
+            remaining_timeout = deadline - time.monotonic()
+            if remaining_timeout <= 0:
+                raise RequestTimeoutError("Request timed out before retrieval")
+
+        stream_result = await run_sync_with_request_timeout(
+            service.stream_answer,
             question,
+            timeout_seconds=remaining_timeout,
             target_project=project,
             target_build=build,
             document_type=document_type,
@@ -251,6 +313,8 @@ async def _stream_answer(
             cancel=cancel,
             request=request,
         ):
+            if _timed_out():
+                raise RequestTimeoutError("Request timed out during streaming")
             fragments.append(fragment)
             yield _sse_chunk(
                 chat_id=chat_id,
@@ -265,6 +329,22 @@ async def _stream_answer(
 
         content = "".join(fragments).strip() or INSUFFICIENT_ANSWER
         logger.info("Chat stream %s finished (%d chars)", chat_id, len(content))
+        yield _sse_chunk(
+            chat_id=chat_id,
+            model=model,
+            created=created,
+            delta={},
+            finish_reason="stop",
+        )
+        yield "data: [DONE]\n\n"
+    except (RequestTimeoutError, LlmTimeoutError) as exc:
+        logger.error("Chat stream %s timed out: %s", chat_id, exc)
+        yield _sse_chunk(
+            chat_id=chat_id,
+            model=model,
+            created=created,
+            delta={"content": f"\n\n{REQUEST_TIMEOUT_MESSAGE}"},
+        )
         yield _sse_chunk(
             chat_id=chat_id,
             model=model,

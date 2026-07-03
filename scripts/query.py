@@ -80,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config()
         engine = HybridRagEngine(config)
         engine.load_index()
-        results = engine.retrieve(
+        retrieval = engine.retrieve(
             args.query,
             target_project=args.project,
             target_build=args.build,
@@ -91,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("%s", exc)
         return 1
 
+    results = retrieval.chunks
     if not results:
         print("No matching chunks found.", file=sys.stderr)
         return 0

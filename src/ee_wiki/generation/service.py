@@ -11,9 +11,15 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.common.types import Citation, RagAnswer
 from ee_wiki.generation.citations import build_enriched_citations
 from ee_wiki.generation.context import format_context_blocks
+from ee_wiki.generation.intent_router import QueryRoute, classify_query_route
 from ee_wiki.generation.llm.factory import build_llm_backend
 from ee_wiki.generation.prompt_stats import prompt_size_fields
-from ee_wiki.generation.templates.loader import load_template, render_template
+from ee_wiki.generation.templates.loader import (
+    load_template,
+    render_assistant_template,
+    render_template,
+    resolve_prompts_dir,
+)
 from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.retrieval.hybrid.engine import HybridChunk, HybridRagEngine
 
@@ -74,6 +80,33 @@ class RagService:
         resolved_task = task or self.template_task
         return load_template(self.config.repo_root, resolved_task, self.template_name)
 
+    def _should_route_intent(self, task: str | None) -> bool:
+        """Return whether to classify assistant-meta vs engineering intent."""
+        if not self.config.generation.intent_routing:
+            return False
+        if task is None:
+            return True
+        return task == self.template_task
+
+    def _load_assistant_role(self) -> str:
+        """Load static assistant role text from ``prompts/{assistant_task}/role.md``."""
+        role_path = (
+            resolve_prompts_dir(self.config.repo_root)
+            / self.config.generation.assistant_task
+            / "role.md"
+        )
+        return role_path.read_text(encoding="utf-8").strip()
+
+    def _build_assistant_prompt(self, question: str) -> str:
+        """Render the assistant-meta prompt without retrieval context."""
+        assistant_task = self.config.generation.assistant_task
+        template = load_template(self.config.repo_root, assistant_task, self.template_name)
+        return render_assistant_template(
+            template,
+            role=self._load_assistant_role(),
+            question=question,
+        )
+
     def _finalize_answer(
         self,
         answer_text: str,
@@ -89,6 +122,46 @@ class RagService:
             insufficient_context=insufficient_context,
         )
 
+    def _generate_answer_text(
+        self,
+        prompt: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        """Generate answer text, preferring cancellable streaming when available."""
+        if callable(getattr(self.llm, "generate_stream", None)):
+            parts: list[str] = []
+            for fragment in self.llm.generate_stream(prompt, cancel_event=cancel_event):
+                if cancel_event and cancel_event.is_set():
+                    break
+                parts.append(fragment)
+            return "".join(parts).strip()
+        if cancel_event and cancel_event.is_set():
+            return ""
+        return self.llm.generate(prompt).strip()
+
+    def _answer_assistant_meta(
+        self,
+        question: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> RagAnswer:
+        """Answer identity/capability questions without retrieval."""
+        prompt = self._build_assistant_prompt(question)
+        size = prompt_size_fields(prompt)
+        logger.info(
+            "Assistant-meta answer (prompt_chars=%d, prompt_tokens_est=%d)",
+            size["prompt_chars"],
+            size["prompt_tokens_est"],
+        )
+        answer_text = self._generate_answer_text(prompt, cancel_event=cancel_event)
+        if cancel_event and cancel_event.is_set():
+            return RagAnswer(answer="", citations=[], insufficient_context=False)
+        if not answer_text:
+            logger.warning("Assistant-meta LLM returned empty text")
+            return RagAnswer(answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True)
+        return RagAnswer(answer=answer_text, citations=[], insufficient_context=False)
+
     def answer(
         self,
         question: str,
@@ -98,6 +171,7 @@ class RagService:
         document_type: str | None = None,
         top_k_final: int | None = None,
         task: str | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> RagAnswer:
         """Retrieve context and generate a grounded answer.
 
@@ -108,17 +182,30 @@ class RagService:
             document_type: Optional document type filter.
             top_k_final: Optional retrieval result count override.
             task: Optional prompt task folder under ``prompts/`` (e.g. ``debug``).
+            cancel_event: When set, stop LLM generation as soon as possible.
 
         Returns:
             Answer text with citations, or an insufficient-context response.
         """
-        chunks = self.engine.retrieve(
+        if cancel_event and cancel_event.is_set():
+            return RagAnswer(answer="", citations=[], insufficient_context=False)
+
+        if self._should_route_intent(task):
+            route = classify_query_route(question, self.engine, self.config)
+            if route is QueryRoute.ASSISTANT_META:
+                return self._answer_assistant_meta(question, cancel_event=cancel_event)
+
+        retrieval = self.engine.retrieve(
             question,
             target_project=target_project,
             target_build=target_build,
             document_type=document_type,
             top_k_final=top_k_final,
         )
+        if cancel_event and cancel_event.is_set():
+            return RagAnswer(answer="", citations=[], insufficient_context=False)
+
+        chunks = retrieval.chunks
         if not chunks:
             logger.info("No chunks retrieved for question: %s", question)
             return RagAnswer(answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True)
@@ -128,12 +215,20 @@ class RagService:
         prompt = render_template(template, context=context, question=question)
         size = prompt_size_fields(prompt)
         logger.info(
-            "Generating answer from %d chunk(s) (prompt_chars=%d, prompt_tokens_est=%d)",
+            "Generating answer from %d chunk(s) "
+            "(top_rerank=%s, prompt_chars=%d, prompt_tokens_est=%d)",
             len(chunks),
+            (
+                f"{retrieval.top_rerank_score:.3f}"
+                if retrieval.top_rerank_score is not None
+                else "n/a"
+            ),
             size["prompt_chars"],
             size["prompt_tokens_est"],
         )
-        answer_text = self.llm.generate(prompt).strip()
+        answer_text = self._generate_answer_text(prompt, cancel_event=cancel_event)
+        if cancel_event and cancel_event.is_set():
+            return RagAnswer(answer="", citations=[], insufficient_context=False)
         if not answer_text:
             logger.warning("LLM returned empty text; using insufficient-context fallback")
             return RagAnswer(answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True)
@@ -168,7 +263,20 @@ class RagService:
         if cancel_event and cancel_event.is_set():
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
 
-        chunks = self.engine.retrieve(
+        if self._should_route_intent(task):
+            route = classify_query_route(question, self.engine, self.config)
+            if route is QueryRoute.ASSISTANT_META:
+                prompt = self._build_assistant_prompt(question)
+
+                def _assistant_stream() -> Iterator[str]:
+                    yield from self._generate_answer_text_stream(
+                        prompt,
+                        cancel_event=cancel_event,
+                    )
+
+                return AnswerStreamResult(citations=[], text_chunks=_assistant_stream())
+
+        retrieval = self.engine.retrieve(
             question,
             target_project=target_project,
             target_build=target_build,
@@ -178,6 +286,7 @@ class RagService:
         if cancel_event and cancel_event.is_set():
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
 
+        chunks = retrieval.chunks
         if not chunks:
             logger.info("No chunks retrieved for question: %s", question)
 
@@ -191,8 +300,14 @@ class RagService:
         prompt = render_template(template, context=context, question=question)
         size = prompt_size_fields(prompt)
         logger.info(
-            "Streaming answer from %d chunk(s) (prompt_chars=%d, prompt_tokens_est=%d)",
+            "Streaming answer from %d chunk(s) "
+            "(top_rerank=%s, prompt_chars=%d, prompt_tokens_est=%d)",
             len(chunks),
+            (
+                f"{retrieval.top_rerank_score:.3f}"
+                if retrieval.top_rerank_score is not None
+                else "n/a"
+            ),
             size["prompt_chars"],
             size["prompt_tokens_est"],
         )
@@ -201,13 +316,22 @@ class RagService:
         def _text_stream() -> Iterator[str]:
             if cancel_event and cancel_event.is_set():
                 return
-            if hasattr(self.llm, "generate_stream"):
-                yield from self.llm.generate_stream(prompt, cancel_event=cancel_event)
-            else:
-                if cancel_event and cancel_event.is_set():
-                    return
-                text = self.llm.generate(prompt).strip()
-                if text:
-                    yield text
+            yield from self._generate_answer_text_stream(prompt, cancel_event=cancel_event)
 
         return AnswerStreamResult(citations=citations, text_chunks=_text_stream())
+
+    def _generate_answer_text_stream(
+        self,
+        prompt: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> Iterator[str]:
+        """Yield answer text fragments, preferring cancellable streaming."""
+        if cancel_event and cancel_event.is_set():
+            return
+        if callable(getattr(self.llm, "generate_stream", None)):
+            yield from self.llm.generate_stream(prompt, cancel_event=cancel_event)
+            return
+        text = self.llm.generate(prompt).strip()
+        if text:
+            yield text
