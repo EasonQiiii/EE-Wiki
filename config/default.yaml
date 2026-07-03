@@ -14,7 +14,7 @@ models:
   embedding_model: bge-m3
   reranker_model: bge-reranker-v2-m3
   llm_transformers_model: Qwen3.5-4B
-  llm_mlx_model: Qwen3.5-9B-MLX-4bit
+  llm_mlx_model: Qwen3-30B-A3B-Instruct-2507-MLX-4bit
 
 generation:
   llm_backend: mlx          # mlx | transformers (MLX 4-bit weights require mlx)
@@ -66,7 +66,7 @@ indexing:
 retrieval:
   top_k_embed: 20
   top_k_bm25: 20
-  top_k_final: 5             # was 8; fewer chunks → shorter prompt, room for longer answers
+  top_k_final: 10             # was 8; fewer chunks → shorter prompt, room for longer answers
   scope_inheritance: true
   top_k_dense: 4
   top_k_sparse: 4
@@ -90,6 +90,6 @@ api:
   warmup_on_startup: true
   request_timeout_seconds: 300  # whole RAG request cap; null or 0 disables
   concurrency:
-    max_concurrent: 1       # active RAG requests (match single MLX LLM slot)
+    max_concurrent: 1       # MLX: must stay 1; >1 deadlocks single GPU stream
     max_queue_depth: 8      # additional requests allowed to wait
     retry_after_seconds: 15 # Retry-After header when queue is full

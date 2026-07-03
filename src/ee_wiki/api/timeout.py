@@ -9,6 +9,8 @@ from typing import TypeVar
 
 from fastapi import HTTPException
 
+from ee_wiki.api.stream_cancel import await_sync_iterator_next
+
 REQUEST_TIMEOUT_MESSAGE = "请求超时，请重试"
 
 T = TypeVar("T")
@@ -110,7 +112,7 @@ async def _iter_sync_chunks(
             if cancel is not None and getattr(cancel, "is_set", lambda: False)():
                 break
             try:
-                fragment = await asyncio.to_thread(next, iterator, None)
+                fragment = await await_sync_iterator_next(iterator)
             except StopIteration:
                 break
             if fragment is None:

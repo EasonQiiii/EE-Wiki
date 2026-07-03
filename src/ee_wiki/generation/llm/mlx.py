@@ -138,29 +138,34 @@ class MlxLlmBackend:
 
         cancelled = False
         started = time.monotonic()
-        with self._generate_lock:
-            token_stream = mlx_lm.stream_generate(
-                self._model,
-                self._tokenizer,
-                formatted,
-                max_tokens=token_budget,
-            )
-            try:
-                for response in token_stream:
+        token_stream = mlx_lm.stream_generate(
+            self._model,
+            self._tokenizer,
+            formatted,
+            max_tokens=token_budget,
+        )
+        try:
+            while True:
+                if cancel_event and cancel_event.is_set():
+                    cancelled = True
+                    break
+                with self._generate_lock:
                     check_stream_timeout(
                         started,
                         timeout_seconds=self._timeout_seconds,
                         label="MLX stream generation",
                     )
-                    if cancel_event and cancel_event.is_set():
-                        cancelled = True
+                    try:
+                        response = next(token_stream)
+                    except StopIteration:
                         break
-                    if response.text:
-                        yield response.text
-            finally:
-                close = getattr(token_stream, "close", None)
-                if callable(close):
-                    close()
+                    fragment = response.text or ""
+                if fragment:
+                    yield fragment
+        finally:
+            close = getattr(token_stream, "close", None)
+            if callable(close):
+                close()
 
         if cancelled:
             logger.info("MLX stream generation cancelled")

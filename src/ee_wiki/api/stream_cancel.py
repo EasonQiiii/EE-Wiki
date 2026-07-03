@@ -5,12 +5,25 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import AsyncIterator, Iterator
+from concurrent.futures import ThreadPoolExecutor
 
 from starlette.requests import Request
 
 from ee_wiki.common.logging import get_logger
 
 logger = get_logger(__name__)
+
+# MLX GPU streams are thread-local; all token ``next()`` calls must use one worker.
+_LLM_STREAM_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="ee-wiki-llm-stream",
+)
+
+
+async def await_sync_iterator_next(iterator: Iterator[str]) -> str | None:
+    """Advance a blocking text iterator on the dedicated LLM worker thread."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_LLM_STREAM_EXECUTOR, next, iterator, None)
 
 
 async def watch_client_disconnect(
@@ -47,7 +60,7 @@ async def iter_sync_text_chunks(
                 logger.info("Stopping stream: client disconnected during generation")
                 break
             try:
-                fragment = await asyncio.to_thread(next, iterator, None)
+                fragment = await await_sync_iterator_next(iterator)
             except StopIteration:
                 break
             if fragment is None:

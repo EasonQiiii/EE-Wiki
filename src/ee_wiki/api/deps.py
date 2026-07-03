@@ -12,6 +12,23 @@ from ee_wiki.generation.service import RagService
 logger = get_logger(__name__)
 
 
+def resolve_max_concurrent(config: AppConfig) -> int:
+    """Return the effective RAG concurrency limit for the configured LLM backend.
+
+    MLX shares one GPU stream and one dedicated inference worker thread per
+    process, so more than one in-flight generation deadlocks or corrupts state.
+    """
+    configured = config.api.concurrency.max_concurrent
+    if config.generation.llm_backend == "mlx" and configured > 1:
+        logger.warning(
+            "api.concurrency.max_concurrent=%s is not supported with "
+            "generation.llm_backend=mlx; using 1 (one MLX generation slot).",
+            configured,
+        )
+        return 1
+    return configured
+
+
 @lru_cache
 def get_config() -> AppConfig:
     """Return cached application configuration."""
@@ -21,9 +38,11 @@ def get_config() -> AppConfig:
 @lru_cache
 def get_queue_gate() -> RequestQueueGate:
     """Return cached request queue gate configured from ``api.concurrency``."""
-    cfg = get_config().api.concurrency
+    config = get_config()
+    cfg = config.api.concurrency
+    max_concurrent = resolve_max_concurrent(config)
     return RequestQueueGate(
-        max_concurrent=cfg.max_concurrent,
+        max_concurrent=max_concurrent,
         max_queue_depth=cfg.max_queue_depth,
         retry_after_seconds=cfg.retry_after_seconds,
     )
