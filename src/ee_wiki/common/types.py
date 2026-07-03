@@ -55,6 +55,7 @@ class Chunk:
     content: str
     metadata: Metadata
     citation: Citation
+    heading_path: str = ""
 
 
 @dataclass(frozen=True)

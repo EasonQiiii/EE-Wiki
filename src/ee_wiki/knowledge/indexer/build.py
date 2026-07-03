@@ -16,7 +16,11 @@ from ee_wiki.common.ml_device import (
     resolve_torch_device,
 )
 from ee_wiki.common.types import Chunk
-from ee_wiki.knowledge.chunker import chunk_processed_record, chunk_processed_records
+from ee_wiki.knowledge.chunker import (
+    chunk_index_text,
+    chunk_processed_record,
+    chunk_processed_records,
+)
 from ee_wiki.knowledge.indexer.store import (
     IndexManifest,
     PersistedIndex,
@@ -67,7 +71,7 @@ def _encode_on_device(
 
     logger.info("Loading embedding model from %s (device=%s)", model_path, device)
     model = SentenceTransformer(model_path, device=device)
-    texts = [chunk.content for chunk in chunks]
+    texts = [chunk_index_text(chunk) for chunk in chunks]
     effective_batch = embedding_batch_size(device, batch_size)
     logger.info(
         "Embedding %d chunk(s) on %s (batch_size=%d)",
@@ -134,14 +138,14 @@ def _embed_chunks(
     if not chunks:
         return np.zeros((0, 0), dtype=np.float32)
     if embedder is not None:
-        return embedder([chunk.content for chunk in chunks])
+        return embedder([chunk_index_text(chunk) for chunk in chunks])
     return _encode_embeddings(chunks, config)
 
 
 def _build_bm25_corpus(chunks: list[Chunk]) -> list[list[str]]:
     logger.info("Tokenizing %d chunk(s) for BM25", len(chunks))
     started = time.monotonic()
-    bm25_corpus = [tokenize_hw_text(chunk.content) for chunk in chunks]
+    bm25_corpus = [tokenize_hw_text(chunk_index_text(chunk)) for chunk in chunks]
     logger.info("BM25 tokenization finished in %.1fs", time.monotonic() - started)
     return bm25_corpus
 

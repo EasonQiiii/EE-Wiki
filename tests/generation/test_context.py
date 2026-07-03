@@ -61,6 +61,27 @@ def test_format_context_blocks_numbers_chunks_and_scope() -> None:
     assert "Generic PHY datasheet excerpt." in rendered
 
 
+def test_format_context_blocks_includes_heading_path() -> None:
+    chunks = [
+        HybridChunk(
+            chunk_id="ipadmanal__9-1",
+            content="### 9.1 方案 A（基础）\n\ndiagstool hwmisc",
+            metadata={"project": "global", "build": "global", "document_type": "engineering_note"},
+            citation={
+                "source_file": "data/raw/global/note/ipadmanal.md",
+                "chunk_id": "ipadmanal__9-1",
+                "page": 0,
+                "excerpt": "diagstool",
+            },
+            heading_path="iPad 工程操作手册 › 9. 快速放电方案 › 9.1 方案 A（基础）",
+        )
+    ]
+
+    rendered = format_context_blocks(chunks)
+    assert "section=iPad 工程操作手册 › 9. 快速放电方案 › 9.1 方案 A（基础）" in rendered
+    assert "diagstool hwmisc" in rendered
+
+
 def test_chunks_to_citations_maps_fields() -> None:
     chunks = [
         HybridChunk(

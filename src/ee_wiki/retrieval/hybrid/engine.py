@@ -37,6 +37,7 @@ class HybridChunk:
     metadata: dict[str, Any]
     citation: dict[str, Any]
     embedding: np.ndarray | None = None
+    heading_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,7 @@ def _chunk_to_hybrid(chunk: Chunk, embedding: np.ndarray | None = None) -> Hybri
             "excerpt": chunk.citation.excerpt,
         },
         embedding=embedding,
+        heading_path=chunk.heading_path,
     )
 
 

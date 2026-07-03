@@ -52,6 +52,7 @@ def merge_section_chunks(chunks: list[Any]) -> Any:
             "excerpt": excerpt,
         },
         embedding=None,
+        heading_path=getattr(first, "heading_path", ""),
     )
 
 

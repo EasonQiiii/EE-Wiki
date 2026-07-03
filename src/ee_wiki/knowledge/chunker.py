@@ -13,6 +13,7 @@ from ee_wiki.knowledge.loader import ProcessedRecord
 _HEADING_PATTERN = re.compile(r"^(#{1,2})\s+(.+)$", re.MULTILINE)
 _H3_HEADING_PATTERN = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 _SLUG_PATTERN = re.compile(r"[^\w\-]+")
+HEADING_PATH_SEP = " › "
 
 
 def _iter_lines_outside_fences(content: str):
@@ -58,6 +59,113 @@ class _MatchAt:
 def _slugify_heading(text: str, *, fallback: str) -> str:
     slug = _SLUG_PATTERN.sub("-", text.strip().lower()).strip("-")
     return slug or fallback
+
+
+def _build_heading_path(*parts: str) -> str:
+    """Join heading labels, skipping empties and consecutive duplicates."""
+    cleaned: list[str] = []
+    for part in parts:
+        text = part.strip()
+        if text and (not cleaned or text != cleaned[-1]):
+            cleaned.append(text)
+    return HEADING_PATH_SEP.join(cleaned)
+
+
+def _heading_line_text(line: str) -> str:
+    match = re.match(r"^#{1,6}\s+(.+)$", line.strip())
+    return match.group(1).strip() if match else ""
+
+
+def _document_h1(content: str) -> str:
+    """Return the first level-1 heading text outside fenced code blocks."""
+    for _, line_text in _iter_lines_outside_fences(content):
+        if re.match(r"^#\s+", line_text):
+            return _heading_line_text(line_text)
+        if re.match(r"^#{2,}\s+", line_text):
+            return ""
+    return ""
+
+
+def _section_heading_text(text: str) -> str:
+    """Return the first ``#`` / ``##`` heading text in a section."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = re.match(r"^(#{1,2})\s+(.+)$", stripped)
+        if match:
+            return match.group(2).strip()
+        break
+    return ""
+
+
+def _section_heading_level(text: str) -> int:
+    """Return the markdown level of the first heading in a section."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = re.match(r"^(#+)\s+", stripped)
+        if match:
+            return len(match.group(1))
+        break
+    return 0
+
+
+def _subsection_heading_text(text: str) -> str:
+    """Return the first ``###`` heading text in a section."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = re.match(r"^###\s+(.+)$", stripped)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _is_title_only_preamble(text: str) -> bool:
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return True
+    return len(lines) == 1 and bool(re.match(r"^#{1,2}\s+", lines[0].strip()))
+
+
+def _merge_h3_preamble(
+    sections: list[tuple[str, str]],
+    config: ChunkingConfig,
+) -> list[tuple[str, str]]:
+    """Merge a short or title-only h3 preamble into the first child section."""
+    if len(sections) < 2 or sections[0][0] != "preamble":
+        return sections
+    preamble_text = sections[0][1].strip()
+    if not preamble_text:
+        return sections[1:]
+    if _is_title_only_preamble(preamble_text) or len(preamble_text) < config.min_chars:
+        first_suffix, first_text = sections[1]
+        merged = f"{preamble_text}\n\n{first_text}".strip()
+        return [(first_suffix, merged)] + list(sections[2:])
+    return sections
+
+
+def _strip_standalone_hr(text: str) -> str:
+    """Remove standalone horizontal-rule lines from prose documents."""
+    kept = [line for line in text.splitlines() if line.strip() != "---"]
+    return "\n".join(kept).strip()
+
+
+def chunk_index_text(chunk: Chunk) -> str:
+    """Return text used for embedding and BM25 indexing.
+
+    Args:
+        chunk: Indexed chunk with optional heading path metadata.
+
+    Returns:
+        Heading path prefixed to content when present, otherwise raw content.
+    """
+    if chunk.heading_path:
+        return f"{chunk.heading_path}\n\n{chunk.content}"
+    return chunk.content
 
 
 def _excerpt(content: str, max_chars: int) -> str:
@@ -189,18 +297,26 @@ def _split_section_for_chunking(
     config: ChunkingConfig,
     *,
     schematic: bool,
-) -> list[tuple[str, str]]:
+    heading_path_prefix: str,
+) -> list[tuple[str, str, str]]:
     """Split one section into chunk-sized pieces.
 
     Schematic sections with ``###`` children split per sub-heading without
     overlap sliding windows. Long OCR code blocks use zero-overlap windows only.
     """
     if _find_heading_matches(text, _H3_HEADING_PATTERN):
-        pieces: list[tuple[str, str]] = []
-        for sub_suffix, sub_text in _split_by_h3_subsections(text):
+        pieces: list[tuple[str, str, str]] = []
+        h3_sections = _merge_h3_preamble(_split_by_h3_subsections(text), config)
+        for sub_suffix, sub_text in h3_sections:
             combined = f"{suffix}__{sub_suffix}" if sub_suffix != "body" else suffix
+            sub_heading = _subsection_heading_text(sub_text)
+            sub_path = (
+                _build_heading_path(heading_path_prefix, sub_heading)
+                if sub_heading
+                else heading_path_prefix
+            )
             if len(sub_text) <= config.max_chars:
-                pieces.append((combined, sub_text))
+                pieces.append((combined, sub_text, sub_path))
                 continue
             window_config = config
             if schematic:
@@ -210,11 +326,12 @@ def _split_section_for_chunking(
                     min_chars=config.min_chars,
                     excerpt_chars=config.excerpt_chars,
                 )
-            pieces.extend(_split_by_window(sub_text, combined, window_config))
+            for window_suffix, window_text in _split_by_window(sub_text, combined, window_config):
+                pieces.append((window_suffix, window_text, sub_path))
         return pieces
 
     if len(text) <= config.max_chars:
-        return [(suffix, text)]
+        return [(suffix, text, heading_path_prefix)]
 
     window_config = config
     if schematic:
@@ -224,7 +341,10 @@ def _split_section_for_chunking(
             min_chars=config.min_chars,
             excerpt_chars=config.excerpt_chars,
         )
-    return _split_by_window(text, suffix, window_config)
+    return [
+        (window_suffix, window_text, heading_path_prefix)
+        for window_suffix, window_text in _split_by_window(text, suffix, window_config)
+    ]
 
 
 def _split_by_headings(content: str) -> list[tuple[str, str, int]]:
@@ -323,6 +443,7 @@ def _build_chunk(
     *,
     page: int,
     config: ChunkingConfig,
+    heading_path: str = "",
 ) -> Chunk:
     chunk_id = f"{record.chunk_id}__{suffix}"
     metadata: Metadata = replace(record.metadata, page=page) if page else record.metadata
@@ -338,7 +459,25 @@ def _build_chunk(
         content=content,
         metadata=metadata,
         citation=citation,
+        heading_path=heading_path,
     )
+
+
+def _section_heading_path_prefix(
+    text: str,
+    *,
+    doc_h1: str,
+    page: int,
+    schematic: bool,
+) -> str:
+    """Build the heading path prefix for a section before h3/window splits."""
+    section_heading = _section_heading_text(text)
+    if _section_heading_level(text) == 1:
+        return section_heading
+    if schematic:
+        page_label = f"页 {page}" if page else ""
+        return _build_heading_path(doc_h1, page_label, section_heading)
+    return _build_heading_path(doc_h1, section_heading)
 
 
 def chunk_processed_record(
@@ -361,7 +500,10 @@ def chunk_processed_record(
     if not record.content.strip():
         return []
 
-    if record.metadata.document_type == SCHEMATIC_DOCUMENT_TYPE:
+    doc_h1 = _document_h1(record.content)
+    schematic = record.metadata.document_type == SCHEMATIC_DOCUMENT_TYPE
+
+    if schematic:
         page_sections = _split_schematic_pages(record.content)
         raw_sections: list[tuple[str, str, int]] = []
         for page_suffix, page_text, page_num in page_sections:
@@ -372,18 +514,33 @@ def chunk_processed_record(
     raw_sections = _merge_small_sections(raw_sections, config)
 
     chunks: list[Chunk] = []
-    schematic = record.metadata.document_type == SCHEMATIC_DOCUMENT_TYPE
     for suffix, text, page in raw_sections:
-        for window_suffix, window_text in _split_section_for_chunking(
+        if not schematic:
+            text = _strip_standalone_hr(text)
+        heading_path_prefix = _section_heading_path_prefix(
+            text,
+            doc_h1=doc_h1,
+            page=page,
+            schematic=schematic,
+        )
+        for window_suffix, window_text, heading_path in _split_section_for_chunking(
             text,
             suffix,
             config,
             schematic=schematic,
+            heading_path_prefix=heading_path_prefix,
         ):
             if not window_text.strip():
                 continue
             chunks.append(
-                _build_chunk(record, window_suffix, window_text, page=page, config=config)
+                _build_chunk(
+                    record,
+                    window_suffix,
+                    window_text,
+                    page=page,
+                    config=config,
+                    heading_path=heading_path,
+                )
             )
     return chunks
 

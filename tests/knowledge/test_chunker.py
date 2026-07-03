@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ee_wiki.common.config import ChunkingConfig
 from ee_wiki.common.types import Metadata
-from ee_wiki.knowledge.chunker import chunk_processed_record
+from ee_wiki.knowledge.chunker import chunk_index_text, chunk_processed_record
 from ee_wiki.knowledge.loader import ProcessedRecord
 
 _MODULE_A = "DISPLAY&SENSOR"
@@ -183,3 +183,65 @@ def test_long_section_keeps_fenced_code_block_intact() -> None:
     assert code_chunks
     for chunk in code_chunks:
         assert chunk.content.count("```") >= 2 or "sn" in chunk.content
+
+
+def test_h3_preamble_merged_into_first_child() -> None:
+    content = (
+        "# Manual\n\n"
+        "## 9. 快速放电方案\n"
+        "### 9.1 方案 A（基础）\n\n"
+        "diagstool hwmisc --displayPower=1\n\n"
+        "### 9.2 方案 B（高强度负载）\n\n"
+        "setbright 1.0\n"
+    )
+    config = ChunkingConfig()
+    chunks = chunk_processed_record(_record(stem="ipadmanal", content=content), config)
+
+    assert not any(chunk.chunk_id.endswith("__preamble") for chunk in chunks)
+    first = next(chunk for chunk in chunks if "9-1-方案-a" in chunk.chunk_id)
+    assert "## 9. 快速放电方案" in first.content
+    assert "diagstool hwmisc" in first.content
+
+
+def test_heading_path_records_parent_sections() -> None:
+    content = (
+        "# iPad 工程操作手册\n\n"
+        "## 9. 快速放电方案\n"
+        "### 9.1 方案 A（基础）\n\n"
+        "diagstool hwmisc --displayPower=1\n\n"
+        "### 9.2 方案 B（高强度负载）\n\n"
+        "setbright 1.0\n"
+    )
+    config = ChunkingConfig()
+    chunks = chunk_processed_record(_record(stem="ipadmanal", content=content), config)
+
+    plan_a = next(chunk for chunk in chunks if "9-1-方案-a" in chunk.chunk_id)
+    plan_b = next(chunk for chunk in chunks if "9-2-方案-b" in chunk.chunk_id)
+    assert plan_a.heading_path == "iPad 工程操作手册 › 9. 快速放电方案 › 9.1 方案 A（基础）"
+    assert plan_b.heading_path == "iPad 工程操作手册 › 9. 快速放电方案 › 9.2 方案 B（高强度负载）"
+    assert "## 9. 快速放电方案" in plan_a.content
+
+
+def test_standalone_hr_stripped_from_note_chunks() -> None:
+    content = (
+        "## 9. 快速放电方案\n"
+        "### 9.2 方案 B（高强度负载）\n\n"
+        "setbright 1.0\n\n"
+        "---\n"
+    )
+    config = ChunkingConfig()
+    chunks = chunk_processed_record(_record(stem="ipadmanal", content=content), config)
+
+    chunk = next(chunk for chunk in chunks if "9-2-方案-b" in chunk.chunk_id)
+    assert "---" not in chunk.content
+    assert "setbright 1.0" in chunk.content
+
+
+def test_chunk_index_text_prepends_heading_path() -> None:
+    content = "## Power\n\nVBAT details."
+    config = ChunkingConfig()
+    chunks = chunk_processed_record(_record(stem="manual", content=content), config)
+
+    indexed = chunk_index_text(chunks[0])
+    assert indexed.startswith("Power\n\n## Power")
+    assert chunks[0].content.startswith("## Power")

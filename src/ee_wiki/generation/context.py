@@ -49,6 +49,8 @@ def format_context_blocks(chunks: list[HybridChunk]) -> str:
             f"source={citation.get('source_file', '')} "
             f"page={citation.get('page', 0)} chunk_id={chunk.chunk_id}"
         )
+        if chunk.heading_path:
+            header = f"{header} section={chunk.heading_path}"
         blocks.append(f"{header}\n{chunk.content.strip()}")
     return "\n\n".join(blocks)
 

@@ -84,6 +84,30 @@ After chunker or section-expansion logic changes:
 python scripts/index.py
 ```
 
+## Amendment (2026-07-03): heading path metadata
+
+### Problem
+
+Nested `##` → `###` splitting left parent chapter titles in empty `__preamble` chunks while child procedure chunks lacked chapter context for retrieval and generation.
+
+### Additional decisions
+
+#### D. `heading_path` on chunks (index time)
+
+- Each chunk stores a breadcrumb such as `iPad 工程操作手册 › 9. 快速放电方案 › 9.1 方案 A（基础）` in `heading_path`.
+- `chunk.content` stays identical to the processed Markdown; citations and source previews remain aligned with `data/processed/`.
+- Embedding and BM25 index `heading_path + content`; generation context headers include `section=…`.
+
+#### E. h3 preamble merge (index time)
+
+When `###` sub-splitting yields a short or title-only preamble before the first child, merge that preamble into the first child chunk instead of emitting a standalone chunk.
+
+#### F. Prose `---` cleanup (index time)
+
+For non-schematic documents, strip standalone `---` lines from section text before chunking. Schematic page separators (`\n---\n`) are unchanged.
+
+Implementation: `src/ee_wiki/knowledge/chunker.py` (`chunk_index_text`), `knowledge/indexer/build.py`, `generation/context.py`.
+
 ## Consequences
 
 - Schematic Q&A ("VBAT on U0902") can hit a single page chunk instead of a 20-page report.

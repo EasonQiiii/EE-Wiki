@@ -64,7 +64,7 @@ def metadata_to_dict(metadata: Metadata) -> dict[str, Any]:
 
 def chunk_to_dict(chunk: Chunk) -> dict[str, Any]:
     """Convert :class:`Chunk` to a JSON-serializable mapping."""
-    return {
+    data: dict[str, Any] = {
         "chunk_id": chunk.chunk_id,
         "content": chunk.content,
         "metadata": metadata_to_dict(chunk.metadata),
@@ -75,6 +75,9 @@ def chunk_to_dict(chunk: Chunk) -> dict[str, Any]:
             "excerpt": chunk.citation.excerpt,
         },
     }
+    if chunk.heading_path:
+        data["heading_path"] = chunk.heading_path
+    return data
 
 
 def chunk_from_dict(data: dict[str, Any]) -> Chunk:
@@ -90,4 +93,5 @@ def chunk_from_dict(data: dict[str, Any]) -> Chunk:
             page=int(citation_data.get("page", 0)),
             excerpt=str(citation_data.get("excerpt", "")),
         ),
+        heading_path=str(data.get("heading_path", "")),
     )

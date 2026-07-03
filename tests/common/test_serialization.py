@@ -79,6 +79,7 @@ def test_chunk_roundtrip() -> None:
             page=1,
             excerpt="U0902 VBAT",
         ),
+        heading_path="board report › 页 1",
     )
     restored = chunk_from_dict(chunk_to_dict(chunk))
     assert restored == chunk
