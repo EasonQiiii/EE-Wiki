@@ -17,11 +17,21 @@ python scripts/ingest.py
 python scripts/index.py
 ```
 
-By default, `index.py` only re-chunks and re-embeds processed documents whose `source_mtime` / `source_size` changed since the last build (same fingerprint fields ingest uses). Unchanged documents reuse existing chunk rows and embeddings. Use `--force` for a full rebuild after chunker config changes or when you want to refresh every vector.
+By default, `index.py` only re-chunks and re-embeds processed documents whose `source_mtime` / `source_size` changed since the last build (same fingerprint fields ingest uses). Unchanged documents reuse existing chunk rows and embeddings. Documents removed from `data/processed/` (for example after raw files were deleted and `scripts/ingest.py` ran orphan cleanup) are dropped from the index on the next incremental run; when no processed documents remain, the index bundle is cleared. Use `--force` for a full rebuild after chunker config changes or when you want to refresh every vector.
 
 ```bash
 python scripts/index.py --force
 ```
+
+### Incremental updates and deletions
+
+| Event | `ingest.py` | `index.py` |
+|-------|-------------|------------|
+| New raw file | Ingests into `data/processed/` | Re-chunks and embeds on next run |
+| Raw file changed | Re-ingests when `mtime` / size differ | Re-indexes when sidecar fingerprint differs |
+| Raw file deleted | Removes processed `.md` + sidecar (directory/full-tree runs only) | Drops document from index; clears index if nothing remains |
+
+After deleting raw files, always run `ingest.py` then `index.py` — see [ingest.md — Sync after deletions](ingest.md#sync-after-deletions).
 
 On Apple Silicon, index embedding defaults to **CPU** (`indexing.embed_device: cpu` in `config/default.yaml`) to avoid PyTorch MPS errors such as `Invalid buffer size: 32.00 GiB`. Override with `EE_WIKI_EMBED_DEVICE=mps` if you prefer GPU embedding.
 

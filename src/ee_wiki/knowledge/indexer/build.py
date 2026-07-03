@@ -20,6 +20,7 @@ from ee_wiki.knowledge.chunker import chunk_processed_record, chunk_processed_re
 from ee_wiki.knowledge.indexer.store import (
     IndexManifest,
     PersistedIndex,
+    clear_index,
     index_exists,
     load_index,
     save_index,
@@ -265,6 +266,24 @@ def build_index_from_processed(
     """
     records = load_processed_records(config.processed_dir)
     if not records:
+        if index_exists(config.indexes_dir):
+            removed_documents = clear_index(config.indexes_dir)
+            logger.info(
+                "No processed documents remain; cleared index (%d document(s) removed)",
+                removed_documents,
+            )
+            return IndexBuildResult(
+                manifest=IndexManifest(
+                    version=1,
+                    built_at="",
+                    chunk_count=0,
+                    source_fingerprints={},
+                ),
+                chunk_count=0,
+                indexed_documents=0,
+                skipped_documents=0,
+                removed_documents=removed_documents,
+            )
         raise RuntimeError(f"No processed documents found under {config.processed_dir}")
 
     if force or not index_exists(config.indexes_dir):

@@ -10,7 +10,7 @@ import numpy as np
 
 from ee_wiki.common.config import AppConfig
 from ee_wiki.knowledge.indexer.build import build_index_from_processed
-from ee_wiki.knowledge.indexer.store import load_index
+from ee_wiki.knowledge.indexer.store import index_exists, load_index
 
 
 def _write_processed(
@@ -148,6 +148,31 @@ def test_incremental_index_removes_deleted_document(app_config: AppConfig, tmp_p
     loaded = load_index(config.indexes_dir)
     assert len(loaded.chunks) == 1
     assert loaded.chunks[0].chunk_id == "alpha__alpha"
+
+
+def test_incremental_index_clears_index_when_all_processed_removed(
+    app_config: AppConfig, tmp_path: Path
+) -> None:
+    config = _test_config(app_config, tmp_path)
+    _write_processed(
+        config.processed_dir,
+        "alpha",
+        "# Alpha\n\nAlpha body.\n",
+        mtime=1.0,
+        size=10,
+    )
+    build_index_from_processed(config, embedder=_mock_embedder)
+    assert index_exists(config.indexes_dir)
+
+    alpha_path = config.processed_dir / "logan/p1/note/alpha.md"
+    alpha_meta = alpha_path.with_suffix(".md.meta.json")
+    alpha_path.unlink()
+    alpha_meta.unlink()
+
+    result = build_index_from_processed(config, embedder=_mock_embedder)
+    assert result.removed_documents == 1
+    assert result.chunk_count == 0
+    assert not index_exists(config.indexes_dir)
 
 
 def test_force_rebuild_reindexes_everything(app_config: AppConfig, tmp_path: Path) -> None:

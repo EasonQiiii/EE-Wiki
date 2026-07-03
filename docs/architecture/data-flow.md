@@ -15,11 +15,15 @@ Raw file under data/raw/{project}/{build}/{type}/…
     → indexes on disk under data/indexes/
 ```
 
-**Incremental index** (default): `scripts/index.py` compares each processed document’s `source_mtime` and `source_size` to the last build’s `manifest.json` fingerprints. New or changed documents are re-chunked and re-embedded; unchanged documents reuse existing rows; documents removed from `data/processed/` are dropped from the index. Pass `--force` to rebuild everything (required after chunker config changes).
+**Incremental ingest** (default): `scripts/ingest.py` compares each raw file’s `mtime` and size to its processed sidecar (`.meta.json`). New or changed files are parsed and written to `data/processed/`; unchanged files are skipped. When raw files are removed, the matching processed `.md` and sidecar are deleted (orphan cleanup). Single-file ingest skips cleanup; directory or full-tree runs enable it. See [ingest.md](../usage/ingest.md#orphan-cleanup-raw-deleted).
+
+**Incremental index** (default): `scripts/index.py` compares each processed document’s `source_mtime` and `source_size` to the last build’s `manifest.json` fingerprints. New or changed documents are re-chunked and re-embedded; unchanged documents reuse existing rows; documents removed from `data/processed/` are dropped from the index (or the entire index is cleared when no processed documents remain). Pass `--force` to rebuild everything (required after chunker config changes).
+
+After deleting raw files, run both commands so processed mirrors and retrieval indexes stay aligned:
 
 ```bash
-python scripts/index.py          # incremental
-python scripts/index.py --force  # full rebuild
+python scripts/ingest.py   # removes orphaned processed outputs
+python scripts/index.py    # drops removed documents from the index
 ```
 
 ## Query (read path)

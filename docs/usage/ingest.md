@@ -188,6 +188,29 @@ Cleanup reads `source_file` from each `.meta.json`. If that raw path no longer e
 
 Empty directories under `data/processed/` are pruned afterward.
 
+After cleanup, run `python scripts/index.py` so deleted documents are also removed from `data/indexes/` (see [query.md](query.md)).
+
+### Sync after deletions
+
+When you remove files from `data/raw/`, run **both** commands so processed mirrors and retrieval indexes stay aligned:
+
+```bash
+python scripts/ingest.py
+python scripts/index.py
+```
+
+Example stderr output after deleting two raw files:
+
+```text
+# ingest.py
+Ingested: 0, skipped (unchanged): 8, removed (raw deleted): 2
+
+# index.py
+Indexed: 0 document(s), skipped (unchanged): 8, removed (processed deleted): 2 → 24 chunk(s)
+```
+
+If all processed documents are removed, `index.py` clears the entire index bundle under `data/indexes/`.
+
 ## Output layout
 
 ```
@@ -232,6 +255,7 @@ Output merges per-page reports under one `# 电子图纸分析报告：{title}` 
 | PDF ingest slow / OOM | Qwen3-VL-8B is heavy; ensure `EE_WIKI_MODELS_DIR` points to local weights. Watch INFO logs for `page N/M` and 30s heartbeats during inference. On Apple Silicon, device may show `mps`; otherwise `cpu` (very slow). |
 | File always re-ingested | Sidecar missing or `source_mtime`/`source_size` absent (old run) |
 | Processed not deleted after raw removed | Run full `python scripts/ingest.py` or directory scope, not single-file mode |
+| Deleted docs still appear in query results | Run `python scripts/index.py` after ingest cleanup |
 | Path layout error | Path must match `{project}/{build}/{type}/file` — see README Raw Data Layout |
 
 ## Related docs

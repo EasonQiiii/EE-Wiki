@@ -82,6 +82,42 @@ def index_exists(indexes_dir: Path) -> bool:
     return all(path.is_file() for path in paths.values())
 
 
+def clear_index(indexes_dir: Path) -> int:
+    """Remove all on-disk index artifacts under ``indexes_dir``.
+
+    Args:
+        indexes_dir: Directory containing a previously built index bundle.
+
+    Returns:
+        Number of source documents recorded in the manifest before removal,
+        or ``0`` when no index existed.
+    """
+    if not index_exists(indexes_dir):
+        return 0
+
+    removed_documents = 0
+    try:
+        manifest = IndexManifest.from_dict(
+            json.loads(index_paths(indexes_dir)["manifest"].read_text(encoding="utf-8"))
+        )
+        removed_documents = len(manifest.source_fingerprints)
+    except (OSError, json.JSONDecodeError, KeyError, ValueError):
+        logger.warning("Could not read manifest before clearing index at %s", indexes_dir)
+
+    for path in index_paths(indexes_dir).values():
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise IndexStoreError(f"Failed to remove index file {path}") from exc
+
+    logger.info(
+        "Cleared index at %s (%d source document(s) removed)",
+        indexes_dir,
+        removed_documents,
+    )
+    return removed_documents
+
+
 def save_index(
     indexes_dir: Path,
     *,

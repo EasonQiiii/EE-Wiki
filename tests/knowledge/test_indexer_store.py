@@ -8,6 +8,7 @@ import pytest
 from ee_wiki.common.types import Chunk, Citation, Metadata
 from ee_wiki.knowledge.indexer.store import (
     IndexStoreError,
+    clear_index,
     index_exists,
     load_index,
     save_index,
@@ -78,3 +79,28 @@ def test_save_index_rejects_mismatched_counts(tmp_path) -> None:
             bm25_corpus=[["a"]],
             source_fingerprints={},
         )
+
+
+def test_clear_index_removes_all_artifacts(tmp_path) -> None:
+    chunks = [_sample_chunk("manual__power", "VBAT connects to U0902.")]
+    embeddings = np.array([[1.0, 0.0]], dtype=np.float32)
+    save_index(
+        tmp_path,
+        chunks=chunks,
+        embeddings=embeddings,
+        bm25_corpus=[["vbat"]],
+        source_fingerprints={
+            "data/processed/logan/p1/note/manual.md": {
+                "source_mtime": 1.0,
+                "source_size": 42,
+            }
+        },
+    )
+
+    removed = clear_index(tmp_path)
+    assert removed == 1
+    assert not index_exists(tmp_path)
+
+
+def test_clear_index_on_missing_index_returns_zero(tmp_path) -> None:
+    assert clear_index(tmp_path) == 0
