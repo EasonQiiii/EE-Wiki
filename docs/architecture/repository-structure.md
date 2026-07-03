@@ -43,6 +43,7 @@ EE-Wiki/
 ├── scripts/                  # CLI entry points for operators and CI
 │   ├── ingest.py             # Ingest documents into knowledge base
 │   ├── index.py              # Build or rebuild embeddings / BM25 indexes
+│   ├── sync.py               # Ingest + index in one command
 │   └── serve.py              # Start the API server
 │
 ├── src/

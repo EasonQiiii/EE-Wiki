@@ -49,6 +49,7 @@ def test_chat_completions_uses_last_user_message() -> None:
         target_build="p1",
         document_type=None,
         top_k_final=None,
+        task=None,
     )
 
 

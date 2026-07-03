@@ -30,6 +30,7 @@ def query(
             target_build=body.build,
             document_type=body.document_type,
             top_k_final=body.top_k,
+            task=body.task,
         )
     return QueryResponse(
         answer=result.answer,

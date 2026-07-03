@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
-from ee_wiki.common.types import DataLayoutConfig, StandardDocument
+from ee_wiki.common.types import DataLayoutConfig, Metadata, StandardDocument
 from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
 from ee_wiki.ingestion.parsers.prose_pdf.extract import PageText, extract_page_text
 from ee_wiki.ingestion.parsers.prose_pdf.language import (
@@ -53,6 +53,7 @@ def parse_prose_pdf(
     config: AppConfig,
     *,
     repo_root: Path | None = None,
+    metadata: Metadata | None = None,
 ) -> StandardDocument:
     """Parse a non-schematic PDF into Markdown with per-page sections.
 
@@ -60,10 +61,14 @@ def parse_prose_pdf(
     fall back to Tesseract OCR via PyMuPDF (requires a local ``tesseract`` binary).
 
     Args:
-        raw_path: Path to a ``.pdf`` file under ``layout.raw_dir``.
+        raw_path: Path to a ``.pdf`` file. Normally under ``layout.raw_dir``; when
+            ``metadata`` is provided (e.g. LibreOffice temp PDF from a ``.doc``),
+            path-derived metadata is taken from ``metadata`` instead.
         layout: Data layout configuration for path-derived metadata.
         config: Application configuration (``prose_pdf`` settings).
         repo_root: Optional repository root for ``source_file`` labels.
+        metadata: Optional pre-parsed metadata when ``raw_path`` is not under
+            ``layout.raw_dir``.
 
     Returns:
         Parsed document with normalized Markdown content and metadata.
@@ -71,7 +76,11 @@ def parse_prose_pdf(
     Raises:
         ProsePdfParserError: If the file cannot be opened or yields no text.
     """
-    base_metadata = parse_path_metadata(raw_path, layout, repo_root=repo_root)
+    base_metadata = (
+        metadata
+        if metadata is not None
+        else parse_path_metadata(raw_path, layout, repo_root=repo_root)
+    )
     if base_metadata.document_type == SCHEMATIC_DOCUMENT_TYPE:
         raise ProsePdfParserError(
             f"Prose PDF parser cannot handle sch/ paths: {base_metadata.source_file}"

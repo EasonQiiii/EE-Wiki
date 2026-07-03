@@ -19,8 +19,16 @@ models:
 generation:
   llm_backend: mlx          # mlx | transformers (MLX 4-bit weights require mlx)
   max_new_tokens: 1024
+  default_task: wiki
+  default_template: default
 
 ingestion:
+  excel:
+    output_format: markdown_table   # markdown_table | plain_text
+    max_rows_per_sheet: null
+    include_empty_sheets: false
+  word: {}
+    # libreoffice_path: /Applications/LibreOffice.app/Contents/MacOS/soffice
   prose_pdf:
     max_pages: null
     min_text_chars: 40       # per-page embedded text below this triggers OCR

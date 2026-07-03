@@ -37,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of retrieved chunks to use",
     )
     parser.add_argument(
+        "--task",
+        default=None,
+        help="Prompt task folder under prompts/ (wiki, debug, fa, design_review)",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Print structured JSON instead of plain text",
@@ -63,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
             target_build=args.build,
             document_type=args.document_type,
             top_k_final=args.top_k,
+            task=args.task,
         )
     except (EEWikiError, RuntimeError) as exc:
         logger.error("%s", exc)

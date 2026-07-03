@@ -13,6 +13,20 @@ def test_load_template_reads_default_wiki_prompt(repo_root) -> None:
     assert "{{question}}" in template
 
 
+@pytest.mark.parametrize(
+    "task,marker",
+    [
+        ("debug", "hardware debug assistant"),
+        ("fa", "failure analysis"),
+        ("design_review", "design review assistant"),
+    ],
+)
+def test_load_template_reads_task_prompts(repo_root, task: str, marker: str) -> None:
+    template = load_template(repo_root, task, "default")
+    assert marker in template.lower()
+    assert "{{context}}" in template
+
+
 def test_render_template_substitutes_placeholders() -> None:
     rendered = render_template(
         "Context:\n{{context}}\n\nQ: {{question}}",

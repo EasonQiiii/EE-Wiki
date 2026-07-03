@@ -89,9 +89,12 @@ Request:
   "project": "logan",
   "build": "p1",
   "document_type": null,
-  "top_k": null
+  "top_k": null,
+  "task": "wiki"
 }
 ```
+
+`task` selects a prompt template from `prompts/{task}/default.md` (`wiki`, `debug`, `fa`, `design_review`). Default: `generation.default_task` in config.
 
 Response:
 

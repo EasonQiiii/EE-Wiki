@@ -46,4 +46,5 @@ def test_query_returns_answer_with_citations() -> None:
         target_build="p1",
         document_type=None,
         top_k_final=None,
+        task=None,
     )

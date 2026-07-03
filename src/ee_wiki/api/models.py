@@ -24,6 +24,7 @@ class QueryRequest(BaseModel):
     build: str | None = None
     document_type: str | None = None
     top_k: int | None = None
+    task: str | None = None
 
 
 class QueryResponse(BaseModel):
@@ -51,6 +52,7 @@ class ChatCompletionRequest(BaseModel):
     build: str | None = None
     document_type: str | None = None
     top_k: int | None = None
+    task: str | None = None
 
 
 class ChatChoiceMessage(BaseModel):

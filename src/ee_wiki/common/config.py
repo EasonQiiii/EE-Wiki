@@ -95,11 +95,29 @@ class RetrievalConfig:
 
 
 @dataclass(frozen=True)
+class ExcelConfig:
+    """Settings for Excel workbook ingest."""
+
+    output_format: str = "markdown_table"
+    max_rows_per_sheet: int | None = None
+    include_empty_sheets: bool = False
+
+
+@dataclass(frozen=True)
+class WordConfig:
+    """Settings for Word document ingest."""
+
+    libreoffice_path: Path | None = None
+
+
+@dataclass(frozen=True)
 class GenerationConfig:
     """Answer generation settings."""
 
     llm_backend: str = "mlx"
     max_new_tokens: int = 1024
+    default_task: str = "wiki"
+    default_template: str = "default"
 
 
 @dataclass(frozen=True)
@@ -134,6 +152,8 @@ class AppConfig:
     models: ModelsConfig
     prose_pdf: ProsePdfConfig
     schematic_pdf: SchematicPdfConfig
+    excel: ExcelConfig
+    word: WordConfig
     chunking: ChunkingConfig
     indexing: IndexingConfig
     retrieval: RetrievalConfig
@@ -225,6 +245,8 @@ def load_config(
     models = raw.get("models", {})
     prose = ingestion.get("prose_pdf", {})
     schematic = ingestion.get("schematic_pdf", {})
+    excel = ingestion.get("excel", {})
+    word = ingestion.get("word") or {}
     api = raw.get("api", {})
     concurrency = api.get("concurrency", {})
     generation = raw.get("generation", {})
@@ -286,6 +308,18 @@ def load_config(
             fidelity_mode=str(schematic.get("fidelity_mode", "vlm_plus_ocr")),
             vlm_max_image_side=int(schematic.get("vlm_max_image_side", 1280)),
         ),
+        excel=ExcelConfig(
+            output_format=str(excel.get("output_format", "markdown_table")),
+            max_rows_per_sheet=excel.get("max_rows_per_sheet"),
+            include_empty_sheets=bool(excel.get("include_empty_sheets", False)),
+        ),
+        word=WordConfig(
+            libreoffice_path=(
+                _resolve_path(root, str(word["libreoffice_path"]))
+                if word.get("libreoffice_path")
+                else None
+            ),
+        ),
         chunking=ChunkingConfig(
             max_chars=int(chunking.get("max_chars", 1500)),
             overlap_chars=int(chunking.get("overlap_chars", 100)),
@@ -309,6 +343,8 @@ def load_config(
         generation=GenerationConfig(
             llm_backend=str(generation.get("llm_backend", "mlx")),
             max_new_tokens=int(generation.get("max_new_tokens", 1024)),
+            default_task=str(generation.get("default_task", "wiki")),
+            default_template=str(generation.get("default_template", "default")),
         ),
         api=ApiConfig(
             host=str(api.get("host", "0.0.0.0")),

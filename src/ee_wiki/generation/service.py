@@ -65,7 +65,14 @@ class RagService:
             config=config,
             engine=engine,
             llm=build_llm_backend(config),
+            template_task=config.generation.default_task,
+            template_name=config.generation.default_template,
         )
+
+    def _load_prompt_template(self, task: str | None = None) -> str:
+        """Load the prompt template for the requested or configured task."""
+        resolved_task = task or self.template_task
+        return load_template(self.config.repo_root, resolved_task, self.template_name)
 
     def _finalize_answer(
         self,
@@ -90,6 +97,7 @@ class RagService:
         target_build: str | None = None,
         document_type: str | None = None,
         top_k_final: int | None = None,
+        task: str | None = None,
     ) -> RagAnswer:
         """Retrieve context and generate a grounded answer.
 
@@ -99,6 +107,7 @@ class RagService:
             target_build: Optional build metadata filter.
             document_type: Optional document type filter.
             top_k_final: Optional retrieval result count override.
+            task: Optional prompt task folder under ``prompts/`` (e.g. ``debug``).
 
         Returns:
             Answer text with citations, or an insufficient-context response.
@@ -114,7 +123,7 @@ class RagService:
             logger.info("No chunks retrieved for question: %s", question)
             return RagAnswer(answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True)
 
-        template = load_template(self.config.repo_root, self.template_task, self.template_name)
+        template = self._load_prompt_template(task)
         context = format_context_blocks(chunks)
         prompt = render_template(template, context=context, question=question)
         size = prompt_size_fields(prompt)
@@ -139,6 +148,7 @@ class RagService:
         document_type: str | None = None,
         top_k_final: int | None = None,
         cancel_event: threading.Event | None = None,
+        task: str | None = None,
     ) -> AnswerStreamResult:
         """Retrieve context and stream a grounded answer with citation metadata.
 
@@ -149,6 +159,7 @@ class RagService:
             document_type: Optional document type filter.
             top_k_final: Optional retrieval result count override.
             cancel_event: When set, stop LLM streaming as soon as possible.
+            task: Optional prompt task folder under ``prompts/`` (e.g. ``debug``).
 
         Returns:
             Citation list plus text fragments from the LLM. When retrieval finds
@@ -175,7 +186,7 @@ class RagService:
 
             return AnswerStreamResult(citations=[], text_chunks=_insufficient())
 
-        template = load_template(self.config.repo_root, self.template_task, self.template_name)
+        template = self._load_prompt_template(task)
         context = format_context_blocks(chunks)
         prompt = render_template(template, context=context, question=question)
         size = prompt_size_fields(prompt)

@@ -19,7 +19,13 @@ Raw file under data/raw/{project}/{build}/{type}/…
 
 **Incremental index** (default): `scripts/index.py` compares each processed document’s `source_mtime` and `source_size` to the last build’s `manifest.json` fingerprints. New or changed documents are re-chunked and re-embedded; unchanged documents reuse existing rows; documents removed from `data/processed/` are dropped from the index (or the entire index is cleared when no processed documents remain). Pass `--force` to rebuild everything (required after chunker config changes).
 
-After deleting raw files, run both commands so processed mirrors and retrieval indexes stay aligned:
+After deleting raw files, run ingest + index together:
+
+```bash
+python scripts/sync.py
+```
+
+Or separately:
 
 ```bash
 python scripts/ingest.py   # removes orphaned processed outputs

@@ -47,7 +47,7 @@ Supported formats (V1):
 
 | Folder | Formats |
 |--------|---------|
-| `note/`, `sop/`, `datasheet/`, etc. | `.md`, `.markdown`, `.txt`, `.pdf` (text + OCR) |
+| `note/`, `sop/`, `datasheet/`, etc. | `.md`, `.markdown`, `.txt`, `.pdf` (text + OCR), `.xlsx`, `.doc`, `.docx` |
 | `sch/` | `.pdf` (schematic vision pipeline) |
 
 Prose PDFs (`note/`, `sop/`, `datasheet/`, …) extract embedded text per page. Pages with little selectable text fall back to **Tesseract OCR** via PyMuPDF. Install Tesseract locally for scanned documents:
@@ -70,6 +70,46 @@ OCR language defaults to **`auto`** (`ingestion.prose_pdf.ocr_language`):
 | Mixed pages in one PDF | Per-page override when a sparse page still has CJK/Latin hints |
 
 Set `ocr_language: eng` or `eng+chi_sim` to force a fixed language pack. Tune `min_text_chars`, `ocr_dpi`, and `ocr_language_fallback` in `config/default.yaml` → `ingestion.prose_pdf`.
+
+### Word (`.doc` / `.docx`)
+
+Word documents in `note/`, `sop/`, `datasheet/`, etc. are converted to Markdown under `data/processed/`.
+
+| Format | Parser | Dependency |
+|--------|--------|------------|
+| `.docx` | `mammoth` (pure Python) | `pip install -e ".[dev,ml]"` |
+| `.doc` (legacy) | LibreOffice → PDF → prose PDF pipeline | [LibreOffice](https://www.libreoffice.org/) installed locally |
+
+Install Python extras (includes `mammoth`):
+
+```bash
+pip install -e ".[dev,ml]"
+```
+
+Install LibreOffice for legacy `.doc` files:
+
+```bash
+# macOS
+brew install --cask libreoffice
+
+# Debian/Ubuntu
+sudo apt install libreoffice
+```
+
+Verify `soffice` is available:
+
+```bash
+soffice --version
+# or on macOS:
+/Applications/LibreOffice.app/Contents/MacOS/soffice --version
+```
+
+If LibreOffice is not on `PATH`, set one of:
+
+- Environment: `EE_WIKI_LIBREOFFICE_PATH=/path/to/soffice`
+- Config: `ingestion.word.libreoffice_path` in `config/default.yaml`
+
+Legacy `.doc` files are converted to PDF headlessly, then text is extracted with the same prose PDF logic (embedded text + Tesseract OCR fallback for scanned pages). Chinese datasheets benefit from the same `ocr_language: auto` settings as PDFs.
 
 ## Basic command
 
@@ -188,11 +228,17 @@ Cleanup reads `source_file` from each `.meta.json`. If that raw path no longer e
 
 Empty directories under `data/processed/` are pruned afterward.
 
-After cleanup, run `python scripts/index.py` so deleted documents are also removed from `data/indexes/` (see [query.md](query.md)).
+After cleanup, run `python scripts/sync.py` (or `python scripts/index.py`) so deleted documents are also removed from `data/indexes/` (see [index.md](index.md)).
 
 ### Sync after deletions
 
-When you remove files from `data/raw/`, run **both** commands so processed mirrors and retrieval indexes stay aligned:
+When you remove files from `data/raw/`, run **sync** so processed mirrors and retrieval indexes stay aligned:
+
+```bash
+python scripts/sync.py
+```
+
+Or run the steps separately:
 
 ```bash
 python scripts/ingest.py
@@ -256,6 +302,8 @@ Output merges per-page reports under one `# 电子图纸分析报告：{title}` 
 | File always re-ingested | Sidecar missing or `source_mtime`/`source_size` absent (old run) |
 | Processed not deleted after raw removed | Run full `python scripts/ingest.py` or directory scope, not single-file mode |
 | Deleted docs still appear in query results | Run `python scripts/index.py` after ingest cleanup |
+| Word `.doc` ingest fails | Install LibreOffice; verify `soffice --version`. Set `EE_WIKI_LIBREOFFICE_PATH` if needed. |
+| Word `.docx` ingest fails | Run `pip install -e ".[dev,ml]"` for the `mammoth` dependency. |
 | Path layout error | Path must match `{project}/{build}/{type}/file` — see README Raw Data Layout |
 
 ## Related docs

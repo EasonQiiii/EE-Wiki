@@ -62,6 +62,38 @@ def test_answer_generates_from_retrieved_chunks(rag_service, repo_root) -> None:
     assert "What is VBAT?" in prompt
 
 
+def test_answer_uses_debug_task_prompt(rag_service, repo_root) -> None:
+    chunk = HybridChunk(
+        chunk_id="note__power",
+        content="UART debug on JTAG header.",
+        metadata={
+            "project": "logan",
+            "build": "p1",
+            "document_type": "engineering_note",
+            "title": "note",
+            "target_file": "data/processed/logan/p1/note/note.md",
+        },
+        citation={
+            "source_file": "data/raw/logan/p1/note/note.md",
+            "chunk_id": "note__power",
+            "page": 0,
+            "excerpt": "UART",
+        },
+    )
+    rag_service.engine.retrieve.return_value = [chunk]
+    rag_service.llm.generate.return_value = "Check UART wiring [1]."
+
+    rag_service.answer(
+        "Why is UART silent?",
+        target_project="logan",
+        target_build="p1",
+        task="debug",
+    )
+    prompt = rag_service.llm.generate.call_args.args[0]
+    assert "hardware debug assistant" in prompt.lower()
+    assert "UART debug on JTAG header." in prompt
+
+
 def test_stream_answer_yields_llm_fragments_directly(rag_service) -> None:
     chunk = HybridChunk(
         chunk_id="note__power",

@@ -10,35 +10,24 @@ source .venv/bin/activate
 pip install -e ".[dev,ml]"
 ```
 
-Build indexes first (see [ingest.md](ingest.md)):
+Build indexes first — see [index.md](index.md):
+
+```bash
+python scripts/sync.py
+```
+
+Or separately:
 
 ```bash
 python scripts/ingest.py
 python scripts/index.py
 ```
 
-By default, `index.py` only re-chunks and re-embeds processed documents whose `source_mtime` / `source_size` changed since the last build (same fingerprint fields ingest uses). Unchanged documents reuse existing chunk rows and embeddings. Documents removed from `data/processed/` (for example after raw files were deleted and `scripts/ingest.py` ran orphan cleanup) are dropped from the index on the next incremental run; when no processed documents remain, the index bundle is cleared. Use `--force` for a full rebuild after chunker config changes or when you want to refresh every vector.
-
-```bash
-python scripts/index.py --force
-```
-
-### Incremental updates and deletions
-
-| Event | `ingest.py` | `index.py` |
-|-------|-------------|------------|
-| New raw file | Ingests into `data/processed/` | Re-chunks and embeds on next run |
-| Raw file changed | Re-ingests when `mtime` / size differ | Re-indexes when sidecar fingerprint differs |
-| Raw file deleted | Removes processed `.md` + sidecar (directory/full-tree runs only) | Drops document from index; clears index if nothing remains |
-
-After deleting raw files, always run `ingest.py` then `index.py` — see [ingest.md — Sync after deletions](ingest.md#sync-after-deletions).
-
-On Apple Silicon, index embedding defaults to **CPU** (`indexing.embed_device: cpu` in `config/default.yaml`) to avoid PyTorch MPS errors such as `Invalid buffer size: 32.00 GiB`. Override with `EE_WIKI_EMBED_DEVICE=mps` if you prefer GPU embedding.
-
 Requires local models configured in `config/default.yaml`:
 
 - `embedding_model` — dense recall (e.g. `bge-m3`)
 - `reranker_model` — cross-encoder rerank (e.g. `bge-reranker-v2-m3`)
+- `llm_mlx_model` or `llm_transformers_model` — for RAG answers (see below)
 
 ## Retrieval only (`scripts/query.py`)
 
@@ -64,7 +53,19 @@ After `models.llm_mlx_model` (or `models.llm_transformers_model`) is configured,
 
 ```bash
 python scripts/ask.py "board 的 COMM 接口有哪些信号？" --project acme --build p2
+python scripts/ask.py "VBAT 连接了哪些器件？" --project logan --build p1 --task debug
 ```
+
+Use `--task` to select a prompt template from `prompts/{task}/default.md`:
+
+| Task | Folder | Purpose |
+|------|--------|---------|
+| `wiki` (default) | `prompts/wiki/` | General engineering Q&A |
+| `debug` | `prompts/debug/` | Hardware debug |
+| `fa` | `prompts/fa/` | Failure analysis |
+| `design_review` | `prompts/design_review/` | Design review |
+
+Default task is set in `config/default.yaml` → `generation.default_task`.
 
 ## HTTP API
 
@@ -80,12 +81,14 @@ Example query:
 ```bash
 curl -X POST http://localhost:8080/v1/query \
   -H 'Content-Type: application/json' \
-  -d '{"query":"iPad manual","project":"logan","build":"p1"}'
+  -d '{"query":"iPad manual","project":"logan","build":"p1","task":"wiki"}'
 ```
 
 See [open-webui.md](open-webui.md) for Open WebUI integration.
 
 ## Related docs
 
+- [index.md](index.md) — building and updating indexes
+- [ingest.md](ingest.md) — raw → processed pipeline
 - [data-flow.md](../architecture/data-flow.md) — ingestion and query pipelines
 - [api-overview.md](../architecture/api-overview.md) — REST endpoint contracts

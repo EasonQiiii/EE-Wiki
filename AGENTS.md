@@ -105,7 +105,7 @@ Document folders: `note`, `sch`, `sop`, `datasheet` → map to `document_type` v
 - When filtering `project=X, build=Y`, expand scope to also search `X/common/` and `global/`.
 - Rank build-specific chunks above `common`, and `common` above `global`.
 
-V1 raw formats: PDF, Markdown, TXT, Excel. Reject or skip `.key` / `.numbers` with a clear log message until parsers exist.
+V1 raw formats: PDF, Markdown, TXT, Excel, Word (`.doc`/`.docx`). Reject or skip `.key` / `.numbers` with a clear log message until parsers exist.
 
 ---
 

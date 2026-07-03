@@ -11,14 +11,20 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import StandardDocument
 from ee_wiki.ingestion.cleanup import RemovedProcessed, cleanup_orphaned_processed
+from ee_wiki.ingestion.parsers.excel import EXCEL_SUFFIXES, parse_excel
+from ee_wiki.ingestion.parsers.word import WORD_SUFFIXES, parse_word
 from ee_wiki.ingestion.parsers.markdown import MARKDOWN_SUFFIXES, parse_markdown
 from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
 from ee_wiki.ingestion.parsers.prose_pdf import parse_prose_pdf
 from ee_wiki.ingestion.parsers.schematic_pdf import parse_schematic_pdf
 from ee_wiki.ingestion.path_metadata import parse_path_metadata
 from ee_wiki.ingestion.sync import (
+    DEFERRED_SUFFIXES,
     collect_raw_files,
     expected_content_extension,
+    is_ingestible_raw_file,
+    is_supported_raw_file,
+    log_skipped_raw_files,
     needs_ingest,
 )
 from ee_wiki.knowledge.store.processed import ProcessedPaths, write_processed_document
@@ -98,6 +104,20 @@ def ingest_file(
                     config,
                     repo_root=config.repo_root,
                 )
+        elif suffix in EXCEL_SUFFIXES:
+            document = parse_excel(
+                path,
+                layout,
+                config.excel,
+                repo_root=config.repo_root,
+            )
+        elif suffix in WORD_SUFFIXES:
+            document = parse_word(
+                path,
+                layout,
+                config,
+                repo_root=config.repo_root,
+            )
         else:
             raise IngestionError(
                 f"Unsupported file type for V1 ingest: {path.suffix} ({path.name})"
@@ -145,9 +165,21 @@ def ingest_path(
         raise IngestionError(f"Path does not exist: {path}")
 
     if path.is_file():
+        suffix = path.suffix.lower()
+        if suffix in DEFERRED_SUFFIXES:
+            log_skipped_raw_files(path, layout)
+            return IngestRunResult()
+        if not is_supported_raw_file(path):
+            log_skipped_raw_files(path, layout)
+            return IngestRunResult()
+        if not is_ingestible_raw_file(path, layout):
+            raise IngestionError(
+                f"Raw path does not match expected layout under {layout.raw_dir}: {path.name}"
+            )
         files = [path]
         run_cleanup = False
     else:
+        log_skipped_raw_files(path, layout)
         files = collect_raw_files(path, layout)
         run_cleanup = True
 

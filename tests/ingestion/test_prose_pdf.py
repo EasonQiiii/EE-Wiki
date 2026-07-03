@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ee_wiki.common.config import AppConfig
+from ee_wiki.common.types import Metadata
 from ee_wiki.ingestion.parsers.prose_pdf import ProsePdfParserError, parse_prose_pdf
 from ee_wiki.ingestion.parsers.prose_pdf.extract import extract_page_text
 from ee_wiki.ingestion.pipeline import ingest_file
@@ -131,6 +132,39 @@ def test_parse_prose_pdf_builds_page_sections(ingest_config: AppConfig) -> None:
     assert "## Page 1" in document.content
     assert "## Page 2" in document.content
     assert "Page 1 body" in document.content
+
+
+def test_parse_prose_pdf_accepts_external_path_with_metadata(
+    ingest_config: AppConfig, tmp_path: Path
+) -> None:
+    """LibreOffice .doc conversion writes PDF outside data/raw/."""
+    pdf_path = tmp_path / "converted.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+    metadata = Metadata(
+        project="global",
+        build="global",
+        document_type="datasheet",
+        title="WM8978中文资料",
+        source_file="data/raw/global/datasheet/WM8978中文资料.doc",
+    )
+
+    mock_doc = MagicMock()
+    mock_doc.page_count = 1
+    mock_doc.__getitem__.return_value = _mock_page(
+        "WM8978 codec register description with enough embedded text."
+    )
+
+    with patch("ee_wiki.ingestion.parsers.prose_pdf.fitz.open", return_value=mock_doc):
+        document = parse_prose_pdf(
+            pdf_path,
+            ingest_config.data_layout,
+            ingest_config,
+            metadata=metadata,
+        )
+
+    assert document.metadata.source_file.endswith("WM8978中文资料.doc")
+    assert document.metadata.document_type == "datasheet"
+    assert "WM8978 codec" in document.content
 
 
 def test_ingest_file_prose_pdf_end_to_end(ingest_config: AppConfig) -> None:

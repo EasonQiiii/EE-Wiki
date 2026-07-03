@@ -70,6 +70,28 @@ def test_force_always_reingests(sync_config: AppConfig) -> None:
     assert needs_ingest(raw_path, sync_config.data_layout, force=True) is True
 
 
+def test_log_skipped_raw_files_warns_on_key_and_numbers(
+    sync_config: AppConfig, caplog
+) -> None:
+    import logging
+
+    caplog.set_level(logging.INFO)
+    note_dir = sync_config.raw_dir / "logan/p1/note"
+    note_dir.mkdir(parents=True)
+    (note_dir / "slides.key").write_bytes(b"key")
+    (note_dir / "sheet.numbers").write_bytes(b"numbers")
+    (note_dir / "archive.zip").write_bytes(b"zip")
+
+    from ee_wiki.ingestion.sync import log_skipped_raw_files
+
+    log_skipped_raw_files(sync_config.raw_dir, sync_config.data_layout)
+
+    warnings = [record.message for record in caplog.records if record.levelname == "WARNING"]
+    assert any("slides.key" in message and ".key" in message for message in warnings)
+    assert any("sheet.numbers" in message and ".numbers" in message for message in warnings)
+    assert any("archive.zip" in message for message in warnings)
+
+
 def test_write_processed_records_fingerprint(sync_config: AppConfig) -> None:
     raw_path = sync_config.raw_dir / "logan/p1/note/sample.md"
     raw_path.parent.mkdir(parents=True)

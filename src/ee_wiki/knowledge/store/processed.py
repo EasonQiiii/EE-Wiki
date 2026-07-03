@@ -9,6 +9,7 @@ from pathlib import Path
 from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.fingerprint import raw_fingerprint
 from ee_wiki.common.logging import get_logger
+from ee_wiki.common.metadata_schema import validate_metadata_dict
 from ee_wiki.common.serialization import metadata_to_dict
 from ee_wiki.common.types import DataLayoutConfig, Metadata, StandardDocument
 from ee_wiki.ingestion.processed_paths import resolve_processed_paths
@@ -84,11 +85,14 @@ def write_processed_document(
     )
 
     paths = ProcessedPaths(content_path=content_path, metadata_path=metadata_path)
+    metadata_payload = metadata_to_dict(metadata)
+    if repo_root is not None:
+        validate_metadata_dict(metadata_payload, repo_root=repo_root)
     try:
         content_path.parent.mkdir(parents=True, exist_ok=True)
         content_path.write_text(document.content, encoding="utf-8")
         metadata_path.write_text(
-            json.dumps(metadata_to_dict(metadata), indent=2, ensure_ascii=False) + "\n",
+            json.dumps(metadata_payload, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
     except OSError as exc:

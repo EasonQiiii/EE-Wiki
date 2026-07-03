@@ -143,6 +143,7 @@ async def chat_completions(
                     build=body.build,
                     document_type=body.document_type,
                     top_k=body.top_k,
+                    task=body.task,
                 ):
                     yield chunk
             finally:
@@ -164,6 +165,7 @@ async def chat_completions(
                 target_build=body.build,
                 document_type=body.document_type,
                 top_k_final=body.top_k,
+                task=body.task,
             )
         except LlmLoadError as exc:
             logger.error("LLM load failed: %s", exc)
@@ -204,6 +206,7 @@ async def _stream_answer(
     build: str | None,
     document_type: str | None,
     top_k: int | None,
+    task: str | None,
 ) -> AsyncIterator[str]:
     """Yield OpenAI-compatible SSE chunks for a streamed RAG answer."""
     cancel = threading.Event()
@@ -227,6 +230,7 @@ async def _stream_answer(
             document_type=document_type,
             top_k_final=top_k,
             cancel_event=cancel,
+            task=task,
         )
         if cancel.is_set():
             logger.info("Chat stream %s cancelled before generation", chat_id)

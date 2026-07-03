@@ -8,6 +8,8 @@ from pathlib import Path
 from ee_wiki.common.fingerprint import raw_fingerprint
 from ee_wiki.common.logging import get_logger
 from ee_wiki.common.types import DataLayoutConfig
+from ee_wiki.ingestion.parsers.excel import EXCEL_SUFFIXES
+from ee_wiki.ingestion.parsers.word import WORD_SUFFIXES
 from ee_wiki.ingestion.parsers.markdown import MARKDOWN_SUFFIXES
 from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
 from ee_wiki.ingestion.path_metadata import PathMetadataError, parse_path_metadata
@@ -16,6 +18,15 @@ from ee_wiki.ingestion.processed_paths import resolve_processed_paths
 logger = get_logger(__name__)
 
 TEXT_SUFFIXES = {".txt"}
+DEFERRED_SUFFIXES = {".key", ".numbers"}
+
+
+def _relative_raw_path(raw_path: Path, raw_dir: Path) -> Path | str:
+    """Return a path label relative to ``raw_dir`` when possible."""
+    try:
+        return raw_path.resolve().relative_to(raw_dir.resolve())
+    except ValueError:
+        return raw_path.name
 
 
 def expected_content_extension(raw_path: Path, layout: DataLayoutConfig) -> str | None:
@@ -28,7 +39,7 @@ def expected_content_extension(raw_path: Path, layout: DataLayoutConfig) -> str 
     Returns:
         ``\".md\"`` for PDF sources, otherwise ``None``.
     """
-    if raw_path.suffix.lower() not in PDF_SUFFIXES:
+    if raw_path.suffix.lower() not in PDF_SUFFIXES | EXCEL_SUFFIXES | WORD_SUFFIXES:
         return None
     try:
         parse_path_metadata(raw_path, layout)
@@ -40,7 +51,7 @@ def expected_content_extension(raw_path: Path, layout: DataLayoutConfig) -> str 
 def is_supported_raw_file(raw_path: Path) -> bool:
     """Return whether ``raw_path`` has a supported ingest suffix."""
     suffix = raw_path.suffix.lower()
-    return suffix in MARKDOWN_SUFFIXES | TEXT_SUFFIXES | PDF_SUFFIXES
+    return suffix in MARKDOWN_SUFFIXES | TEXT_SUFFIXES | PDF_SUFFIXES | EXCEL_SUFFIXES | WORD_SUFFIXES
 
 
 def is_ingestible_raw_file(raw_path: Path, layout: DataLayoutConfig) -> bool:
@@ -58,6 +69,38 @@ def is_ingestible_raw_file(raw_path: Path, layout: DataLayoutConfig) -> bool:
     except PathMetadataError:
         return False
     return True
+
+
+def log_skipped_raw_files(raw_scope: Path, layout: DataLayoutConfig) -> None:
+    """Log deferred and unsupported raw files discovered under ``raw_scope``.
+
+    Args:
+        raw_scope: File or directory under ``layout.raw_dir`` to scan.
+        layout: Data layout with ``raw_dir`` for relative log labels.
+    """
+    resolved = raw_scope.resolve()
+    if resolved.is_file():
+        candidates = [resolved]
+    elif resolved.is_dir():
+        candidates = sorted(resolved.rglob("*"))
+    else:
+        return
+
+    for candidate in candidates:
+        if not candidate.is_file() or candidate.name.startswith("."):
+            continue
+        suffix = candidate.suffix.lower()
+        if not suffix:
+            continue
+        rel = _relative_raw_path(candidate, layout.raw_dir)
+        if suffix in DEFERRED_SUFFIXES:
+            logger.warning(
+                "Skipping deferred format %s (%s): export to PDF before ingest",
+                suffix,
+                rel,
+            )
+        elif not is_supported_raw_file(candidate):
+            logger.warning("Skipping unsupported raw file: %s", rel)
 
 
 def needs_ingest(

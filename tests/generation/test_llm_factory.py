@@ -10,9 +10,13 @@ from ee_wiki.common.config import (
     ApiConfig,
     AppConfig,
     ChunkingConfig,
+    ExcelConfig,
     GenerationConfig,
+    IndexingConfig,
+    ProsePdfConfig,
     RetrievalConfig,
     SchematicPdfConfig,
+    WordConfig,
 )
 from ee_wiki.common.errors import ConfigError
 from ee_wiki.common.types import DataLayoutConfig, ModelsConfig
@@ -40,7 +44,11 @@ def _app_config(
             llm_transformers_model=llm_transformers_model,
         ),
         schematic_pdf=SchematicPdfConfig(),
+        prose_pdf=ProsePdfConfig(),
+        excel=ExcelConfig(),
+        word=WordConfig(),
         chunking=ChunkingConfig(),
+        indexing=IndexingConfig(),
         retrieval=RetrievalConfig(
             top_k_embed=20,
             top_k_bm25=20,
