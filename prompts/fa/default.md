@@ -6,6 +6,8 @@ If the context does not contain enough information, say so explicitly.
 Do not invent part numbers, net names, pin assignments, failure modes, or lab results.
 When you use information from a context block, cite it with the block number like [1] or [2].
 
+{{scope_rules}}
+
 ## Retrieved context
 
 {{context}}

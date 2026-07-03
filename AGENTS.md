@@ -34,6 +34,7 @@ If a change crosses these lines, stop and propose an ADR instead of merging logi
 
 - LLMs reason and write; they are not the source of truth.
 - Every generated answer must be grounded in retrieved context with **citations** (document, page, chunk).
+- Answers must **explicitly distinguish** `project` / `build` and knowledge layer (`build` vs project `common` vs `global`) — see README [Retrieval Scope](README.md#retrieval-scope) and `prompts/_shared/scope_rules.md`.
 - When context is insufficient, return an explicit “insufficient knowledge” response — never invent part numbers, nets, or pin assignments.
 
 ### Offline first
@@ -85,11 +86,11 @@ data/raw/{project}/{build}/{type}/<file>
 
 Reserved segments (see `config/default.yaml` → `data_layout`):
 
-| Segment | Location | Meaning |
-|---------|----------|---------|
-| `global` | `data/raw/global/` | Enterprise-wide shared (`project=global`, `build=global`) |
-| `common` | `data/raw/{project}/common/` | Shared by all builds in that project |
-| `{build}` | e.g. `p1` | A specific hardware build |
+| Segment | Location | Meaning | Purpose |
+|---------|----------|---------|---------|
+| `global` | `data/raw/global/` | Enterprise-wide shared (`project=global`, `build=global`) | All projects: generic tools, industry practices, common datasheets |
+| `common` | `data/raw/{project}/common/` | Shared by all builds in that project | Project-wide knowledge: architecture, naming, cross-build SOPs — not board-specific wiring |
+| `{build}` | e.g. `p1` | A specific hardware build | Build truth: schematics and docs for that revision |
 
 Document folders: `note`, `sch`, `sop`, `datasheet` → map to `document_type` via `data_layout.document_type_folders`.
 
@@ -150,7 +151,7 @@ def search_chunks(query: str, filters: MetadataFilter) -> list[Chunk]:
 - Implement path → metadata parsing in `ingestion/` using `config/default.yaml` → `data_layout`.
 - Implement scope expansion in `ingestion/path_metadata.py` (`expand_retrieval_scope`) and `retrieval/hybrid/engine.py` (`_filter_by_scope`), driven by `retrieval.scope_inheritance`.
 - Validate metadata against `config/schema/metadata.schema.json`.
-- Keep prompt text in `prompts/`, loaded by `generation/templates/`.
+- Keep prompt text in `prompts/`, loaded by `generation/templates/`; shared scope rules live in `prompts/_shared/scope_rules.md`.
 - Use ADRs in `docs/adr/` for non-trivial technology or boundary decisions.
 - Match existing naming, import order, and error-handling patterns in neighboring files.
 
@@ -244,6 +245,8 @@ When your change affects structure or behavior, update the minimal set:
 
 | Change type | Update |
 |-------------|--------|
+| Answer must distinguish project/build and knowledge layer | `prompts/_shared/scope_rules.md`, `prompts/*/default.md`, `generation/context.py`, README Retrieval Scope |
+| Knowledge authoring / placement rules | `docs/usage/knowledge-authoring.md` |
 | Raw path convention or scope rules | `README.md` (Raw Data / Retrieval Scope) + this file §4 + `.cursor/rules/raw-data-retrieval.mdc` |
 | Ingest CLI behavior or flags | `docs/usage/ingest.md` |
 | New module or directory | `docs/architecture/repository-structure.md` |
@@ -297,8 +300,8 @@ When your change affects structure or behavior, update the minimal set:
 | **Processed mirror** | `data/processed/` keeps the same relative paths as `data/raw/` |
 | **Scope inheritance** | Retrieval for `build=Y` also searches `{project}/common/` and `global/` |
 | **Metadata filter** | Pre-retrieval filter on project, build, document_type |
-| **global** | Enterprise-wide shared raw path: `data/raw/global/` |
-| **common** | Project-wide shared raw path: `data/raw/{project}/common/` |
+| **global** | Enterprise-wide shared raw path: `data/raw/global/` | All-project knowledge: tools, industry practices, generic datasheets |
+| **common** | Project-wide shared raw path: `data/raw/{project}/common/` | That project's cross-build knowledge — not another project's, not build-specific wiring |
 | **Hybrid retrieval** | Metadata filter → embedding + BM25 → merge → rerank |
 | **Citation** | Provenance attached to every context block shown to the LLM |
 

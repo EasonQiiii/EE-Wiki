@@ -12,6 +12,10 @@ logger = get_logger(__name__)
 DEFAULT_TEMPLATE_NAME = "default"
 
 
+SCOPE_RULES_TASK = "_shared"
+SCOPE_RULES_NAME = "scope_rules"
+
+
 class TemplateLoadError(EEWikiError):
     """Failed to load or render a prompt template."""
 
@@ -49,19 +53,44 @@ def load_template(repo_root: Path, task: str, name: str = DEFAULT_TEMPLATE_NAME)
     return path.read_text(encoding="utf-8")
 
 
-def render_template(template: str, *, context: str, question: str) -> str:
-    """Substitute ``{{context}}`` and ``{{question}}`` placeholders.
+def load_scope_rules(repo_root: Path) -> str:
+    """Load shared knowledge-scope instructions from ``prompts/_shared/scope_rules.md``.
+
+    Args:
+        repo_root: Repository root path.
+
+    Returns:
+        Raw scope-rules markdown for ``{{scope_rules}}`` substitution.
+
+    Raises:
+        TemplateLoadError: If the scope rules file is missing.
+    """
+    return load_template(repo_root, SCOPE_RULES_TASK, SCOPE_RULES_NAME)
+
+
+def render_template(
+    template: str,
+    *,
+    context: str,
+    question: str,
+    scope_rules: str = "",
+) -> str:
+    """Substitute ``{{context}}``, ``{{question}}``, and ``{{scope_rules}}`` placeholders.
 
     Args:
         template: Raw template text.
         context: Retrieved context blocks.
         question: User question.
+        scope_rules: Shared knowledge-scope instructions (optional).
 
     Returns:
         Rendered prompt ready for the LLM.
     """
     return (
-        template.replace("{{context}}", context).replace("{{question}}", question).strip()
+        template.replace("{{scope_rules}}", scope_rules)
+        .replace("{{context}}", context)
+        .replace("{{question}}", question)
+        .strip()
     )
 
 

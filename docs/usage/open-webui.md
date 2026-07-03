@@ -56,6 +56,14 @@ Answers cite context blocks with plain `[1]` markers in the assistant text. Open
 
 ## Scope filters (project / build)
 
+**Strongly recommended** for engineering questions. Answers distinguish `project` / `build` and knowledge layer (`build` vs project `common` vs `global`).
+
+| Layer | Path | Role in answers |
+|-------|------|-----------------|
+| Build | `{project}/{build}/` | Default for pin, net, and BOM conclusions |
+| Project common | `{project}/common/` | Project-wide guidance — label explicitly |
+| Global | `global/` | Enterprise/industry background — not board wiring unless build agrees |
+
 V1 passes retrieval scope through extra JSON fields on chat requests:
 
 ```json
@@ -72,6 +80,8 @@ If your Open WebUI build cannot send custom fields on chat requests, use `POST /
 ```bash
 python scripts/ask.py "RMII 接口说明" --project logan --build p1
 ```
+
+Without `project` / `build`, retrieval searches the **entire index**; answers should list findings **per scope** and recommend specifying scope for build-level conclusions.
 
 ## Troubleshooting
 

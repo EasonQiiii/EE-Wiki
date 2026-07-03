@@ -10,6 +10,7 @@
 | [AGENTS.md](AGENTS.md) | Rules and boundaries for AI coding assistants |
 | [docs/usage/local-setup.md](docs/usage/local-setup.md) | **Local machine setup** (models, env, smoke test) |
 | [docs/usage/ingest.md](docs/usage/ingest.md) | **How to run `scripts/ingest.py`** (raw → processed) |
+| [docs/usage/knowledge-authoring.md](docs/usage/knowledge-authoring.md) | **How to write & place documents** (authoring spec for humans + AI) |
 | [docs/usage/index.md](docs/usage/index.md) | **How to run `scripts/index.py`** (processed → indexes) |
 | [docs/usage/query.md](docs/usage/query.md) | **CLI retrieval and RAG** (`query.py`, `ask.py`) |
 | [docs/usage/open-webui.md](docs/usage/open-webui.md) | **Open WebUI integration** |
@@ -354,13 +355,13 @@ data/raw/
 └── ...
 ```
 
-| Path segment | Meaning |
-|--------------|---------|
-| `global` | Enterprise-wide library — datasheets, SOPs, and notes used by every project |
-| `{project}` | A product line or program (e.g. `logan`) |
-| `common` | Documents shared by all builds within one project |
-| `{build}` | A specific hardware build or revision (e.g. `p1`, `p2`) |
-| `note` / `sch` / `sop` / `datasheet` | Document category folder |
+| Path segment | Meaning | What to store |
+|--------------|---------|---------------|
+| `global` | Enterprise-wide library (`project=global`, `build=global`) | Knowledge shared by **all projects**: generic tool usage, industry practices, common component datasheets, enterprise FA methods |
+| `{project}` | A product line or program (e.g. `logan`) | — |
+| `common` | Project-wide shared (`build=common`) | **This project's** cross-build knowledge: product architecture, naming rules, shared IP, project-level bring-up — not board-specific wiring |
+| `{build}` | A specific hardware revision (e.g. `p1`, `p2`) | **Build truth**: schematics, build SOPs, debug notes for that revision |
+| `note` / `sch` / `sop` / `datasheet` | Document category folder | — |
 
 Example:
 
@@ -463,11 +464,25 @@ Search scope (in priority order):
 Rules:
 
 - Build-specific documents rank highest; `common` and `global` provide fallback context.
+- **`global/`** — enterprise or industry-wide background (tools, generic datasheets); answers must label it **global**, not as a specific board's fact.
+- **`{project}/common/`** — that project's shared knowledge across builds; label as **project common**; does not override build-to-build differences.
+- **`{project}/{build}/`** — authoritative board-level truth; engineering conclusions default here.
 - Querying `project=logan, build=common` searches `logan/common` + `global` only.
 - Querying `project=global` searches the enterprise library only.
 - Scope inheritance is on by default (`config/default.yaml` → `retrieval.scope_inheritance`).
 
 This ensures a question about `logan/p1` still finds datasheets in `global/datasheet/` and SOPs in `logan/common/sop/`.
+
+### Answer presentation
+
+Generated answers **must distinguish** `project` / `build` and knowledge layer:
+
+- State which scope each conclusion applies to (e.g. `logan / p1`, `logan / common`, `global`).
+- When context spans multiple scopes, structure the answer by scope; do not merge conflicting build-specific details.
+- If the user did not specify `project` / `build`, list findings per scope and recommend specifying scope for a definitive build-level answer.
+- Retrieval ranking (build > common > global) does not remove the need to label sources in the answer.
+
+Implementation: context block headers in `generation/context.py`; shared rules in `prompts/_shared/scope_rules.md`.
 
 ---
 

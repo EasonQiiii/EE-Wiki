@@ -118,9 +118,15 @@ Section expansion does **not** merge chunks from different section slugs (e.g. `
 `generation/context.py` formats each retrieved (possibly merged) block as:
 
 ```
-[N] source=… page=… chunk_id=…
+[N] scope=build|project_common|global project=… build=… source=… page=… chunk_id=…
 <content>
 ```
+
+- **`scope=build`** — `{project}/{build}/` board-level truth
+- **`scope=project_common`** — `{project}/common/` project-wide shared knowledge
+- **`scope=global`** — `global/global/` enterprise-wide knowledge
+
+Task prompts include `prompts/_shared/scope_rules.md` via `{{scope_rules}}`. The generator must label which scope each conclusion applies to.
 
 The generator sees **question + these blocks only** — no direct index or database access.
 

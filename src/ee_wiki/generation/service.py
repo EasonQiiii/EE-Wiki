@@ -15,6 +15,7 @@ from ee_wiki.generation.intent_router import QueryRoute, classify_query_route
 from ee_wiki.generation.llm.factory import build_llm_backend
 from ee_wiki.generation.prompt_stats import prompt_size_fields
 from ee_wiki.generation.templates.loader import (
+    load_scope_rules,
     load_template,
     render_assistant_template,
     render_template,
@@ -212,7 +213,13 @@ class RagService:
 
         template = self._load_prompt_template(task)
         context = format_context_blocks(chunks)
-        prompt = render_template(template, context=context, question=question)
+        scope_rules = load_scope_rules(self.config.repo_root)
+        prompt = render_template(
+            template,
+            context=context,
+            question=question,
+            scope_rules=scope_rules,
+        )
         size = prompt_size_fields(prompt)
         logger.info(
             "Generating answer from %d chunk(s) "
@@ -297,7 +304,13 @@ class RagService:
 
         template = self._load_prompt_template(task)
         context = format_context_blocks(chunks)
-        prompt = render_template(template, context=context, question=question)
+        scope_rules = load_scope_rules(self.config.repo_root)
+        prompt = render_template(
+            template,
+            context=context,
+            question=question,
+            scope_rules=scope_rules,
+        )
         size = prompt_size_fields(prompt)
         logger.info(
             "Streaming answer from %d chunk(s) "

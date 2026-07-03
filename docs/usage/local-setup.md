@@ -115,11 +115,13 @@ Run on real engineering documents before declaring V1 complete:
 - [ ] Deletion sync: remove a raw file → `sync.py` → chunk gone from index
 - [ ] Insufficient context: unrelated question returns explicit message, no fabrication
 - [ ] `ask.py --json` returns `citations[]` with `source_file`, `chunk_id`, `excerpt`
+- [ ] RAG answers label `project` / `build` and distinguish build vs project common vs global
 - [ ] `serve.py` + Open WebUI: `[1]` markers link to processed documents
 - [ ] `pytest` and `ruff check src tests` pass
 
 ## Related docs
 
+- [knowledge-authoring.md](knowledge-authoring.md) — write & place documents (spec for AI reformatting)
 - [ingest.md](ingest.md) — raw → processed
 - [index.md](index.md) — processed → indexes
 - [query.md](query.md) — CLI retrieval and RAG

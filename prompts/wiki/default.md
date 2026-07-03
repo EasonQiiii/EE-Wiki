@@ -11,6 +11,8 @@ Do not assume one display interface applies to every module on a board; use only
 When the user names a feature but the context uses a related interface prefix or module label, answer from that evidence and note it is the closest match.
 When you use information from a context block, cite it with the block number like [1] or [2].
 
+{{scope_rules}}
+
 ## Retrieved context
 
 {{context}}

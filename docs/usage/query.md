@@ -29,6 +29,16 @@ Requires local models configured in `config/default.yaml`:
 - `reranker_model` — cross-encoder rerank (e.g. `bge-reranker-v2-m3`)
 - `llm_mlx_model` or `llm_transformers_model` — for RAG answers (see below)
 
+## Project / build scope (recommended)
+
+| Layer | Path | Use in answers |
+|-------|------|----------------|
+| **Build** | `{project}/{build}/` | Board-level truth — default for engineering conclusions |
+| **Project common** | `{project}/common/` | That project's cross-build knowledge — label explicitly |
+| **Global** | `global/` | All-project tools, industry practices, generic datasheets — background only |
+
+Always pass `--project` and `--build` when you know the target hardware revision. Without them, retrieval searches the **full index**; RAG answers should still **label each conclusion by scope**.
+
 ## Retrieval only (`scripts/query.py`)
 
 Run hybrid retrieval without calling an LLM:

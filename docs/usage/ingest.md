@@ -43,6 +43,18 @@ data/raw/
 │       └── sop/               # SOPs
 ```
 
+### Where to put a document
+
+| Put it under | When |
+|--------------|------|
+| `global/{type}/` | Shared by **all projects** — generic tool guides, industry practices, common component datasheets |
+| `{project}/common/{type}/` | Shared by **all builds in that project** — product architecture, project naming, cross-build SOPs |
+| `{project}/{build}/{type}/` | Specific to **one hardware revision** — schematics, build debug notes, that build's procedures |
+
+See [README — Retrieval Scope](../../README.md#retrieval-scope) for how retrieval and answers treat each layer.
+
+For **how to write** Markdown (glossaries, lifecycle docs, templates for AI reformatting), see [knowledge-authoring.md](knowledge-authoring.md).
+
 Supported formats (V1):
 
 | Folder | Formats |

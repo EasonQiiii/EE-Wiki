@@ -7,11 +7,11 @@ alwaysApply: true
 
 Raw path layout: `data/raw/{project}/{build}/{type}/<file>`
 
-| Segment | Path | Meaning |
-|---------|------|---------|
-| `global` | `data/raw/global/` | Enterprise shared (`project=global`, `build=global`) |
-| `common` | `data/raw/{project}/common/` | All builds in that project |
-| `{build}` | e.g. `p1` | Specific hardware build |
+| Segment | Path | Meaning | Purpose |
+|---------|------|---------|---------|
+| `global` | `data/raw/global/` | Enterprise shared (`project=global`, `build=global`) | All projects: generic tools, industry practices, common datasheets |
+| `common` | `data/raw/{project}/common/` | All builds in that project | Project-wide knowledge: architecture, naming, cross-build SOPs |
+| `{build}` | e.g. `p1` | Specific hardware build | Build truth: schematics and docs for that revision |
 
 Folders `note`, `sch`, `sop`, `datasheet` → `document_type` via `config/default.yaml` → `data_layout.document_type_folders`.
 
@@ -27,8 +27,14 @@ Folders `note`, `sch`, `sop`, `datasheet` → `document_type` via `config/defaul
 - Filter `project=X, build=Y` → also search `X/common/` and `global/`.
 - Rank: build-specific > `common` > `global`.
 
+## Answers
+
+- LLM context headers include `scope`, `project`, `build` (`generation/context.py`).
+- Answers must label conclusions by scope; build-specific evidence overrides common/global when they conflict.
+- Shared prompt rules: `prompts/_shared/scope_rules.md`.
+
 ## V1 formats
 
-PDF, Markdown, TXT, Excel only. Skip `.key` / `.numbers` with a clear log until parsers exist.
+PDF, Markdown, TXT, Excel, Word. Skip `.key` / `.numbers` with a clear log until parsers exist.
 
 Full detail: [AGENTS.md](../../AGENTS.md) §4, [README.md](../../README.md#raw-data-layout).

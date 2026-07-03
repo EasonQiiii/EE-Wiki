@@ -33,6 +33,7 @@ EE-Wiki/
 │       └── README.md
 │
 ├── prompts/                  # Task-specific prompt templates (data, not code)
+│   ├── _shared/              # scope_rules.md — injected into engineering prompts
 │   ├── wiki/
 │   ├── debug/
 │   ├── design_review/

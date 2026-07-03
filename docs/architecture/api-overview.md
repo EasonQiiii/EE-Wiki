@@ -4,6 +4,17 @@ EE-Wiki serves as the backend for Open WebUI. This document tracks the HTTP surf
 
 **Status:** V1 — core query endpoints implemented.
 
+## Scope filters (`project` / `build`)
+
+Strongly recommended for engineering questions.
+
+| Field | Meaning |
+|-------|---------|
+| `project` | Product/program (e.g. `logan`) |
+| `build` | Hardware revision (e.g. `p1`) or `common` for project-wide-only queries |
+
+When both are set with `retrieval.scope_inheritance: true` (default), search expands to `{project}/{build}` → `{project}/common` → `global`. Answers must label conclusions by scope (`build`, project `common`, `global`). Omitting both fields searches the entire index.
+
 ## Implemented endpoints (V1)
 
 | Method | Path | Purpose |
