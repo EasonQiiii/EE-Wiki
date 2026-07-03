@@ -13,7 +13,7 @@ Humans define architecture. AI implements details within these boundaries.
 | **Name** | EE-Wiki |
 | **Purpose** | Offline, AI-native electronic engineering knowledge platform |
 | **Role** | Backend knowledge engine; Open WebUI is the frontend |
-| **Current phase** | V0 — architecture and scaffolding (V1: offline hybrid RAG) |
+| **Current phase** | V1 — offline hybrid RAG (production hardening) |
 
 Read [README.md](README.md) for vision and principles — especially [Raw Data Layout](README.md#raw-data-layout) and [Retrieval Scope](README.md#retrieval-scope). Read [docs/architecture/repository-structure.md](docs/architecture/repository-structure.md) before creating or moving files.
 
@@ -148,7 +148,7 @@ def search_chunks(query: str, filters: MetadataFilter) -> list[Chunk]:
 - Extend `protocols/` before adding a second backend (e.g. a new vector store).
 - Add tests alongside new behavior in `tests/<module>/`.
 - Implement path → metadata parsing in `ingestion/` using `config/default.yaml` → `data_layout`.
-- Implement scope expansion in `retrieval/filters/`, driven by `retrieval.scope_inheritance`.
+- Implement scope expansion in `ingestion/path_metadata.py` (`expand_retrieval_scope`) and `retrieval/hybrid/engine.py` (`_filter_by_scope`), driven by `retrieval.scope_inheritance`.
 - Validate metadata against `config/schema/metadata.schema.json`.
 - Keep prompt text in `prompts/`, loaded by `generation/templates/`.
 - Use ADRs in `docs/adr/` for non-trivial technology or boundary decisions.
@@ -304,15 +304,19 @@ When your change affects structure or behavior, update the minimal set:
 
 ---
 
-## 16. Open Questions (Resolve via ADR)
+## 16. Resolved Technology Choices (ADR)
 
-These are intentionally unset in V0; do not hardcode without an ADR:
+V1 baseline is decided — do not re-litigate without a new ADR:
 
-- Vector database (Qdrant, pgvector, Milvus, …)
-- Embedding and reranker model IDs
-- Local LLM runtime (Ollama, vLLM, llama.cpp, …)
-- Chunking strategy defaults for schematics vs prose
+| Topic | Decision | Reference |
+|-------|----------|-----------|
+| Chunking | Structure-aware; schematic page boundaries | [ADR 0001](docs/adr/0001-chunking-strategy.md) |
+| Index storage | Flat on-disk hybrid bundle (`data/indexes/`) | [ADR 0002](docs/adr/0002-v1-runtime-stack.md) |
+| Embedding / reranker | `sentence-transformers`; paths in `config/default.yaml` | ADR 0002 |
+| Local LLM | MLX default; Transformers alternative | ADR 0002 |
+
+**Still open (V2+):** external vector DB (Qdrant, pgvector), Ollama/vLLM/llama.cpp — require ADR 0003+ before adoption.
 
 ---
 
-*Last updated: raw data layout (`global` / `common`), `build` metadata, scope inheritance, processed mirror.*
+*Last updated: V1 phase, scope expansion paths, ADR-backed runtime stack.*

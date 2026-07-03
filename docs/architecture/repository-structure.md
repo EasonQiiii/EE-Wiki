@@ -37,13 +37,14 @@ EE-Wiki/
 │   ├── debug/
 │   ├── design_review/
 │   ├── fa/
-│   ├── compare/
-│   └── explain/
+│   └── assistant/
 │
 ├── scripts/                  # CLI entry points for operators and CI
 │   ├── ingest.py             # Ingest documents into knowledge base
 │   ├── index.py              # Build or rebuild embeddings / BM25 indexes
 │   ├── sync.py               # Ingest + index in one command
+│   ├── query.py              # Retrieval-only CLI
+│   ├── ask.py                # RAG CLI (retrieval + generation)
 │   └── serve.py              # Start the API server
 │
 ├── src/
@@ -51,37 +52,29 @@ EE-Wiki/
 │       ├── __init__.py
 │       │
 │       ├── api/                # HTTP layer — Open WebUI / OpenAI-compatible REST
-│       │   ├── routes/
-│       │   └── middleware/
+│       │   └── routes/         # health, query, chat, sources
 │       │
 │       ├── ingestion/          # Parse raw files → StandardDocument (Markdown + metadata)
-│       │   ├── parsers/        # pdf, docx, pptx, xlsx, markdown, image/ocr
+│       │   ├── parsers/        # markdown, prose_pdf, schematic_pdf, word, excel
+│       │   ├── path_metadata.py
 │       │   └── pipeline.py
 │       │
 │       ├── knowledge/          # Persist and query stored knowledge assets
-│       │   ├── store/          # Document, chunk, metadata persistence
-│       │   └── indexer/        # Embedding + BM25 index writers
+│       │   ├── store/          # Processed mirror persistence
+│       │   ├── indexer/        # Embedding + BM25 index writers
+│       │   ├── chunker.py
+│       │   └── loader.py       # Load processed records for indexing
 │       │
 │       ├── retrieval/          # Hybrid search pipeline (no LLM generation)
-│       │   ├── filters/        # Metadata pre-filter
-│       │   ├── embedder/
-│       │   ├── bm25/
-│       │   ├── merger/
-│       │   └── reranker/
+│       │   ├── hybrid/         # Scope filter, embed + BM25, merge, rerank
+│       │   └── section_expand.py
 │       │
 │       ├── generation/         # Build prompts and call local LLM (no DB access)
 │       │   ├── templates/      # Loaders for prompts/ directory
-│       │   └── llm/            # Ollama / vLLM / other offline backends
+│       │   └── llm/            # MLX and Transformers backends
 │       │
-│       ├── graph/              # Knowledge graph (V3+) — nodes, edges, queries
-│       │
-│       ├── tools/              # Tool definitions for MCP / function calling (V2+)
-│       │
-│       ├── protocols/          # Abstract interfaces (typing.Protocol / ABC)
-│       │   ├── parser.py
-│       │   ├── retriever.py
-│       │   ├── generator.py
-│       │   └── knowledge_store.py
+│       ├── protocols/          # Abstract interfaces (typing.Protocol)
+│       │   └── llm.py          # LlmBackend (V2+: parser, retriever, …)
 │       │
 │       └── common/             # Shared types, config loader, logging, errors
 │           ├── types.py        # StandardDocument, Chunk, Metadata, Citation
@@ -106,8 +99,14 @@ EE-Wiki/
 | `retrieval/` | Filter, search, merge, rerank | Parse files, call LLM for final answer |
 | `generation/` | Format context + question, invoke LLM | Access database directly, parse files |
 | `api/` | Validate requests, orchestrate modules | Embed business logic duplicated from core |
-| `graph/` | Store and query engineering relationships | Replace retrieval for document Q&A in V1 |
-| `tools/` | Expose callable tools to MCP / Open WebUI | Implement retrieval logic inline |
+
+**Not yet in repo (future versions):**
+
+| Path | Version | Role |
+|------|---------|------|
+| `graph/` | V3+ | Knowledge graph store and queries |
+| `tools/` | V2+ | MCP / function tools for Open WebUI |
+| `protocols/parser.py`, `retriever.py`, … | V2+ | Abstractions before second backends |
 
 ## Standard Data Contracts
 
@@ -186,6 +185,7 @@ When `retrieval.scope_inheritance` is true (default), a query for `{project}/{bu
 
 ## Related Documents
 
+- [docs/usage/local-setup.md](../usage/local-setup.md) — local machine setup and V1 acceptance checklist
 - [docs/usage/ingest.md](../usage/ingest.md) — operator guide for `scripts/ingest.py`
 - [AGENTS.md](../../AGENTS.md) — rules for AI assistants working in this repo
 - [README.md](../../README.md) — vision, principles, and roadmap

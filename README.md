@@ -3,16 +3,19 @@
 > AI-Native Electronic Engineering Knowledge Platform  
 > Enterprise-grade Offline Engineering Wiki for Hardware Engineers
 
-**Status:** V0 — architecture and scaffolding (see [Long-term Roadmap](#long-term-roadmap))
+**Status:** V1 — offline hybrid RAG (see [Long-term Roadmap](#long-term-roadmap))
 
 | Document | Purpose |
 |----------|---------|
 | [AGENTS.md](AGENTS.md) | Rules and boundaries for AI coding assistants |
+| [docs/usage/local-setup.md](docs/usage/local-setup.md) | **Local machine setup** (models, env, smoke test) |
 | [docs/usage/ingest.md](docs/usage/ingest.md) | **How to run `scripts/ingest.py`** (raw → processed) |
 | [docs/usage/index.md](docs/usage/index.md) | **How to run `scripts/index.py`** (processed → indexes) |
+| [docs/usage/query.md](docs/usage/query.md) | **CLI retrieval and RAG** (`query.py`, `ask.py`) |
+| [docs/usage/open-webui.md](docs/usage/open-webui.md) | **Open WebUI integration** |
 | [docs/architecture/repository-structure.md](docs/architecture/repository-structure.md) | Canonical directory layout and module boundaries |
 | [docs/architecture/data-flow.md](docs/architecture/data-flow.md) | Ingestion and query pipelines |
-| [docs/architecture/api-overview.md](docs/architecture/api-overview.md) | Planned REST surface for Open WebUI |
+| [docs/architecture/api-overview.md](docs/architecture/api-overview.md) | REST surface for Open WebUI |
 
 ---
 

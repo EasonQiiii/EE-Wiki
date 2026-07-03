@@ -41,6 +41,19 @@ def test_ingest_file_end_to_end(ingest_config: AppConfig, repo_root: Path) -> No
     assert "major_components" not in meta
 
 
+def test_ingest_txt_file_uses_markdown_parser(ingest_config: AppConfig) -> None:
+    raw_path = ingest_config.raw_dir / "logan/p1/note/readme.txt"
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_text("# Readme\n\nPlain text body.\n", encoding="utf-8")
+
+    result = ingest_file(raw_path, ingest_config)
+    assert result.processed.content_path.name == "readme.txt"
+    body = result.processed.content_path.read_text(encoding="utf-8")
+    assert "Plain text body" in body
+    meta = json.loads(result.processed.metadata_path.read_text(encoding="utf-8"))
+    assert meta["document_type"] == "engineering_note"
+
+
 def test_ingest_path_rejects_unsupported_suffix(ingest_config: AppConfig) -> None:
     raw_path = ingest_config.raw_dir / "logan/p1/note/file.key"
     raw_path.parent.mkdir(parents=True)

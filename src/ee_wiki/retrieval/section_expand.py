@@ -6,7 +6,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ee_wiki.retrieval.hybrid.engine import HybridChunk
+    pass
 
 _SECTION_WINDOW_SUFFIX = re.compile(r"__w\d+$")
 

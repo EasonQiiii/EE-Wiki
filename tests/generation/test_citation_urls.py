@@ -13,7 +13,6 @@ from ee_wiki.generation.citation_urls import (
     section_fragment,
     source_document_url,
 )
-from ee_wiki.retrieval.hybrid.engine import HybridChunk
 
 
 def test_processed_relative_path_maps_under_processed_dir(app_config) -> None:

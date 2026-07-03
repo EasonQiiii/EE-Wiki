@@ -13,13 +13,13 @@ EE-Wiki serves as the backend for Open WebUI. This document tracks the HTTP surf
 | `GET` | `/v1/sources/{path}` | Processed Markdown/text document for citation links |
 | `GET` | `/v1/assets/{path}` | Image or asset under `data/processed/` |
 | `POST` | `/v1/query` | Explicit RAG query with citation payload |
-| `POST` | `/v1/chat/completions` | OpenAI-compatible chat (retrieval + generation) |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat (retrieval + generation); set `"stream": true` for SSE |
 
-## Planned endpoints (later)
+## Planned endpoints (V2+)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/v1/ingest` | Trigger document ingestion (admin) |
+| `POST` | `/v1/ingest` | Trigger document ingestion (admin); V1 uses `scripts/ingest.py` / `scripts/sync.py` |
 
 ## Start the server
 
@@ -131,7 +131,11 @@ Response:
 
 ## `POST /v1/chat/completions`
 
-OpenAI-compatible request with EE-Wiki metadata filters:
+OpenAI-compatible request with EE-Wiki metadata filters.
+
+Set `"stream": true` to receive Server-Sent Events: retrieval status updates during search, then token chunks in OpenAI `chat.completion.chunk` shape. Cancellation is supported when the client disconnects.
+
+Non-streaming request example:
 
 ```json
 {

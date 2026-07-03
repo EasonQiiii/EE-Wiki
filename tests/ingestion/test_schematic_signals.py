@@ -19,7 +19,7 @@ _NET_B_L = "COMM_L"
 
 
 def test_recover_noisy_prefix_nets_without_prefix_list() -> None:
-    text = f"NLIFACE0D0 PIP809NLIFACE0D1 IFACE__SCL MEM__D2"
+    text = "NLIFACE0D0 PIP809NLIFACE0D1 IFACE__SCL MEM__D2"
     recovered = recover_noisy_prefix_nets(text)
     assert _NET_A0 in recovered
     assert "MEM_D2" in recovered

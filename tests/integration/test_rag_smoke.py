@@ -44,6 +44,7 @@ def smoke_config(app_config: AppConfig, tmp_path: Path) -> AppConfig:
         processed_dir=processed_dir,
         indexes_dir=indexes_dir,
         data_layout=layout,
+        generation=replace(app_config.generation, intent_routing=False),
     )
 
 
@@ -76,8 +77,14 @@ def test_rag_smoke_raw_to_answer_with_citation(smoke_config: AppConfig) -> None:
     engine.load_index()
     _patch_engine_for_query(engine)
 
+    captured: dict[str, str] = {}
+
+    def _fake_stream(prompt: str, cancel_event=None):
+        captured["prompt"] = prompt
+        yield "VBAT connects to PMIC U0902 [1]."
+
     mock_llm = MagicMock()
-    mock_llm.generate.return_value = "VBAT connects to PMIC U0902 [1]."
+    mock_llm.generate_stream = _fake_stream
 
     service = RagService(config=smoke_config, engine=engine, llm=mock_llm)
     result = service.answer(
@@ -91,6 +98,6 @@ def test_rag_smoke_raw_to_answer_with_citation(smoke_config: AppConfig) -> None:
     assert "data/raw/logan/p1/note/power.md" in result.citations[0].source_file
     assert "[1]" in result.answer
 
-    prompt = mock_llm.generate.call_args.args[0]
-    assert "VBAT connects to PMIC U0902." in prompt
-    assert "What is VBAT connected to?" in prompt
+    mock_llm.generate.assert_not_called()
+    assert "VBAT connects to PMIC U0902." in captured["prompt"]
+    assert "What is VBAT connected to?" in captured["prompt"]

@@ -165,3 +165,41 @@ def test_retrieve_pin_query_defaults_to_schematic_sources(engine_with_index) -> 
     )
     assert results.chunks
     assert all(chunk.metadata.get("document_type") == "schematic" for chunk in results.chunks)
+
+
+def test_retrieve_scope_rank_prefers_build_over_higher_rerank_common(
+    engine_with_index,
+) -> None:
+    """Build-specific chunks outrank common even when reranker scores common higher."""
+    engine_with_index._embed_model.encode.return_value = np.array(
+        [0.5, 0.5, 0.0], dtype=np.float32
+    )
+    _mock_rerank_logits(engine_with_index._rerank_model, [0.3, 0.2, 0.95, 0.1])
+
+    results = engine_with_index.retrieve(
+        "debug power UART",
+        target_project="logan",
+        target_build="p1",
+        top_k_final=1,
+    )
+    assert len(results.chunks) == 1
+    assert results.chunks[0].metadata.get("build") == "p1"
+
+
+def test_retrieve_returns_empty_when_below_min_rerank_score(
+    engine_with_index,
+) -> None:
+    from dataclasses import replace
+
+    engine_with_index.config = replace(
+        engine_with_index.config,
+        retrieval=replace(engine_with_index.config.retrieval, min_rerank_score=10.0),
+    )
+    results = engine_with_index.retrieve(
+        "UART debug",
+        target_project="logan",
+        target_build="p1",
+    )
+    assert results.chunks == []
+    assert results.top_rerank_score is not None
+    assert results.top_rerank_score < 10.0

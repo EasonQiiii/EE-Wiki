@@ -12,11 +12,11 @@ from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import StandardDocument
 from ee_wiki.ingestion.cleanup import RemovedProcessed, cleanup_orphaned_processed
 from ee_wiki.ingestion.parsers.excel import EXCEL_SUFFIXES, parse_excel
-from ee_wiki.ingestion.parsers.word import WORD_SUFFIXES, parse_word
 from ee_wiki.ingestion.parsers.markdown import MARKDOWN_SUFFIXES, parse_markdown
 from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
 from ee_wiki.ingestion.parsers.prose_pdf import parse_prose_pdf
 from ee_wiki.ingestion.parsers.schematic_pdf import parse_schematic_pdf
+from ee_wiki.ingestion.parsers.word import WORD_SUFFIXES, parse_word
 from ee_wiki.ingestion.path_metadata import parse_path_metadata
 from ee_wiki.ingestion.sync import (
     DEFERRED_SUFFIXES,
