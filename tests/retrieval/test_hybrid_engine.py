@@ -157,14 +157,20 @@ def test_retrieve_returns_empty_when_document_type_has_no_matches(engine_with_in
     assert results.chunks == []
 
 
-def test_retrieve_pin_query_defaults_to_schematic_sources(engine_with_index) -> None:
+def test_retrieve_pin_query_does_not_auto_filter_document_type(engine_with_index) -> None:
+    """Pin wording must not hard-limit retrieval to schematic only (AGENTS.md)."""
+    engine_with_index._embed_model.encode.return_value = np.array(
+        [1.0, 0.0, 0.0], dtype=np.float32
+    )
+    _mock_rerank_logits(engine_with_index._rerank_model, [0.95, 0.1, 0.2, 0.3])
+
     results = engine_with_index.retrieve(
-        "proj_a build_b module_x pin signals",
+        "VBAT pin power",
         target_project="logan",
         target_build="p1",
     )
     assert results.chunks
-    assert all(chunk.metadata.get("document_type") == "schematic" for chunk in results.chunks)
+    assert results.chunks[0].chunk_id == "note__power"
 
 
 def test_retrieve_scope_rank_prefers_build_over_higher_rerank_common(

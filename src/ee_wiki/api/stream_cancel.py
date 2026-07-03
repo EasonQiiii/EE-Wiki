@@ -47,8 +47,10 @@ async def iter_sync_text_chunks(
                 logger.info("Stopping stream: client disconnected during generation")
                 break
             try:
-                fragment = next(iterator)
+                fragment = await asyncio.to_thread(next, iterator, None)
             except StopIteration:
+                break
+            if fragment is None:
                 break
             yield fragment
             await asyncio.sleep(0)

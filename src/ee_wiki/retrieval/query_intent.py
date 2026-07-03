@@ -1,41 +1,26 @@
-"""Lightweight query intent hints for retrieval ranking (no signal alias tables)."""
+"""Retrieval document-type filter helpers.
+
+AGENTS.md retrieval ranks by project/build scope (build > common > global).
+``document_type`` is applied only when the caller or CLI explicitly sets it
+(see ``scripts/query.py --document-type`` and API ``document_type``).
+Query keywords must not hard-limit retrieval to a single folder type.
+"""
 
 from __future__ import annotations
-
-from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
-
-_SCHEMATIC_SOURCE_MARKERS = (
-    "pin",
-    "pins",
-    "信号",
-    "引脚",
-    "接口",
-    "connector",
-    "net",
-    "网络",
-    "原理图",
-    "schematic",
-    "sch",
-)
-
-
-def prefers_schematic_sources(query: str) -> bool:
-    """Return whether the query is likely about schematic pin/signal evidence."""
-    lower = query.casefold()
-    return any(marker in lower for marker in _SCHEMATIC_SOURCE_MARKERS)
 
 
 def effective_document_type(
     query: str,
     document_type: str | None,
 ) -> str | None:
-    """Apply schematic intent when the caller did not set ``document_type``.
+    """Return the caller's explicit ``document_type`` filter, if any.
 
-    Pin/signal queries default to schematic sources so engineering notes do
-    not pollute hardware evidence retrieval.
+    Args:
+        query: User query (unused; kept for API stability).
+        document_type: Optional filter from API/CLI (``schematic``, ``datasheet``, …).
+
+    Returns:
+        ``document_type`` when set; otherwise ``None`` (search all types in scope).
     """
-    if document_type is not None:
-        return document_type
-    if prefers_schematic_sources(query):
-        return SCHEMATIC_DOCUMENT_TYPE
-    return None
+    _ = query
+    return document_type

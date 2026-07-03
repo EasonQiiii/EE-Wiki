@@ -14,13 +14,13 @@ import numpy as np
 
 from ee_wiki.common.config import AppConfig
 from ee_wiki.common.logging import get_logger
-from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE, metadata_to_dict
+from ee_wiki.common.serialization import metadata_to_dict
 from ee_wiki.common.types import Chunk
 from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
 from ee_wiki.retrieval.metadata_boost import metadata_keyword_boost
 from ee_wiki.retrieval.query_boost import query_boost_tokens
 from ee_wiki.retrieval.query_expand import expand_hw_query
-from ee_wiki.retrieval.query_intent import effective_document_type, prefers_schematic_sources
+from ee_wiki.retrieval.query_intent import effective_document_type
 from ee_wiki.retrieval.rerank_excerpt import query_focused_excerpt
 from ee_wiki.retrieval.section_expand import build_section_index, expand_retrieved_sections
 from ee_wiki.retrieval.tokenizer import tokenize_hw_text
@@ -260,11 +260,6 @@ class HybridRagEngine:
             logger.info("Expanded retrieval query: %s", search_query)
 
         resolved_document_type = effective_document_type(query, document_type)
-        schematic_preferred = prefers_schematic_sources(query)
-        if schematic_preferred:
-            dense_k = top_k_dense or self.config.retrieval.top_k_embed
-            sparse_k = top_k_sparse or self.config.retrieval.top_k_bm25
-            final_k = top_k_final or max(self.config.retrieval.top_k_final, 12)
 
         filtered, scope_ranks = self._filter_by_scope(
             target_project=target_project,
@@ -360,22 +355,12 @@ class HybridRagEngine:
             meta_hits = metadata_keyword_boost(chunk.metadata, boost_tokens)
             return content_hits + (meta_hits * 2)
 
-        def document_type_rank(chunk: HybridChunk) -> int:
-            if resolved_document_type is not None:
-                return 0
-            if not schematic_preferred:
-                return 0
-            if chunk.metadata.get("document_type") == SCHEMATIC_DOCUMENT_TYPE:
-                return 0
-            return 1
-
         reranked = [
             item[1]
             for item in sorted(
                 zip(logits, combined),
                 key=lambda item: (
                     scope_rank(item[1]),
-                    document_type_rank(item[1]),
                     -keyword_boost(item[1]),
                     -float(item[0]),
                 ),

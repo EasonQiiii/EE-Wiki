@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
@@ -23,7 +24,7 @@ from ee_wiki.api.models import (
     CitationModel,
 )
 from ee_wiki.api.open_webui_sources import citations_to_open_webui_sources
-from ee_wiki.api.rag_handler import rag_request_slot, raise_queue_full_http_error
+from ee_wiki.api.rag_handler import raise_queue_full_http_error
 from ee_wiki.api.stream_cancel import iter_sync_text_chunks
 from ee_wiki.api.stream_status import (
     GENERATION_STATUS,
@@ -138,9 +139,9 @@ async def chat_completions(
     request_timeout = config.api.request_timeout_seconds
 
     if body.stream:
+        slot_ctx = gate.slot()
         try:
-            slot_ctx = gate.slot()
-            snapshot = slot_ctx.__enter__()
+            snapshot = await asyncio.to_thread(slot_ctx.__enter__)
         except QueueFullError as exc:
             raise raise_queue_full_http_error(exc) from exc
 
@@ -162,7 +163,7 @@ async def chat_completions(
                 ):
                     yield chunk
             finally:
-                slot_ctx.__exit__(None, None, None)
+                await asyncio.to_thread(slot_ctx.__exit__, None, None, None)
 
         return StreamingResponse(
             wrapped_stream(),
@@ -177,7 +178,12 @@ async def chat_completions(
         label=f"Chat completion {chat_id}",
     )
     try:
-        with rag_request_slot(gate) as snapshot:
+        slot_ctx = gate.slot()
+        try:
+            snapshot = await asyncio.to_thread(slot_ctx.__enter__)
+        except QueueFullError as exc:
+            raise raise_queue_full_http_error(exc) from exc
+        try:
             response.headers.update(queue_response_headers(snapshot))
             try:
                 stream_result = await run_sync_with_request_timeout(
@@ -240,6 +246,8 @@ async def chat_completions(
                 sources=sources,
                 insufficient_context=content == INSUFFICIENT_ANSWER and not stream_result.citations,
             )
+        finally:
+            await asyncio.to_thread(slot_ctx.__exit__, None, None, None)
     finally:
         watcher.cancel()
 
