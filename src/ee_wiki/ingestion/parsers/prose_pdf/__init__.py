@@ -11,13 +11,24 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import DataLayoutConfig, Metadata, StandardDocument
 from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
+from ee_wiki.ingestion.parsers.prose_pdf.describe import describe_images
 from ee_wiki.ingestion.parsers.prose_pdf.extract import PageText, extract_page_text
+from ee_wiki.ingestion.parsers.prose_pdf.images import (
+    ExtractedImage,
+    extract_and_filter_images,
+    save_images,
+)
 from ee_wiki.ingestion.parsers.prose_pdf.language import (
     resolve_document_ocr_language,
     resolve_page_ocr_language,
 )
 from ee_wiki.ingestion.parsers.prose_pdf.tesseract_paths import resolve_tessdata_dir
 from ee_wiki.ingestion.path_metadata import parse_path_metadata
+from ee_wiki.ingestion.processed_paths import (
+    _filename_slug,
+    resolve_images_dir,
+    resolve_processed_paths,
+)
 
 try:
     import fitz
@@ -34,14 +45,57 @@ class ProsePdfParserError(EEWikiError):
     """Failed to parse a prose PDF."""
 
 
-def _build_markdown(title: str, pages: list[PageText]) -> str:
-    """Merge per-page text into a Markdown document with page headings."""
+def _images_dir(raw_path: Path, layout: DataLayoutConfig, prefix: str) -> Path:
+    """Resolve the images output directory mirroring the processed layout."""
+    content_path, _ = resolve_processed_paths(
+        raw_path,
+        layout,
+        content_extension=".md",
+    )
+    return resolve_images_dir(content_path, images_rel_prefix=prefix)
+
+
+def _build_markdown(
+    title: str,
+    pages: list[PageText],
+    *,
+    images: list[ExtractedImage] | None = None,
+    descriptions: dict[str, str] | None = None,
+    images_rel_prefix: str = "images",
+    source_slug: str = "",
+) -> str:
+    """Merge per-page text into a Markdown document with page headings.
+
+    When ``images`` is provided, image references and descriptions are appended
+    after the text of their respective pages.
+    """
+    images_by_page: dict[int, list[ExtractedImage]] = {}
+    if images:
+        for img in images:
+            images_by_page.setdefault(img.page, []).append(img)
+
+    desc = descriptions or {}
+
     sections: list[str] = [f"# {title}"]
     for page in pages:
         body = page.text.strip()
-        if not body:
+        page_images = images_by_page.get(page.page, [])
+        if not body and not page_images:
             continue
-        sections.append(f"## Page {page.page}\n\n{body}")
+
+        parts: list[str] = [f"## Page {page.page}"]
+        if body:
+            parts.append(body)
+
+        for img in page_images:
+            img_path = f"{images_rel_prefix}/{source_slug}/{img.filename}"
+            parts.append(f"![{img.filename}]({img_path})")
+            img_desc = desc.get(img.filename, "")
+            if img_desc:
+                parts.append(f"> {img_desc}")
+
+        sections.append("\n\n".join(parts))
+
     if len(sections) == 1:
         sections.append("## Page 1\n\n")
     return "\n\n".join(sections).rstrip() + "\n"
@@ -59,6 +113,11 @@ def parse_prose_pdf(
 
     Embedded text is extracted first. Pages with little or no selectable text
     fall back to Tesseract OCR via PyMuPDF (requires a local ``tesseract`` binary).
+
+    When ``extract_images`` is enabled, embedded raster images are extracted,
+    filtered, deduplicated, and saved alongside the processed Markdown. Each
+    image gets a searchable text description (OCR or VLM) embedded in the
+    Markdown as a blockquote beneath the image reference.
 
     Args:
         raw_path: Path to a ``.pdf`` file. Normally under ``layout.raw_dir``; when
@@ -171,26 +230,75 @@ def parse_prose_pdf(
             len(page_text.text),
         )
 
+    # --- Image extraction (document still open) ---
+    extracted_images: list[ExtractedImage] = []
+    image_descriptions: dict[str, str] = {}
+
+    if pdf_cfg.extract_images:
+        extracted_images = extract_and_filter_images(
+            document,
+            page_limit=limit,
+            source_stem=raw_path.stem,
+            min_area=pdf_cfg.min_image_area,
+            max_images_per_page=pdf_cfg.max_images_per_page,
+            dedup_max_pages=pdf_cfg.image_dedup_max_pages,
+        )
+
     document.close()
 
-    if not any(page.text.strip() for page in pages):
+    if extracted_images:
+        try:
+            target_raw = (
+                raw_path if metadata is None
+                else Path(layout.raw_dir) / base_metadata.source_file
+            )
+            out_dir = _images_dir(target_raw, layout, pdf_cfg.images_rel_prefix)
+            if out_dir.is_dir():
+                import shutil
+
+                shutil.rmtree(out_dir)
+                logger.debug("Cleared stale images directory: %s", out_dir)
+            save_images(extracted_images, out_dir)
+        except Exception as exc:
+            logger.warning("Failed to save extracted images: %s", exc)
+
+        if pdf_cfg.describe_images != "off":
+            image_descriptions = describe_images(
+                extracted_images,
+                mode=pdf_cfg.describe_images,
+                ocr_language=resolved_language,
+                tessdata_dir=tessdata_dir,
+                model_path=config.models.visual_model,
+            )
+
+    if not any(page.text.strip() for page in pages) and not extracted_images:
         raise ProsePdfParserError(
             f"No text extracted from PDF: {raw_path}. "
             "Install tesseract for scanned pages (see docs/usage/ingest.md)."
         )
 
-    markdown = _build_markdown(base_metadata.title, pages)
-    metadata = replace(base_metadata, page=limit)
+    source_slug = _filename_slug(raw_path.stem)
+
+    markdown = _build_markdown(
+        base_metadata.title,
+        pages,
+        images=extracted_images if extracted_images else None,
+        descriptions=image_descriptions,
+        images_rel_prefix=pdf_cfg.images_rel_prefix,
+        source_slug=source_slug,
+    )
+    final_metadata = replace(base_metadata, page=limit)
     document_out = StandardDocument(
         content=markdown,
-        metadata=metadata,
+        metadata=final_metadata,
         source_ref=str(raw_path.resolve()),
     )
     logger.info(
-        "Parsed prose PDF %s (%d pages, %d OCR page(s), %d chars)",
+        "Parsed prose PDF %s (%d pages, %d OCR page(s), %d images, %d chars)",
         base_metadata.source_file,
         limit,
         ocr_pages,
+        len(extracted_images),
         len(markdown),
     )
     return document_out

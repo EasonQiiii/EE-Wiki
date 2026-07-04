@@ -10,6 +10,7 @@ from ee_wiki.common.config import AppConfig
 from ee_wiki.common.logging import get_logger
 from ee_wiki.common.types import Citation, RagAnswer
 from ee_wiki.generation.citations import build_enriched_citations
+from ee_wiki.generation.classify import classify_task
 from ee_wiki.generation.context import format_context_blocks, format_history_block
 from ee_wiki.generation.llm.factory import build_llm_backend
 from ee_wiki.generation.prompt_stats import prompt_size_fields
@@ -80,6 +81,36 @@ class RagService:
         """Load the prompt template for the requested or configured task."""
         resolved_task = task or self.template_task
         return load_template(self.config.repo_root, resolved_task, self.template_name)
+
+    def _resolve_task(
+        self,
+        caller_task: str | None,
+        retrieval_query: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str | None:
+        """Resolve the prompt task, using LLM classification when enabled.
+
+        Args:
+            caller_task: Explicit task from the API caller (takes priority).
+            retrieval_query: The (possibly rewritten) user question for
+                classification input.
+            cancel_event: Cancellation signal.
+
+        Returns:
+            Resolved task name, or ``None`` to use the configured default.
+        """
+        if caller_task is not None:
+            return caller_task
+        if not self.config.generation.task_classification:
+            return None
+        return classify_task(
+            retrieval_query,
+            llm=self.llm,
+            repo_root=self.config.repo_root,
+            default_task=self.template_task,
+            cancel_event=cancel_event,
+        )
 
     def _should_use_assistant_fallback(
         self,
@@ -275,7 +306,13 @@ class RagService:
             logger.info("No chunks retrieved for question: %s", question)
             return RagAnswer(answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True)
 
-        template = self._load_prompt_template(task)
+        resolved_task = self._resolve_task(
+            task, retrieval_query, cancel_event=cancel_event,
+        )
+        if cancel_event and cancel_event.is_set():
+            return RagAnswer(answer="", citations=[], insufficient_context=False)
+
+        template = self._load_prompt_template(resolved_task)
         context = format_context_blocks(chunks)
         scope_rules = load_scope_rules(self.config.repo_root)
         prompt = render_template(
@@ -288,8 +325,9 @@ class RagService:
         size = prompt_size_fields(prompt)
         logger.info(
             "Generating answer from %d chunk(s) "
-            "(top_rerank=%s, prompt_chars=%d, prompt_tokens_est=%d)",
+            "(task=%s, top_rerank=%s, prompt_chars=%d, prompt_tokens_est=%d)",
             len(chunks),
+            resolved_task or self.template_task,
             (
                 f"{retrieval.top_rerank_score:.3f}"
                 if retrieval.top_rerank_score is not None
@@ -371,7 +409,13 @@ class RagService:
 
             return AnswerStreamResult(citations=[], text_chunks=_insufficient())
 
-        template = self._load_prompt_template(task)
+        resolved_task = self._resolve_task(
+            task, retrieval_query, cancel_event=cancel_event,
+        )
+        if cancel_event and cancel_event.is_set():
+            return AnswerStreamResult(citations=[], text_chunks=iter(()))
+
+        template = self._load_prompt_template(resolved_task)
         context = format_context_blocks(chunks)
         scope_rules = load_scope_rules(self.config.repo_root)
         prompt = render_template(
@@ -384,8 +428,9 @@ class RagService:
         size = prompt_size_fields(prompt)
         logger.info(
             "Streaming answer from %d chunk(s) "
-            "(top_rerank=%s, prompt_chars=%d, prompt_tokens_est=%d)",
+            "(task=%s, top_rerank=%s, prompt_chars=%d, prompt_tokens_est=%d)",
             len(chunks),
+            resolved_task or self.template_task,
             (
                 f"{retrieval.top_rerank_score:.3f}"
                 if retrieval.top_rerank_score is not None

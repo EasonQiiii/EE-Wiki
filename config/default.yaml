@@ -28,6 +28,7 @@ generation:
   weak_rerank_threshold: -2.0  # retrieval counts as weak (KB lacks answer) below this rerank logit
   query_rewrite: true                   # rewrite follow-up questions using conversation history
   query_rewrite_max_history_turns: 4    # max prior turns fed to the rewrite prompt
+  task_classification: true             # auto-select prompt task via LLM intent classification
 
 ingestion:
   excel:
@@ -43,6 +44,12 @@ ingestion:
     ocr_language: auto       # auto | eng | eng+chi_sim | other tesseract codes
     ocr_language_fallback: eng+chi_sim  # used when auto cannot infer script (image-only PDFs)
     # tessdata_dir: null     # auto-detect Homebrew/Linux paths; or set explicitly
+    extract_images: true            # extract embedded raster images from PDF pages
+    describe_images: ocr            # off | ocr | vlm — how to generate searchable text for images
+    min_image_area: 10000           # pixel area threshold; smaller images (logos, icons) are skipped
+    max_images_per_page: 5          # cap per-page image count to avoid noise
+    images_rel_prefix: images       # subdirectory name under processed mirror for saved images
+    image_dedup_max_pages: 3        # images appearing on more than this many pages are treated as templates
   schematic_pdf:
     layout_zoom: 2.0          # temp3.py render zoom for LayoutLM + crops
     min_figure_area: 10000

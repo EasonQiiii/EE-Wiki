@@ -52,6 +52,12 @@ class ProsePdfConfig:
     ocr_language: str = "auto"
     ocr_language_fallback: str = "eng+chi_sim"
     tessdata_dir: Path | None = None
+    extract_images: bool = True
+    describe_images: str = "ocr"
+    min_image_area: int = 10_000
+    max_images_per_page: int = 5
+    images_rel_prefix: str = "images"
+    image_dedup_max_pages: int = 3
 
 
 @dataclass(frozen=True)
@@ -125,6 +131,7 @@ class GenerationConfig:
     weak_rerank_threshold: float = -2.0
     query_rewrite: bool = True
     query_rewrite_max_history_turns: int = 4
+    task_classification: bool = True
 
 
 @dataclass(frozen=True)
@@ -319,6 +326,12 @@ def load_config(
             ocr_language=str(prose.get("ocr_language", "auto")),
             ocr_language_fallback=str(prose.get("ocr_language_fallback", "eng+chi_sim")),
             tessdata_dir=tessdata_dir,
+            extract_images=bool(prose.get("extract_images", True)),
+            describe_images=str(prose.get("describe_images", "ocr")),
+            min_image_area=int(prose.get("min_image_area", 10_000)),
+            max_images_per_page=int(prose.get("max_images_per_page", 5)),
+            images_rel_prefix=str(prose.get("images_rel_prefix", "images")),
+            image_dedup_max_pages=int(prose.get("image_dedup_max_pages", 3)),
         ),
         schematic_pdf=SchematicPdfConfig(
             dpi=int(schematic.get("dpi", 200)),
@@ -379,6 +392,7 @@ def load_config(
             query_rewrite_max_history_turns=int(
                 generation.get("query_rewrite_max_history_turns", 4)
             ),
+            task_classification=bool(generation.get("task_classification", True)),
         ),
         api=ApiConfig(
             host=str(api.get("host", "0.0.0.0")),

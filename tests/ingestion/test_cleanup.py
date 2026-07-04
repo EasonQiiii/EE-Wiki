@@ -128,3 +128,51 @@ def test_single_file_ingest_still_works(cleanup_config: AppConfig) -> None:
     run = ingest_path(raw_path, cleanup_config)
     assert len(run.ingested) == 1
     assert run.ingested[0].processed.content_path.is_file()
+
+
+def test_cleanup_removes_images_directory(cleanup_config: AppConfig) -> None:
+    """When a raw PDF is deleted, its images/ subdirectory is also removed."""
+    raw_path = cleanup_config.raw_dir / "logan/p1/note/report.md"
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_text("# report\n", encoding="utf-8")
+    ingest_file(raw_path, cleanup_config)
+
+    content_path = cleanup_config.processed_dir / "logan/p1/note/report.md"
+    images_dir = content_path.parent / "images" / "report"
+    images_dir.mkdir(parents=True)
+    (images_dir / "report_p1_img0.png").write_bytes(b"PNG")
+    (images_dir / "report_p2_img0.png").write_bytes(b"PNG")
+
+    assert images_dir.is_dir()
+    assert len(list(images_dir.iterdir())) == 2
+
+    raw_path.unlink()
+    removed = cleanup_orphaned_processed(
+        cleanup_config.data_layout,
+        raw_scope=cleanup_config.raw_dir,
+    )
+    assert len(removed) == 1
+    assert not content_path.is_file()
+    assert not images_dir.is_dir()
+
+
+def test_cleanup_prunes_empty_images_parent(cleanup_config: AppConfig) -> None:
+    """The ``images/`` parent directory itself is pruned when empty."""
+    raw_path = cleanup_config.raw_dir / "logan/p1/note/only.md"
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_text("# only\n", encoding="utf-8")
+    ingest_file(raw_path, cleanup_config)
+
+    content_path = cleanup_config.processed_dir / "logan/p1/note/only.md"
+    images_parent = content_path.parent / "images"
+    images_dir = images_parent / "only"
+    images_dir.mkdir(parents=True)
+    (images_dir / "only_p1_img0.png").write_bytes(b"PNG")
+
+    raw_path.unlink()
+    cleanup_orphaned_processed(
+        cleanup_config.data_layout,
+        raw_scope=cleanup_config.raw_dir,
+    )
+    assert not images_dir.is_dir()
+    assert not images_parent.is_dir()

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from ee_wiki.common.logging import get_logger
 from ee_wiki.common.types import DataLayoutConfig
+from ee_wiki.ingestion.processed_paths import resolve_images_dir
 
 logger = get_logger(__name__)
 
@@ -106,6 +108,12 @@ def cleanup_orphaned_processed(
             content_path.unlink()
         if meta_path.is_file():
             meta_path.unlink()
+
+        images_dir = resolve_images_dir(content_path)
+        if images_dir.is_dir():
+            shutil.rmtree(images_dir)
+            logger.info("Removed orphaned images directory: %s", images_dir)
+            _prune_empty_dirs(images_dir.parent, layout.processed_dir)
 
         removed.append(
             RemovedProcessed(

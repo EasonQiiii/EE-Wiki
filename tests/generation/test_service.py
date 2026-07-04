@@ -293,3 +293,150 @@ def test_assistant_fallback_disabled_returns_insufficient(rag_service) -> None:
     result = rag_service.answer("你是谁？")
     assert result.insufficient_context is True
     assert result.answer == INSUFFICIENT_ANSWER
+
+
+# ---------------------------------------------------------------------------
+# Task classification integration
+# ---------------------------------------------------------------------------
+
+def _make_chunk() -> HybridChunk:
+    """Helper: a generic chunk for classification tests."""
+    return HybridChunk(
+        chunk_id="note__power",
+        content="VBAT connects to PMIC.",
+        metadata={
+            "project": "logan",
+            "build": "p1",
+            "document_type": "engineering_note",
+            "title": "note",
+            "target_file": "data/processed/logan/p1/note/note.md",
+        },
+        citation={
+            "source_file": "data/raw/logan/p1/note/note.md",
+            "chunk_id": "note__power",
+            "page": 0,
+            "excerpt": "VBAT",
+        },
+    )
+
+
+def test_task_classification_selects_debug_prompt(rag_service, app_config) -> None:
+    """When task=None and classification enabled, LLM output drives template."""
+    rag_service.config = replace(
+        app_config,
+        generation=replace(
+            app_config.generation,
+            assistant_fallback=False,
+            task_classification=True,
+        ),
+    )
+    chunk = _make_chunk()
+    rag_service.engine.retrieve.return_value = RetrievalResult(
+        chunks=[chunk], top_rerank_score=1.0,
+    )
+
+    captured: dict[str, str] = {}
+    call_count = {"classify": 0, "answer": 0}
+
+    def _fake_stream(prompt: str, cancel_event=None, max_new_tokens=None):
+        if max_new_tokens and max_new_tokens <= 16:
+            call_count["classify"] += 1
+            yield "debug"
+        else:
+            call_count["answer"] += 1
+            captured["prompt"] = prompt
+            yield "Check UART wiring [1]."
+
+    rag_service.llm.generate_stream = _fake_stream
+
+    rag_service.answer("UART不通")
+    assert call_count["classify"] == 1
+    assert call_count["answer"] == 1
+    assert "hardware debug assistant" in captured["prompt"].lower()
+
+
+def test_explicit_task_skips_classification(rag_service, app_config) -> None:
+    """When task is explicitly provided, no classification call happens."""
+    rag_service.config = replace(
+        app_config,
+        generation=replace(
+            app_config.generation,
+            assistant_fallback=False,
+            task_classification=True,
+        ),
+    )
+    chunk = _make_chunk()
+    rag_service.engine.retrieve.return_value = RetrievalResult(
+        chunks=[chunk], top_rerank_score=1.0,
+    )
+
+    call_count = {"classify": 0}
+
+    def _fake_stream(prompt: str, cancel_event=None, max_new_tokens=None):
+        if max_new_tokens and max_new_tokens <= 16:
+            call_count["classify"] += 1
+            yield "debug"
+        else:
+            yield "answer"
+
+    rag_service.llm.generate_stream = _fake_stream
+
+    rag_service.answer("test", task="fa")
+    assert call_count["classify"] == 0
+
+
+def test_classification_disabled_uses_default(rag_service, app_config) -> None:
+    """When task_classification is False, no classification call happens."""
+    rag_service.config = replace(
+        app_config,
+        generation=replace(
+            app_config.generation,
+            assistant_fallback=False,
+            task_classification=False,
+        ),
+    )
+    chunk = _make_chunk()
+    rag_service.engine.retrieve.return_value = RetrievalResult(
+        chunks=[chunk], top_rerank_score=1.0,
+    )
+
+    call_count = {"classify": 0}
+
+    def _fake_stream(prompt: str, cancel_event=None, max_new_tokens=None):
+        if max_new_tokens and max_new_tokens <= 16:
+            call_count["classify"] += 1
+            yield "debug"
+        else:
+            yield "answer"
+
+    rag_service.llm.generate_stream = _fake_stream
+
+    rag_service.answer("test")
+    assert call_count["classify"] == 0
+
+
+def test_weak_retrieval_skips_classification(rag_service, app_config) -> None:
+    """Assistant fallback fires before classification, saving the LLM call."""
+    rag_service.config = replace(
+        app_config,
+        generation=replace(
+            app_config.generation,
+            assistant_fallback=True,
+            task_classification=True,
+        ),
+    )
+    rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[])
+
+    call_count = {"classify": 0}
+
+    def _fake_stream(prompt: str, cancel_event=None, max_new_tokens=None):
+        if max_new_tokens and max_new_tokens <= 16:
+            call_count["classify"] += 1
+            yield "debug"
+        else:
+            yield "我是 EE-Wiki 助手。"
+
+    rag_service.llm.generate_stream = _fake_stream
+
+    rag_service.answer("你好")
+    assert call_count["classify"] == 0
