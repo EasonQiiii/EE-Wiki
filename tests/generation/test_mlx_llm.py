@@ -35,7 +35,7 @@ def test_mlx_generate_applies_chat_template_and_returns_text(tmp_path: Path) -> 
 
     mock_mlx = MagicMock()
     mock_mlx.load.return_value = (mock_model, mock_tokenizer)
-    mock_mlx.stream_generate.return_value = [MagicMock(text="Answer text")]
+    mock_mlx.stream_generate.return_value = iter([MagicMock(text="Answer text")])
 
     with patch.dict(sys.modules, {"mlx_lm": mock_mlx}):
         result = backend.generate("Question?")
@@ -60,7 +60,7 @@ def test_mlx_generate_stream_yields_deltas(tmp_path: Path) -> None:
 
     mock_mlx = MagicMock()
     mock_mlx.load.return_value = (mock_model, mock_tokenizer)
-    mock_mlx.stream_generate.return_value = [first, second, third]
+    mock_mlx.stream_generate.return_value = iter([first, second, third])
 
     with patch.dict(sys.modules, {"mlx_lm": mock_mlx}):
         chunks = list(backend.generate_stream("Question?"))
