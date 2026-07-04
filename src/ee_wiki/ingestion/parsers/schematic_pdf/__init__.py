@@ -142,10 +142,13 @@ def parse_schematic_pdf(
             page_index,
             images_dir=images_dir,
             source_stem=raw_path.stem,
+            save_page_images=config.schematic_pdf.save_page_images,
         )
 
         logger.info("Schematic PDF %s: page %d/%d — VLM reconstruction", raw_path.name, page_num, limit)
-        extraction = vision_engine.extract_page(page_layout, project_id=project_id)
+        extraction = vision_engine.extract_page(
+            page_layout, project_id=project_id, source_stem=raw_path.stem,
+        )
         if extraction is None:
             logger.warning(
                 "VLM failed for %s page %d, using rule-based fallback",
@@ -155,6 +158,7 @@ def parse_schematic_pdf(
             extraction = build_fallback_report(
                 page_layout,
                 project_id=project_id,
+                source_stem=raw_path.stem,
                 images_rel_prefix=images_rel_prefix,
             )
         if fidelity_mode == "vlm_plus_ocr":

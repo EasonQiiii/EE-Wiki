@@ -287,6 +287,59 @@ def test_assistant_fallback_includes_history_in_prompt(rag_service, app_config) 
     assert "方案 A：OSDBatteryTester StateOfCharge [1]" in captured["prompt"]
 
 
+def test_finalize_appends_image_block_when_citations_have_images(
+    rag_service, app_config, tmp_path,
+) -> None:
+    """Images from citations should be deterministically appended to the answer."""
+    from dataclasses import replace as _replace
+
+    processed = tmp_path / "processed"
+    sch_images = processed / "logan/p1/sch/images/board"
+    sch_images.mkdir(parents=True)
+    (sch_images / "board_p1_page.png").write_bytes(b"PNG")
+
+    rag_service.config = _replace(
+        app_config,
+        processed_dir=processed,
+        generation=_replace(
+            app_config.generation,
+            assistant_fallback=False,
+            inline_citation_images=True,
+            max_inline_images=4,
+        ),
+    )
+    chunk = HybridChunk(
+        chunk_id="board__p001",
+        content="POWER SWITCH circuit\n![board_p1_page.png](images/board/board_p1_page.png)",
+        metadata={
+            "project": "logan",
+            "build": "p1",
+            "document_type": "schematic",
+            "title": "board",
+            "target_file": str(processed / "logan/p1/sch/board.md"),
+        },
+        citation={
+            "source_file": "data/raw/logan/p1/sch/board.pdf",
+            "chunk_id": "board__p001",
+            "page": 1,
+            "excerpt": "POWER SWITCH",
+        },
+    )
+    rag_service.engine.retrieve.return_value = RetrievalResult(
+        chunks=[chunk], top_rerank_score=1.0,
+    )
+
+    def _fake_stream(prompt: str, cancel_event=None):
+        yield "POWER SWITCH 原理说明 [1]。"
+
+    rag_service.llm.generate_stream = _fake_stream
+
+    result = rag_service.answer("POWER SWITCH", target_project="logan", target_build="p1")
+    assert "相关截图" in result.answer
+    assert "board_p1_page.png" in result.answer
+    assert result.citations[0].images
+
+
 def test_assistant_fallback_disabled_returns_insufficient(rag_service) -> None:
     """With the fallback off, empty retrieval returns the static message."""
     rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[])

@@ -75,6 +75,7 @@ class SchematicPdfConfig:
     images_rel_prefix: str = "images"
     fidelity_mode: str = "vlm_plus_ocr"
     vlm_max_image_side: int = 1280
+    save_page_images: bool = True
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,8 @@ class GenerationConfig:
     query_rewrite: bool = True
     query_rewrite_max_history_turns: int = 4
     task_classification: bool = True
+    inline_citation_images: bool = True
+    max_inline_images: int = 4
 
 
 @dataclass(frozen=True)
@@ -345,6 +348,7 @@ def load_config(
             images_rel_prefix=str(schematic.get("images_rel_prefix", "images")),
             fidelity_mode=str(schematic.get("fidelity_mode", "vlm_plus_ocr")),
             vlm_max_image_side=int(schematic.get("vlm_max_image_side", 1280)),
+            save_page_images=bool(schematic.get("save_page_images", True)),
         ),
         excel=ExcelConfig(
             output_format=str(excel.get("output_format", "markdown_table")),
@@ -393,6 +397,8 @@ def load_config(
                 generation.get("query_rewrite_max_history_turns", 4)
             ),
             task_classification=bool(generation.get("task_classification", True)),
+            inline_citation_images=bool(generation.get("inline_citation_images", True)),
+            max_inline_images=int(generation.get("max_inline_images", 4)),
         ),
         api=ApiConfig(
             host=str(api.get("host", "0.0.0.0")),

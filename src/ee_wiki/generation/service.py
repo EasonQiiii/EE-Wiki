@@ -12,6 +12,7 @@ from ee_wiki.common.types import Citation, RagAnswer
 from ee_wiki.generation.citations import build_enriched_citations
 from ee_wiki.generation.classify import classify_task
 from ee_wiki.generation.context import format_context_blocks, format_history_block
+from ee_wiki.generation.inline_images import build_image_block
 from ee_wiki.generation.llm.factory import build_llm_backend
 from ee_wiki.generation.prompt_stats import prompt_size_fields
 from ee_wiki.generation.templates.loader import (
@@ -207,6 +208,14 @@ class RagService:
     ) -> RagAnswer:
         """Attach enriched citations; keep inline ``[N]`` markers as plain text."""
         citations = build_enriched_citations(chunks, self.config)
+        if self.config.generation.inline_citation_images and not insufficient_context:
+            image_block = build_image_block(
+                answer_text,
+                citations,
+                max_images=self.config.generation.max_inline_images,
+            )
+            if image_block:
+                answer_text = answer_text.rstrip() + image_block
         return RagAnswer(
             answer=answer_text,
             citations=citations,

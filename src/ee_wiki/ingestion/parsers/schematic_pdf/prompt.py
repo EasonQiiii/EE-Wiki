@@ -26,18 +26,29 @@ def build_schematic_page_prompt(
     raw_ocr_text: str,
     ocr_text_max_chars: int = 1200,
     slice_filenames: list[str] | None = None,
+    page_image_filename: str = "",
     images_rel_prefix: str = "images",
+    source_stem: str = "",
 ) -> str:
     """Build the user prompt for Qwen3-VL page reconstruction."""
     preview = raw_ocr_text[:ocr_text_max_chars]
+    slug = schematic_image_slug(source_stem) if source_stem else ""
+    slug_prefix = f"{images_rel_prefix}/{slug}" if slug else images_rel_prefix
+
     asset_hint = ""
+    asset_lines_parts: list[str] = []
+    if page_image_filename:
+        asset_lines_parts.append(f"- `{slug_prefix}/{page_image_filename}` (整页电路图)")
     if slice_filenames:
-        asset_lines = "\n".join(
-            f"- `{images_rel_prefix}/{name}`" for name in slice_filenames
+        asset_lines_parts.extend(
+            f"- `{slug_prefix}/{name}`" for name in slice_filenames
         )
+    if asset_lines_parts:
+        asset_lines = "\n".join(asset_lines_parts)
         asset_hint = (
             f"\n【已裁剪局部电路图】\n{asset_lines}\n"
-            "请在报告第 3 或第 4 节引用上述图片路径，并补充 VLM_Description。\n"
+            "请在报告第 3 或第 4 节用 Markdown 图片语法 "
+            "`![描述](路径)` 引用上述图片路径，并补充 VLM_Description。\n"
         )
 
     return (

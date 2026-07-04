@@ -206,8 +206,10 @@ class SchematicVisionEngine:
         layout: PageLayoutResult,
         *,
         project_id: str,
+        source_stem: str = "",
     ) -> PageExtraction | None:
         """Run VLM reconstruction for one analyzed page. Returns None on failure."""
+        self._source_stem = source_stem
         self._ensure_loaded()
         assert self._model is not None
         assert self._processor is not None
@@ -245,7 +247,9 @@ class SchematicVisionEngine:
             raw_ocr_text=layout.raw_ocr_text,
             ocr_text_max_chars=self.ocr_text_max_chars,
             slice_filenames=layout.slice_filenames,
+            page_image_filename=layout.page_image_filename,
             images_rel_prefix=self.images_rel_prefix,
+            source_stem=self._source_stem,
         )
         messages = _build_vision_messages(
             system_prompt=SCHEMATIC_SYSTEM_PROMPT,

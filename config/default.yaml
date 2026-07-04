@@ -29,6 +29,8 @@ generation:
   query_rewrite: true                   # rewrite follow-up questions using conversation history
   query_rewrite_max_history_turns: 4    # max prior turns fed to the rewrite prompt
   task_classification: true             # auto-select prompt task via LLM intent classification
+  inline_citation_images: true          # append referenced schematic/document images after the answer
+  max_inline_images: 4                  # cap on images appended per answer
 
 ingestion:
   excel:
@@ -62,6 +64,7 @@ ingestion:
     temperature: 0.1
     do_sample: false
     images_rel_prefix: images
+    save_page_images: true        # save full-page renders as PNG alongside figure crops
 
 chunking:
   max_chars: 1500

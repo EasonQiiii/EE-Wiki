@@ -39,6 +39,7 @@ from ee_wiki.api.timeout import (
     run_sync_with_request_timeout,
 )
 from ee_wiki.common.logging import get_logger
+from ee_wiki.generation.inline_images import build_image_block
 from ee_wiki.generation.llm.errors import LlmLoadError, LlmTimeoutError
 from ee_wiki.generation.service import INSUFFICIENT_ANSWER, RagService
 from ee_wiki.retrieval.rewrite import ConversationTurn
@@ -259,6 +260,18 @@ async def chat_completions(
             content = "".join(fragments).strip() or INSUFFICIENT_ANSWER
             citation_models = [citation_to_model(citation) for citation in stream_result.citations]
             sources = citations_to_open_webui_sources(stream_result.citations)
+            insufficient = content == INSUFFICIENT_ANSWER and not stream_result.citations
+            try:
+                if config.generation.inline_citation_images and not insufficient:
+                    image_block = build_image_block(
+                        content,
+                        stream_result.citations,
+                        max_images=config.generation.max_inline_images,
+                    )
+                    if image_block:
+                        content = content.rstrip() + image_block
+            except (AttributeError, TypeError):
+                pass
             logger.info(
                 "Chat completion %s finished (%d chars, insufficient=%s)",
                 chat_id,
@@ -271,7 +284,7 @@ async def chat_completions(
                 content=content,
                 citations=citation_models,
                 sources=sources,
-                insufficient_context=content == INSUFFICIENT_ANSWER and not stream_result.citations,
+                insufficient_context=insufficient,
             )
         finally:
             await asyncio.to_thread(slot_ctx.__exit__, None, None, None)
@@ -388,6 +401,26 @@ async def _stream_answer(
             yield clear_stream_status_sse(description=GENERATION_STATUS)
 
         content = "".join(fragments).strip() or INSUFFICIENT_ANSWER
+        insufficient = content == INSUFFICIENT_ANSWER and not stream_result.citations
+        if not insufficient and stream_result.citations:
+            try:
+                gen_cfg = service.config.generation
+                if gen_cfg.inline_citation_images:
+                    image_block = build_image_block(
+                        content,
+                        stream_result.citations,
+                        max_images=gen_cfg.max_inline_images,
+                    )
+                    if image_block:
+                        yield _sse_chunk(
+                            chat_id=chat_id,
+                            model=model,
+                            created=created,
+                            delta={"content": image_block},
+                        )
+            except (AttributeError, TypeError):
+                pass
+
         logger.info("Chat stream %s finished (%d chars)", chat_id, len(content))
         yield _sse_chunk(
             chat_id=chat_id,

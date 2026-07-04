@@ -29,6 +29,7 @@ class PageLayoutResult:
     raw_ocr_text: str
     crop_image_bytes: bytes | None
     slice_filenames: list[str]
+    page_image_filename: str = ""
 
 
 def _extract_text_and_boxes(page, zoom_factor: float, img_w: int, img_h: int) -> tuple[list[str], list[list[int]]]:
@@ -106,6 +107,7 @@ class SchematicLayoutEngine:
         *,
         images_dir: Path | None,
         source_stem: str,
+        save_page_images: bool = False,
     ) -> PageLayoutResult:
         """Run layout analysis and optional figure cropping for one PDF page."""
         try:
@@ -134,6 +136,14 @@ class SchematicLayoutEngine:
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         best_crop_bytes = buffer.getvalue()
+
+        page_image_filename = ""
+        if save_page_images and images_dir is not None:
+            slug = schematic_image_slug(source_stem)
+            page_image_filename = f"{slug}_p{page_id}_page.png"
+            images_dir.mkdir(parents=True, exist_ok=True)
+            (images_dir / page_image_filename).write_bytes(best_crop_bytes)
+            logger.info("Saved full-page render: %s", page_image_filename)
 
         if self._ensure_loaded():
             assert self._processor is not None
@@ -219,6 +229,7 @@ class SchematicLayoutEngine:
             raw_ocr_text=raw_ocr_text,
             crop_image_bytes=best_crop_bytes,
             slice_filenames=slice_filenames,
+            page_image_filename=page_image_filename,
         )
 
 

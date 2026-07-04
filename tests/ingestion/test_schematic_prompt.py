@@ -28,3 +28,26 @@ def test_build_schematic_page_prompt_includes_ocr_and_project() -> None:
 def test_system_prompt_fa_expert() -> None:
     assert "失效分析" in SCHEMATIC_SYSTEM_PROMPT
     assert "Markdown" in SCHEMATIC_SYSTEM_PROMPT
+
+
+def test_prompt_uses_slug_subdirectory_for_image_paths() -> None:
+    prompt = build_schematic_page_prompt(
+        page=3,
+        project_id="logan",
+        raw_ocr_text="U15 MP2359",
+        slice_filenames=["explorer_stm32f4_v2_2_sch_p3_crop_0.png"],
+        source_stem="Explorer STM32F4_V2.2_SCH",
+    )
+    assert "images/explorer_stm32f4_v2_2_sch/explorer_stm32f4_v2_2_sch_p3_crop_0.png" in prompt
+
+
+def test_prompt_includes_page_image_when_provided() -> None:
+    prompt = build_schematic_page_prompt(
+        page=1,
+        project_id="logan",
+        raw_ocr_text="U1 VCC",
+        page_image_filename="board_p1_page.png",
+        source_stem="board",
+    )
+    assert "images/board/board_p1_page.png" in prompt
+    assert "整页电路图" in prompt
