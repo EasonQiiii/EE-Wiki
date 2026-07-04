@@ -25,7 +25,7 @@ generation:
   llm_timeout_seconds: 180  # allow ~2048 tokens on 9B MLX; null or 0 disables
   assistant_fallback: true   # when retrieval is weak, answer from the assistant role prompt instead of weak chunks
   assistant_task: assistant  # prompts/{task}/ for the weak-retrieval fallback (identity/usage or "no relevant content")
-  weak_rerank_threshold: -2.0  # retrieval counts as weak (KB lacks answer) below this rerank logit
+  weak_rerank_threshold: -4.0  # retrieval counts as weak (KB lacks answer) below this rerank logit; VLM-regenerated schematic chunks score ~-2.2 for relevant hits
   query_rewrite: true                   # rewrite follow-up questions using conversation history
   query_rewrite_max_history_turns: 4    # max prior turns fed to the rewrite prompt
   task_classification: true             # auto-select prompt task via LLM intent classification

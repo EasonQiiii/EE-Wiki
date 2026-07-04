@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
 from ee_wiki.common.config import ApiConfig, AppConfig
+from ee_wiki.ingestion.parsers.schematic_pdf.prompt import schematic_image_slug
 
 _MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 
@@ -63,6 +64,27 @@ def parse_markdown_image_refs(content: str) -> list[str]:
     return refs
 
 
+def _resolve_target_under_processed(target_file: str, processed_dir: Path) -> Path:
+    """Map a ``target_file`` label to an absolute path under ``processed_dir``.
+
+    Labels are usually repo-relative (``data/processed/...``); joining them
+    directly onto ``processed_dir`` would duplicate the prefix, so strip any
+    leading components up to the processed directory name first.
+    """
+    path = Path(target_file)
+    root = processed_dir.resolve()
+    if path.is_absolute():
+        return path.resolve()
+
+    parts = PurePosixPath(target_file.replace("\\", "/")).parts
+    if root.name in parts:
+        idx = len(parts) - 1 - parts[::-1].index(root.name)
+        stripped = parts[idx + 1 :]
+        if stripped:
+            return (root / Path(*stripped)).resolve()
+    return (root / path).resolve()
+
+
 def resolve_asset_relative_path(
     target_file: str,
     image_ref: str,
@@ -75,11 +97,7 @@ def resolve_asset_relative_path(
     if ref.startswith(("http://", "https://")):
         return ref
 
-    target_path = Path(target_file)
-    if not target_path.is_absolute():
-        target_path = (processed_dir / target_path).resolve()
-    else:
-        target_path = target_path.resolve()
+    target_path = _resolve_target_under_processed(target_file, processed_dir)
 
     resolved = (target_path.parent / ref).resolve()
     try:
@@ -89,6 +107,30 @@ def resolve_asset_relative_path(
     if not resolved.is_file():
         return None
     return rel.as_posix()
+
+
+def page_image_url(config: AppConfig, *, target_file: str, page: int) -> str | None:
+    """Return the public URL of a saved full-page render for a schematic page.
+
+    Page renders follow the ingestion convention
+    ``images/{slug}/{slug}_p{page}_page.png`` next to the processed ``.md``.
+
+    Args:
+        config: Application configuration.
+        target_file: Processed markdown path label for the citation.
+        page: 1-based page number from the citation.
+
+    Returns:
+        Public asset URL, or ``None`` when the render does not exist.
+    """
+    if not target_file or page <= 0:
+        return None
+    slug = schematic_image_slug(Path(target_file).stem)
+    ref = f"images/{slug}/{slug}_p{page}_page.png"
+    rel = resolve_asset_relative_path(target_file, ref, config.processed_dir)
+    if rel is None:
+        return None
+    return asset_url(config, asset_rel=rel)
 
 
 def citation_image_urls(config: AppConfig, *, target_file: str, content: str) -> tuple[str, ...]:

@@ -6,6 +6,7 @@ from ee_wiki.common.config import AppConfig
 from ee_wiki.common.types import Citation
 from ee_wiki.generation.citation_urls import (
     citation_image_urls,
+    page_image_url,
     source_document_url,
 )
 from ee_wiki.retrieval.hybrid.engine import HybridChunk
@@ -39,6 +40,11 @@ def build_enriched_citations(chunks: list[HybridChunk], config: AppConfig) -> li
             else ""
         )
         images = citation_image_urls(config, target_file=target_file, content=chunk.content)
+        if not images:
+            page = int(citation.get("page", 0))
+            page_url = page_image_url(config, target_file=target_file, page=page)
+            if page_url:
+                images = (page_url,)
         citations.append(
             Citation(
                 source_file=str(citation.get("source_file", "")),

@@ -63,6 +63,29 @@ def test_resolve_asset_relative_path(app_config, tmp_path: Path) -> None:
     )
 
 
+def test_page_image_url_finds_saved_page_render(app_config, tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from ee_wiki.generation.citation_urls import page_image_url
+
+    processed = tmp_path / "processed"
+    sch_dir = processed / "logan/p1/sch"
+    images = sch_dir / "images/explorer_stm32f4_v2_2_sch"
+    images.mkdir(parents=True)
+    (images / "explorer_stm32f4_v2_2_sch_p4_page.png").write_bytes(b"png")
+    target = sch_dir / "Explorer STM32F4_V2.2_SCH.md"
+    config = replace(app_config, processed_dir=processed)
+
+    url = page_image_url(config, target_file=str(target), page=4)
+    assert url is not None
+    assert url.endswith(
+        "/v1/assets/logan/p1/sch/images/explorer_stm32f4_v2_2_sch/"
+        "explorer_stm32f4_v2_2_sch_p4_page.png"
+    )
+    assert page_image_url(config, target_file=str(target), page=9) is None
+    assert page_image_url(config, target_file=str(target), page=0) is None
+
+
 def test_citation_image_urls_from_chunk_content(app_config, tmp_path: Path) -> None:
     from dataclasses import replace
 
@@ -82,3 +105,19 @@ def test_citation_image_urls_from_chunk_content(app_config, tmp_path: Path) -> N
     )
     assert len(urls) == 1
     assert urls[0].endswith("/v1/assets/logan/p1/note/manual.assets/diag.png")
+
+
+def test_resolve_asset_relative_path_with_repo_relative_target(tmp_path: Path) -> None:
+    """Index metadata stores target_file as ``data/processed/...`` labels."""
+    processed = tmp_path / "data" / "processed"
+    sch_dir = processed / "logan/p1/sch"
+    images = sch_dir / "images/board"
+    images.mkdir(parents=True)
+    (images / "board_p4_page.png").write_bytes(b"png")
+
+    rel = resolve_asset_relative_path(
+        "data/processed/logan/p1/sch/board.md",
+        "images/board/board_p4_page.png",
+        processed,
+    )
+    assert rel == "logan/p1/sch/images/board/board_p4_page.png"
