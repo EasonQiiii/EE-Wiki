@@ -9,6 +9,7 @@ import pytest
 
 from ee_wiki.generation.service import INSUFFICIENT_ANSWER, RagService
 from ee_wiki.retrieval.hybrid.engine import HybridChunk, RetrievalResult
+from ee_wiki.retrieval.rewrite import ConversationTurn
 
 
 @pytest.fixture
@@ -223,6 +224,67 @@ def test_strong_retrieval_prevents_assistant_fallback(rag_service, app_config) -
     text = "".join(result.text_chunks)
     assert "Astris" in text
     assert len(result.citations) == 1
+
+
+def test_answer_includes_history_in_generation_prompt(rag_service, app_config) -> None:
+    """Follow-up turns must be visible to the LLM, not only to query rewrite."""
+    rag_service.config = replace(
+        app_config,
+        generation=replace(app_config.generation, assistant_fallback=False, query_rewrite=False),
+    )
+    chunk = HybridChunk(
+        chunk_id="ipadmanal__discharge",
+        content="OSDBatteryTester StateOfCharge --UpperLimit 95",
+        metadata={"project": "global", "build": "global", "document_type": "engineering_note"},
+        citation={
+            "source_file": "data/raw/global/note/ipadmanal.md",
+            "chunk_id": "ipadmanal__discharge",
+        },
+    )
+    rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[chunk], top_rerank_score=1.0)
+
+    captured: dict[str, str] = {}
+
+    def _fake_stream(prompt: str, cancel_event=None):
+        captured["prompt"] = prompt
+        yield "Plan A: OSDBatteryTester ... [1]"
+
+    rag_service.llm.generate_stream = _fake_stream
+
+    history = [
+        ConversationTurn(role="user", content="ipad快速放电指令"),
+        ConversationTurn(role="assistant", content="方案 A：OSDBatteryTester StateOfCharge [1]"),
+    ]
+    rag_service.answer("用英文", history=history)
+    assert "Conversation history" in captured["prompt"]
+    assert "方案 A：OSDBatteryTester StateOfCharge [1]" in captured["prompt"]
+    assert "用英文" in captured["prompt"]
+
+
+def test_assistant_fallback_includes_history_in_prompt(rag_service, app_config) -> None:
+    """Weak retrieval on a follow-up must still expose the previous answer."""
+    rag_service.config = replace(
+        app_config,
+        generation=replace(app_config.generation, assistant_fallback=True, query_rewrite=False),
+    )
+    rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[])
+
+    captured: dict[str, str] = {}
+
+    def _fake_stream(prompt: str, cancel_event=None):
+        captured["prompt"] = prompt
+        yield "Plan A (translated): ..."
+
+    rag_service.llm.generate_stream = _fake_stream
+
+    history = [
+        ConversationTurn(role="user", content="ipad快速放电指令"),
+        ConversationTurn(role="assistant", content="方案 A：OSDBatteryTester StateOfCharge [1]"),
+    ]
+    result = rag_service.stream_answer("用英文", history=history)
+    "".join(result.text_chunks)
+    assert "Conversation history" in captured["prompt"]
+    assert "方案 A：OSDBatteryTester StateOfCharge [1]" in captured["prompt"]
 
 
 def test_assistant_fallback_disabled_returns_insufficient(rag_service) -> None:

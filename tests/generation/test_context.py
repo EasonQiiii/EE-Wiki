@@ -5,9 +5,11 @@ from __future__ import annotations
 from ee_wiki.generation.context import (
     chunks_to_citations,
     format_context_blocks,
+    format_history_block,
     knowledge_scope_tier,
 )
 from ee_wiki.retrieval.hybrid.engine import HybridChunk
+from ee_wiki.retrieval.rewrite import ConversationTurn
 
 
 def test_knowledge_scope_tier() -> None:
@@ -80,6 +82,33 @@ def test_format_context_blocks_includes_heading_path() -> None:
     rendered = format_context_blocks(chunks)
     assert "section=iPad 工程操作手册 › 9. 快速放电方案 › 9.1 方案 A（基础）" in rendered
     assert "diagstool hwmisc" in rendered
+
+
+def test_format_history_block_empty_returns_placeholder() -> None:
+    assert format_history_block(None) == "(none)"
+    assert format_history_block([]) == "(none)"
+
+
+def test_format_history_block_keeps_recent_turns_verbatim() -> None:
+    history = [
+        ConversationTurn(role="user", content="ipad快速放电指令"),
+        ConversationTurn(role="assistant", content="方案 A：diagstool hwmisc --displayPower=1 [1]"),
+    ]
+    rendered = format_history_block(history)
+    assert "[User]:\nipad快速放电指令" in rendered
+    assert "[Assistant]:\n方案 A：diagstool hwmisc --displayPower=1 [1]" in rendered
+
+
+def test_format_history_block_truncates_long_turns_and_limits_count() -> None:
+    history = [
+        ConversationTurn(role="user", content=f"question {i}") for i in range(10)
+    ] + [ConversationTurn(role="assistant", content="x" * 5000)]
+    rendered = format_history_block(history, max_turns=3, max_chars_per_turn=100)
+    assert "question 7" not in rendered
+    assert "question 8" in rendered
+    assert "question 9" in rendered
+    assert "…(truncated)" in rendered
+    assert "x" * 101 not in rendered
 
 
 def test_chunks_to_citations_maps_fields() -> None:

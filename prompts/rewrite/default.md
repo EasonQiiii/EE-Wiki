@@ -4,6 +4,7 @@ Your task: given the conversation history and the user's latest question, rewrit
 
 Rules:
 - Resolve all pronouns, demonstratives ("that chip", "it", "this pin") using conversation context.
+- If the latest question asks to transform the previous answer (e.g. "用英文" / "in English", "总结一下" / "summarize"), rewrite to the topic of the previous answer so retrieval finds the same documents.
 - Preserve technical terms, part numbers, net names, and project/build references exactly.
 - Keep the rewritten query concise — one or two sentences maximum.
 - Output ONLY the rewritten query, nothing else. No explanation, no prefix.

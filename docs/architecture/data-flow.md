@@ -128,7 +128,9 @@ Section expansion does **not** merge chunks from different section slugs (e.g. `
 
 Task prompts include `prompts/_shared/scope_rules.md` via `{{scope_rules}}`. The generator must label which scope each conclusion applies to.
 
-The generator sees **question + these blocks only** — no direct index or database access.
+Task prompts also include recent conversation turns via `{{history}}` (`generation/context.py` → `format_history_block`, last 6 turns, per-turn truncation). This makes conversation-level follow-ups work — e.g. "用英文" / "in English" translates the previous answer instead of being treated as a new standalone query. History is also used before retrieval to rewrite ambiguous follow-up questions (`retrieval/rewrite.py`, `generation.query_rewrite`).
+
+The generator sees **question + history + these blocks only** — no direct index or database access.
 
 ### Citation links and images (query time)
 

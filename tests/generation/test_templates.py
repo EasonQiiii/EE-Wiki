@@ -17,6 +17,7 @@ def test_load_template_reads_default_wiki_prompt(repo_root) -> None:
     assert "{{context}}" in template
     assert "{{question}}" in template
     assert "{{scope_rules}}" in template
+    assert "{{history}}" in template
 
 
 def test_load_scope_rules_reads_shared_prompt(repo_root) -> None:
@@ -49,6 +50,18 @@ def test_render_template_substitutes_placeholders() -> None:
     assert "Scope tier rules." in rendered
     assert "[1] example" in rendered
     assert "What is VBAT?" in rendered
+    assert "{{" not in rendered
+
+
+def test_render_template_substitutes_history() -> None:
+    rendered = render_template(
+        "History:\n{{history}}\n\nContext:\n{{context}}\n\nQ: {{question}}",
+        context="[1] example",
+        question="用英文",
+        history="[User]:\nipad快速放电指令\n\n[Assistant]:\n方案 A",
+    )
+    assert "[User]:\nipad快速放电指令" in rendered
+    assert "方案 A" in rendered
     assert "{{" not in rendered
 
 
