@@ -29,13 +29,13 @@ def test_collects_images_from_referenced_citations() -> None:
     assert "相关截图" in block
 
 
-def test_falls_back_to_ranked_citations_when_no_markers() -> None:
+def test_returns_empty_when_no_markers() -> None:
     citations = [
         _citation(1, ("http://localhost:8080/v1/assets/img1.png",)),
         _citation(2),
     ]
     block = build_image_block("No citation markers here.", citations)
-    assert "img1.png" in block
+    assert block == ""
 
 
 def test_returns_empty_when_no_images() -> None:

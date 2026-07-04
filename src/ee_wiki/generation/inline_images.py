@@ -24,10 +24,9 @@ def build_image_block(
 ) -> str:
     """Return a markdown image block for citation images referenced in *answer_text*.
 
-    Scans the answer for ``[N]`` markers, collects unique image URLs from
-    the corresponding citations, and returns a formatted block.  When no
-    markers are found, falls back to images from the highest-ranked
-    citations.
+    Scans the answer for ``[N]`` markers and collects unique image URLs from
+    the corresponding citations.  Returns an empty string when no markers are
+    found — images are only appended when the LLM explicitly cites a source.
 
     Args:
         answer_text: The LLM-generated answer text.
@@ -45,12 +44,13 @@ def build_image_block(
         {int(m.group(1)) for m in _CITATION_MARKER_RE.finditer(answer_text)}
     )
 
+    if not referenced_indices:
+        return ""
+
     seen: set[str] = set()
     ordered_urls: list[tuple[str, int]] = []
 
-    indices = referenced_indices if referenced_indices else list(range(1, len(citations) + 1))
-
-    for idx in indices:
+    for idx in referenced_indices:
         if idx < 1 or idx > len(citations):
             continue
         citation = citations[idx - 1]
