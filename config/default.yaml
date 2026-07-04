@@ -65,6 +65,18 @@ ingestion:
     do_sample: false
     images_rel_prefix: images
     save_page_images: true        # save full-page renders as PNG alongside figure crops
+  datasheet_pdf:
+    max_pages: null
+    min_text_chars_for_skip: 500  # pages with more embedded text and few vector lines → text_only
+    vector_line_threshold: 50     # pages with more drawing ops than this → table
+    image_area_threshold: 0.6     # pages with raster images covering >60% → graph
+    max_new_tokens: 2048          # tables can be long; more headroom than schematic
+    vlm_max_image_side: 1280      # downscale pages before VLM
+    temperature: 0.1
+    do_sample: false
+    ocr_fidelity: true            # append raw OCR text for lossless searchability
+    save_page_images: true        # save full-page renders for citation images
+    images_rel_prefix: images
 
 chunking:
   max_chars: 1500
@@ -79,7 +91,7 @@ indexing:
 retrieval:
   top_k_embed: 20
   top_k_bm25: 20
-  top_k_final: 7             # was 8; fewer chunks → shorter prompt, room for longer answers
+  top_k_final: 6            # was 8; fewer chunks → shorter prompt, room for longer answers
   scope_inheritance: true
   top_k_dense: 4
   top_k_sparse: 4

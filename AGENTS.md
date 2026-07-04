@@ -200,6 +200,11 @@ When implementing, respect the roadmap in README.md:
 | **V3** | Knowledge graph, debug case DB, power tree | — |
 | **V4** | Multi-agent orchestration | — |
 
+**V2 progress (implemented):**
+
+- **Datasheet Parser** — VLM page-level extraction with page classification (text/table/graph/mixed), auto-dispatch for `datasheet/` paths
+- **Engineering Metadata** — automatic keyword extraction (part numbers, voltages, protocols, packages) during ingestion; populates `keywords` field for metadata boost in retrieval
+
 If a task belongs to a future version, implement a **protocol + stub** or document the interface only — do not build the full feature unless explicitly requested.
 
 ---

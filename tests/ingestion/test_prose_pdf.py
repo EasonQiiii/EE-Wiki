@@ -168,14 +168,14 @@ def test_parse_prose_pdf_accepts_external_path_with_metadata(
 
 
 def test_ingest_file_prose_pdf_end_to_end(ingest_config: AppConfig) -> None:
-    raw_path = ingest_config.raw_dir / "global/datasheet/tps62840.pdf"
+    raw_path = ingest_config.raw_dir / "global/note/tps62840-app-note.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
 
     mock_doc = MagicMock()
     mock_doc.page_count = 1
     mock_doc.__getitem__.return_value = _mock_page(
-        "TPS62840 3A step-down converter electrical characteristics table."
+        "TPS62840 3A step-down converter application note."
     )
 
     with patch("ee_wiki.ingestion.parsers.prose_pdf.fitz.open", return_value=mock_doc):
@@ -184,7 +184,7 @@ def test_ingest_file_prose_pdf_end_to_end(ingest_config: AppConfig) -> None:
     assert result.processed.content_path.suffix == ".md"
     assert result.processed.content_path.exists()
     assert "TPS62840" in result.processed.content_path.read_text(encoding="utf-8")
-    assert result.document.metadata.document_type == "datasheet"
+    assert result.document.metadata.document_type == "engineering_note"
 
 
 def test_parse_prose_pdf_rejects_schematic_path(ingest_config: AppConfig) -> None:

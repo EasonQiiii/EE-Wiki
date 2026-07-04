@@ -79,6 +79,23 @@ class SchematicPdfConfig:
 
 
 @dataclass(frozen=True)
+class DatasheetPdfConfig:
+    """Settings for datasheet PDF parsing via VLM page-level extraction."""
+
+    max_pages: int | None = None
+    min_text_chars_for_skip: int = 500
+    vector_line_threshold: int = 50
+    image_area_threshold: float = 0.6
+    max_new_tokens: int = 2048
+    vlm_max_image_side: int = 1280
+    temperature: float = 0.1
+    do_sample: bool = False
+    ocr_fidelity: bool = True
+    save_page_images: bool = True
+    images_rel_prefix: str = "images"
+
+
+@dataclass(frozen=True)
 class ChunkingConfig:
     """Document chunking parameters for indexing."""
 
@@ -170,6 +187,7 @@ class AppConfig:
     models: ModelsConfig
     prose_pdf: ProsePdfConfig
     schematic_pdf: SchematicPdfConfig
+    datasheet_pdf: DatasheetPdfConfig
     excel: ExcelConfig
     word: WordConfig
     chunking: ChunkingConfig
@@ -280,6 +298,7 @@ def load_config(
     models = raw.get("models", {})
     prose = ingestion.get("prose_pdf", {})
     schematic = ingestion.get("schematic_pdf", {})
+    datasheet = ingestion.get("datasheet_pdf", {})
     excel = ingestion.get("excel", {})
     word = ingestion.get("word") or {}
     api = raw.get("api", {})
@@ -349,6 +368,19 @@ def load_config(
             fidelity_mode=str(schematic.get("fidelity_mode", "vlm_plus_ocr")),
             vlm_max_image_side=int(schematic.get("vlm_max_image_side", 1280)),
             save_page_images=bool(schematic.get("save_page_images", True)),
+        ),
+        datasheet_pdf=DatasheetPdfConfig(
+            max_pages=datasheet.get("max_pages"),
+            min_text_chars_for_skip=int(datasheet.get("min_text_chars_for_skip", 500)),
+            vector_line_threshold=int(datasheet.get("vector_line_threshold", 50)),
+            image_area_threshold=float(datasheet.get("image_area_threshold", 0.6)),
+            max_new_tokens=int(datasheet.get("max_new_tokens", 2048)),
+            vlm_max_image_side=int(datasheet.get("vlm_max_image_side", 1280)),
+            temperature=float(datasheet.get("temperature", 0.1)),
+            do_sample=bool(datasheet.get("do_sample", False)),
+            ocr_fidelity=bool(datasheet.get("ocr_fidelity", True)),
+            save_page_images=bool(datasheet.get("save_page_images", True)),
+            images_rel_prefix=str(datasheet.get("images_rel_prefix", "images")),
         ),
         excel=ExcelConfig(
             output_format=str(excel.get("output_format", "markdown_table")),

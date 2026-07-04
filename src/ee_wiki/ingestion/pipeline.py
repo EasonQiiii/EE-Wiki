@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from ee_wiki.common.config import AppConfig, load_config
 from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
-from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
+from ee_wiki.common.serialization import DATASHEET_DOCUMENT_TYPE, SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import StandardDocument
 from ee_wiki.ingestion.cleanup import RemovedProcessed, cleanup_orphaned_processed
+from ee_wiki.ingestion.keywords import extract_keywords
+from ee_wiki.ingestion.parsers.datasheet_pdf import parse_datasheet_pdf
 from ee_wiki.ingestion.parsers.excel import EXCEL_SUFFIXES, parse_excel
 from ee_wiki.ingestion.parsers.markdown import MARKDOWN_SUFFIXES, parse_markdown
 from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
@@ -56,6 +58,21 @@ class IngestRunResult:
     removed: list[RemovedProcessed] = field(default_factory=list)
 
 
+def _enrich_keywords(document: StandardDocument) -> StandardDocument:
+    """Extract engineering keywords from content and merge into metadata."""
+    existing = document.metadata.keywords or []
+    extracted = extract_keywords(document.content)
+    merged = sorted(set(existing) | set(extracted))
+    if merged == existing:
+        return document
+    new_meta = replace(document.metadata, keywords=merged)
+    return StandardDocument(
+        content=document.content,
+        metadata=new_meta,
+        source_ref=document.source_ref,
+    )
+
+
 def ingest_file(
     raw_path: Path,
     config: AppConfig,
@@ -97,6 +114,13 @@ def ingest_file(
                     config,
                     repo_root=config.repo_root,
                 )
+            elif metadata.document_type == DATASHEET_DOCUMENT_TYPE:
+                document = parse_datasheet_pdf(
+                    path,
+                    layout,
+                    config,
+                    repo_root=config.repo_root,
+                )
             else:
                 document = parse_prose_pdf(
                     path,
@@ -124,6 +148,8 @@ def ingest_file(
             )
     except EEWikiError as exc:
         raise IngestionError(f"Failed to ingest {path.name}: {exc}") from exc
+
+    document = _enrich_keywords(document)
 
     processed = write_processed_document(
         document,

@@ -8,6 +8,7 @@ from typing import Any
 from ee_wiki.common.types import Chunk, Citation, Metadata
 
 SCHEMATIC_DOCUMENT_TYPE = "schematic"
+DATASHEET_DOCUMENT_TYPE = "datasheet"
 SCHEMATIC_ONLY_FIELDS = ("major_components", "nets", "interfaces")
 
 
