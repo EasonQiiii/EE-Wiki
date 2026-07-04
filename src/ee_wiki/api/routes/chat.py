@@ -41,6 +41,7 @@ from ee_wiki.api.timeout import (
 from ee_wiki.common.logging import get_logger
 from ee_wiki.generation.llm.errors import LlmLoadError, LlmTimeoutError
 from ee_wiki.generation.service import INSUFFICIENT_ANSWER, RagService
+from ee_wiki.retrieval.rewrite import ConversationTurn
 
 router = APIRouter(prefix="/v1", tags=["chat"])
 logger = get_logger(__name__)
@@ -51,6 +52,29 @@ def _extract_user_question(messages: list) -> str:
         if message.role == "user" and message.content.strip():
             return message.content.strip()
     raise HTTPException(status_code=400, detail="No user message found in messages")
+
+
+def _extract_history(messages: list) -> list[ConversationTurn]:
+    """Extract conversation history (all turns before the last user message).
+
+    Args:
+        messages: Full message list from the request.
+
+    Returns:
+        Prior turns as ConversationTurn objects, excluding the final user message.
+    """
+    last_user_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].role == "user" and messages[i].content.strip():
+            last_user_idx = i
+            break
+    if last_user_idx <= 0:
+        return []
+    turns: list[ConversationTurn] = []
+    for msg in messages[:last_user_idx]:
+        if msg.role in ("user", "assistant") and msg.content.strip():
+            turns.append(ConversationTurn(role=msg.role, content=msg.content.strip()))
+    return turns
 
 
 def _build_response(
@@ -134,6 +158,7 @@ async def chat_completions(
 ):
     """Run RAG using the last user message as the query."""
     question = _extract_user_question(body.messages)
+    history = _extract_history(body.messages)
     chat_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     request_timeout = config.api.request_timeout_seconds
@@ -160,6 +185,7 @@ async def chat_completions(
                     top_k=body.top_k,
                     task=body.task,
                     request_timeout_seconds=request_timeout,
+                    history=history,
                 ):
                     yield chunk
             finally:
@@ -196,6 +222,7 @@ async def chat_completions(
                     top_k_final=body.top_k,
                     cancel_event=cancel,
                     task=body.task,
+                    history=history,
                 )
             except (RequestTimeoutError, LlmTimeoutError) as exc:
                 logger.error("Chat completion %s timed out: %s", chat_id, exc)
@@ -266,6 +293,7 @@ async def _stream_answer(
     top_k: int | None,
     task: str | None,
     request_timeout_seconds: float | None,
+    history: list[ConversationTurn] | None = None,
 ) -> AsyncIterator[str]:
     """Yield OpenAI-compatible SSE chunks for a streamed RAG answer."""
     cancel = threading.Event()
@@ -308,6 +336,7 @@ async def _stream_answer(
             top_k_final=top_k,
             cancel_event=cancel,
             task=task,
+            history=history,
         )
         if cancel.is_set():
             logger.info("Chat stream %s cancelled before generation", chat_id)

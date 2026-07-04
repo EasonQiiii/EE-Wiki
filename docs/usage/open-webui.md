@@ -93,7 +93,7 @@ Without `project` / `build`, retrieval searches the **entire index**; answers sh
 | Slow first response | Enable `api.warmup_on_startup: true`; first load of embedding, reranker, and LLM can take minutes |
 | Request hangs with no reply | Check server logs; tune `api.request_timeout_seconds` and `generation.llm_timeout_seconds` |
 | Cancel in Open WebUI but server keeps running | Restart `serve.py`; chat uses cancellable streaming |
-| Assistant questions cite datasheets | Ensure `generation.intent_routing: true`; tune `config/intent_exemplars.yaml` or `intent_similarity_margin` |
+| Assistant questions cite datasheets | Ensure `generation.assistant_fallback: true`; tune `generation.weak_rerank_threshold` if weak retrieval still reaches the wiki prompt |
 | Open WebUI shows no output | Wait for server warmup; first LLM load can take 1–3 min on Mac. Check `curl http://localhost:8080/health` first |
 | `503` queue full | Server busy; retry after `Retry-After` seconds. Check `GET /health` → `queue`. Increase `api.concurrency.max_queue_depth` if needed |
 | `503` LLM load error | Ensure MLX weights exist under `models.base_dir`; run `pip install -e '.[mlx]'` |

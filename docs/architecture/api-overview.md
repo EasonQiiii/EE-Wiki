@@ -62,9 +62,9 @@ Generation timeouts:
 |---------|---------|---------|
 | `generation.max_new_tokens` | `2048` | Maximum LLM output tokens per answer |
 | `generation.llm_timeout_seconds` | `180` | LLM generation cap (`504` via request handler; `null` or `0` disables) |
-| `generation.intent_routing` | `true` | Classify assistant-meta vs engineering before retrieval |
-| `generation.assistant_task` | `assistant` | Prompt folder for assistant-meta answers (`prompts/assistant/`) |
-| `generation.intent_similarity_margin` | `0.02` | Embedding margin for intent routing (see `config/intent_exemplars.yaml`) |
+| `generation.assistant_fallback` | `true` | When retrieval is weak, answer from the assistant role prompt (identity/usage or "no relevant content") |
+| `generation.assistant_task` | `assistant` | Prompt folder for the weak-retrieval fallback (`prompts/assistant/`) |
+| `generation.weak_rerank_threshold` | `-2.0` | Retrieval counts as weak when the top rerank logit is below this |
 | `retrieval.min_rerank_score` | `null` | Drop low-confidence retrieval (no chunks) when top rerank logit is below this |
 
 When the queue is full, the API returns **`503`** with JSON `detail.error = "queue_full"` and headers:

@@ -15,7 +15,7 @@ from ee_wiki.retrieval.hybrid.engine import HybridChunk, RetrievalResult
 def rag_service(app_config):
     config = replace(
         app_config,
-        generation=replace(app_config.generation, intent_routing=False),
+        generation=replace(app_config.generation, assistant_fallback=False),
     )
     engine = MagicMock()
     llm = MagicMock()
@@ -143,14 +143,12 @@ def test_stream_answer_honours_cancel_before_generation(rag_service) -> None:
     rag_service.engine.retrieve.assert_not_called()
 
 
-def test_answer_assistant_meta_skips_retrieval(rag_service, app_config, repo_root) -> None:
-    from dataclasses import replace
-    from unittest.mock import patch
-
+def test_answer_uses_assistant_fallback_when_no_chunks(rag_service, app_config) -> None:
     rag_service.config = replace(
         app_config,
-        generation=replace(app_config.generation, intent_routing=True),
+        generation=replace(app_config.generation, assistant_fallback=True),
     )
+    rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[])
 
     def _fake_stream(prompt: str, cancel_event=None):
         assert "Role description" in prompt
@@ -158,40 +156,78 @@ def test_answer_assistant_meta_skips_retrieval(rag_service, app_config, repo_roo
 
     rag_service.llm.generate_stream = _fake_stream
 
-    with patch(
-        "ee_wiki.generation.service.classify_query_route",
-        return_value=__import__(
-            "ee_wiki.generation.intent_router", fromlist=["QueryRoute"]
-        ).QueryRoute.ASSISTANT_META,
-    ):
-        result = rag_service.answer("你可以做什么")
+    result = rag_service.answer("你可以做什么")
     assert "EE-Wiki" in result.answer
     assert result.citations == []
-    rag_service.engine.retrieve.assert_not_called()
+    rag_service.engine.retrieve.assert_called_once()
 
 
-def test_stream_answer_assistant_meta_skips_retrieval(rag_service, app_config) -> None:
-    from dataclasses import replace
-    from unittest.mock import patch
-
+def test_stream_answer_uses_assistant_fallback_when_rerank_weak(
+    rag_service, app_config
+) -> None:
+    """Chunks below the weak threshold are treated as no evidence."""
     rag_service.config = replace(
         app_config,
-        generation=replace(app_config.generation, intent_routing=True),
+        generation=replace(app_config.generation, assistant_fallback=True),
+    )
+    chunk = HybridChunk(
+        chunk_id="note__misc",
+        content="Unrelated content.",
+        metadata={"project": "global", "build": "global", "document_type": "engineering_note"},
+        citation={"source_file": "data/raw/global/note/note.md", "chunk_id": "note__misc"},
+    )
+    rag_service.engine.retrieve.return_value = RetrievalResult(
+        chunks=[chunk],
+        top_rerank_score=-5.0,
     )
 
     def _fake_stream(prompt: str, cancel_event=None):
-        yield "我是 EE-Wiki 助手。"
+        assert "Role description" in prompt
+        yield "知识库中没有相关内容。"
 
     rag_service.llm.generate_stream = _fake_stream
 
-    with patch(
-        "ee_wiki.generation.service.classify_query_route",
-        return_value=__import__(
-            "ee_wiki.generation.intent_router", fromlist=["QueryRoute"]
-        ).QueryRoute.ASSISTANT_META,
-    ):
-        result = rag_service.stream_answer("你是谁？")
+    result = rag_service.stream_answer("你是谁？")
     text = "".join(result.text_chunks)
-    assert "EE-Wiki" in text
+    assert "知识库" in text
     assert result.citations == []
-    rag_service.engine.retrieve.assert_not_called()
+
+
+def test_strong_retrieval_prevents_assistant_fallback(rag_service, app_config) -> None:
+    """KB evidence must win regardless of how the question is phrased."""
+    rag_service.config = replace(
+        app_config,
+        generation=replace(app_config.generation, assistant_fallback=True),
+    )
+    chunk = HybridChunk(
+        chunk_id="ipadmanal__astris",
+        content="Astris 是设备调试工具，支持 DFU 控制与固件刷写。",
+        metadata={"project": "global", "build": "global", "document_type": "engineering_note"},
+        citation={
+            "source_file": "data/raw/global/note/ipadmanal.md",
+            "chunk_id": "ipadmanal__astris",
+        },
+    )
+    rag_service.engine.retrieve.return_value = RetrievalResult(
+        chunks=[chunk],
+        top_rerank_score=-0.3,
+    )
+
+    def _fake_stream(prompt: str, cancel_event=None):
+        assert "Role description" not in prompt
+        yield "Astris 是调试工具 [1]。"
+
+    rag_service.llm.generate_stream = _fake_stream
+
+    result = rag_service.stream_answer("Astris 可以做什么？")
+    text = "".join(result.text_chunks)
+    assert "Astris" in text
+    assert len(result.citations) == 1
+
+
+def test_assistant_fallback_disabled_returns_insufficient(rag_service) -> None:
+    """With the fallback off, empty retrieval returns the static message."""
+    rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[])
+    result = rag_service.answer("你是谁？")
+    assert result.insufficient_context is True
+    assert result.answer == INSUFFICIENT_ANSWER

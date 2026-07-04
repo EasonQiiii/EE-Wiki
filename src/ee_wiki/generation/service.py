@@ -11,7 +11,6 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.common.types import Citation, RagAnswer
 from ee_wiki.generation.citations import build_enriched_citations
 from ee_wiki.generation.context import format_context_blocks
-from ee_wiki.generation.intent_router import QueryRoute, classify_query_route
 from ee_wiki.generation.llm.factory import build_llm_backend
 from ee_wiki.generation.prompt_stats import prompt_size_fields
 from ee_wiki.generation.templates.loader import (
@@ -22,7 +21,8 @@ from ee_wiki.generation.templates.loader import (
     resolve_prompts_dir,
 )
 from ee_wiki.protocols.llm import LlmBackend
-from ee_wiki.retrieval.hybrid.engine import HybridChunk, HybridRagEngine
+from ee_wiki.retrieval.hybrid.engine import HybridChunk, HybridRagEngine, RetrievalResult
+from ee_wiki.retrieval.rewrite import ConversationTurn, rewrite_query
 
 logger = get_logger(__name__)
 
@@ -81,13 +81,67 @@ class RagService:
         resolved_task = task or self.template_task
         return load_template(self.config.repo_root, resolved_task, self.template_name)
 
-    def _should_route_intent(self, task: str | None) -> bool:
-        """Return whether to classify assistant-meta vs engineering intent."""
-        if not self.config.generation.intent_routing:
+    def _should_use_assistant_fallback(
+        self,
+        task: str | None,
+        retrieval: RetrievalResult,
+    ) -> bool:
+        """Decide whether to answer from the assistant role instead of the KB.
+
+        Knowledge-base evidence always wins: the assistant fallback only fires
+        when retrieval confidence is weak (no chunks, or the best rerank score
+        falls below ``generation.weak_rerank_threshold``). The fallback prompt
+        lets the LLM either introduce the assistant (identity/usage questions)
+        or state that the knowledge base lacks relevant content — no separate
+        intent classifier is involved.
+
+        Args:
+            task: Requested prompt task, if any.
+            retrieval: Retrieval result for the (possibly rewritten) query.
+
+        Returns:
+            True when the question should get an assistant-fallback answer.
+        """
+        if not self.config.generation.assistant_fallback:
             return False
-        if task is None:
+        if task is not None and task != self.template_task:
+            return False
+        if not retrieval.chunks:
             return True
-        return task == self.template_task
+        top = retrieval.top_rerank_score
+        if top is None:
+            return False
+        return top < self.config.generation.weak_rerank_threshold
+
+    def _maybe_rewrite_query(
+        self,
+        question: str,
+        history: list[ConversationTurn] | None,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        """Rewrite question using history if configured and applicable.
+
+        Args:
+            question: Current user question.
+            history: Prior conversation turns (may be None or empty).
+            cancel_event: Cancellation signal.
+
+        Returns:
+            Rewritten query or the original question.
+        """
+        if not self.config.generation.query_rewrite:
+            return question
+        if not history:
+            return question
+        return rewrite_query(
+            question,
+            history,
+            llm=self.llm,
+            repo_root=self.config.repo_root,
+            cancel_event=cancel_event,
+            max_history_turns=self.config.generation.query_rewrite_max_history_turns,
+        )
 
     def _load_assistant_role(self) -> str:
         """Load static assistant role text from ``prompts/{assistant_task}/role.md``."""
@@ -147,7 +201,7 @@ class RagService:
         *,
         cancel_event: threading.Event | None = None,
     ) -> RagAnswer:
-        """Answer identity/capability questions without retrieval."""
+        """Answer from the assistant role prompt when the KB has no evidence."""
         prompt = self._build_assistant_prompt(question)
         size = prompt_size_fields(prompt)
         logger.info(
@@ -173,6 +227,7 @@ class RagService:
         top_k_final: int | None = None,
         task: str | None = None,
         cancel_event: threading.Event | None = None,
+        history: list[ConversationTurn] | None = None,
     ) -> RagAnswer:
         """Retrieve context and generate a grounded answer.
 
@@ -184,6 +239,7 @@ class RagService:
             top_k_final: Optional retrieval result count override.
             task: Optional prompt task folder under ``prompts/`` (e.g. ``debug``).
             cancel_event: When set, stop LLM generation as soon as possible.
+            history: Prior conversation turns for query rewriting.
 
         Returns:
             Answer text with citations, or an insufficient-context response.
@@ -191,13 +247,12 @@ class RagService:
         if cancel_event and cancel_event.is_set():
             return RagAnswer(answer="", citations=[], insufficient_context=False)
 
-        if self._should_route_intent(task):
-            route = classify_query_route(question, self.engine, self.config)
-            if route is QueryRoute.ASSISTANT_META:
-                return self._answer_assistant_meta(question, cancel_event=cancel_event)
+        retrieval_query = self._maybe_rewrite_query(question, history, cancel_event=cancel_event)
+        if cancel_event and cancel_event.is_set():
+            return RagAnswer(answer="", citations=[], insufficient_context=False)
 
         retrieval = self.engine.retrieve(
-            question,
+            retrieval_query,
             target_project=target_project,
             target_build=target_build,
             document_type=document_type,
@@ -205,6 +260,9 @@ class RagService:
         )
         if cancel_event and cancel_event.is_set():
             return RagAnswer(answer="", citations=[], insufficient_context=False)
+
+        if self._should_use_assistant_fallback(task, retrieval):
+            return self._answer_assistant_meta(question, cancel_event=cancel_event)
 
         chunks = retrieval.chunks
         if not chunks:
@@ -251,6 +309,7 @@ class RagService:
         top_k_final: int | None = None,
         cancel_event: threading.Event | None = None,
         task: str | None = None,
+        history: list[ConversationTurn] | None = None,
     ) -> AnswerStreamResult:
         """Retrieve context and stream a grounded answer with citation metadata.
 
@@ -262,6 +321,7 @@ class RagService:
             top_k_final: Optional retrieval result count override.
             cancel_event: When set, stop LLM streaming as soon as possible.
             task: Optional prompt task folder under ``prompts/`` (e.g. ``debug``).
+            history: Prior conversation turns for query rewriting.
 
         Returns:
             Citation list plus text fragments from the LLM. When retrieval finds
@@ -270,21 +330,12 @@ class RagService:
         if cancel_event and cancel_event.is_set():
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
 
-        if self._should_route_intent(task):
-            route = classify_query_route(question, self.engine, self.config)
-            if route is QueryRoute.ASSISTANT_META:
-                prompt = self._build_assistant_prompt(question)
-
-                def _assistant_stream() -> Iterator[str]:
-                    yield from self._generate_answer_text_stream(
-                        prompt,
-                        cancel_event=cancel_event,
-                    )
-
-                return AnswerStreamResult(citations=[], text_chunks=_assistant_stream())
+        retrieval_query = self._maybe_rewrite_query(question, history, cancel_event=cancel_event)
+        if cancel_event and cancel_event.is_set():
+            return AnswerStreamResult(citations=[], text_chunks=iter(()))
 
         retrieval = self.engine.retrieve(
-            question,
+            retrieval_query,
             target_project=target_project,
             target_build=target_build,
             document_type=document_type,
@@ -292,6 +343,17 @@ class RagService:
         )
         if cancel_event and cancel_event.is_set():
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
+
+        if self._should_use_assistant_fallback(task, retrieval):
+            prompt = self._build_assistant_prompt(question)
+
+            def _assistant_stream() -> Iterator[str]:
+                yield from self._generate_answer_text_stream(
+                    prompt,
+                    cancel_event=cancel_event,
+                )
+
+            return AnswerStreamResult(citations=[], text_chunks=_assistant_stream())
 
         chunks = retrieval.chunks
         if not chunks:

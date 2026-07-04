@@ -120,9 +120,11 @@ class GenerationConfig:
     default_task: str = "wiki"
     default_template: str = "default"
     llm_timeout_seconds: int | None = 120
-    intent_routing: bool = True
+    assistant_fallback: bool = True
     assistant_task: str = "assistant"
-    intent_similarity_margin: float = 0.02
+    weak_rerank_threshold: float = -2.0
+    query_rewrite: bool = True
+    query_rewrite_max_history_turns: int = 4
 
 
 @dataclass(frozen=True)
@@ -370,9 +372,13 @@ def load_config(
             default_task=str(generation.get("default_task", "wiki")),
             default_template=str(generation.get("default_template", "default")),
             llm_timeout_seconds=_optional_positive_int(generation.get("llm_timeout_seconds", 120)),
-            intent_routing=bool(generation.get("intent_routing", True)),
+            assistant_fallback=bool(generation.get("assistant_fallback", True)),
             assistant_task=str(generation.get("assistant_task", "assistant")),
-            intent_similarity_margin=float(generation.get("intent_similarity_margin", 0.02)),
+            weak_rerank_threshold=float(generation.get("weak_rerank_threshold", -2.0)),
+            query_rewrite=bool(generation.get("query_rewrite", True)),
+            query_rewrite_max_history_turns=int(
+                generation.get("query_rewrite_max_history_turns", 4)
+            ),
         ),
         api=ApiConfig(
             host=str(api.get("host", "0.0.0.0")),

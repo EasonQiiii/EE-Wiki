@@ -15,6 +15,7 @@ models:
   reranker_model: bge-reranker-v2-m3
   # llm_transformers_model: Qwen3.5-4B
   llm_mlx_model: Qwen3-30B-A3B-Instruct-2507-MLX-4bit
+  # llm_mlx_model: GLM-4.7-Flash-MLX-8bit
 
 generation:
   llm_backend: mlx          # mlx | transformers (MLX 4-bit weights require mlx)
@@ -22,9 +23,11 @@ generation:
   default_task: wiki
   default_template: default
   llm_timeout_seconds: 180  # allow ~2048 tokens on 9B MLX; null or 0 disables
-  intent_routing: true       # route assistant-meta vs engineering before retrieval
-  assistant_task: assistant  # prompts/{task}/ for identity/capability questions
-  intent_similarity_margin: 0.02
+  assistant_fallback: true   # when retrieval is weak, answer from the assistant role prompt instead of weak chunks
+  assistant_task: assistant  # prompts/{task}/ for the weak-retrieval fallback (identity/usage or "no relevant content")
+  weak_rerank_threshold: -2.0  # retrieval counts as weak (KB lacks answer) below this rerank logit
+  query_rewrite: true                   # rewrite follow-up questions using conversation history
+  query_rewrite_max_history_turns: 4    # max prior turns fed to the rewrite prompt
 
 ingestion:
   excel:

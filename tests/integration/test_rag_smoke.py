@@ -44,7 +44,7 @@ def smoke_config(app_config: AppConfig, tmp_path: Path) -> AppConfig:
         processed_dir=processed_dir,
         indexes_dir=indexes_dir,
         data_layout=layout,
-        generation=replace(app_config.generation, intent_routing=False),
+        generation=replace(app_config.generation, assistant_fallback=False),
     )
 
 
