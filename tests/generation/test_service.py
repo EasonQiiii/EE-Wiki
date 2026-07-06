@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ee_wiki.generation.prepare import PREPARE_MAX_TOKENS
 from ee_wiki.generation.service import INSUFFICIENT_ANSWER, RagService
 from ee_wiki.retrieval.hybrid.engine import HybridChunk, RetrievalResult
 from ee_wiki.retrieval.rewrite import ConversationTurn
@@ -16,11 +17,16 @@ from ee_wiki.retrieval.rewrite import ConversationTurn
 def rag_service(app_config):
     config = replace(
         app_config,
-        generation=replace(app_config.generation, assistant_fallback=False),
+        generation=replace(
+            app_config.generation,
+            assistant_fallback=False,
+            task_classification=False,
+        ),
     )
     engine = MagicMock()
     llm = MagicMock()
     llm.generate_stream = None
+    llm.generate.return_value = "QUERY: test\nTASK: wiki"
     return RagService(config=config, engine=engine, llm=llm)
 
 
@@ -389,12 +395,12 @@ def test_task_classification_selects_debug_prompt(rag_service, app_config) -> No
     )
 
     captured: dict[str, str] = {}
-    call_count = {"classify": 0, "answer": 0}
+    call_count = {"prepare": 0, "answer": 0}
 
     def _fake_stream(prompt: str, cancel_event=None, max_new_tokens=None):
-        if max_new_tokens and max_new_tokens <= 16:
-            call_count["classify"] += 1
-            yield "debug"
+        if max_new_tokens == PREPARE_MAX_TOKENS:
+            call_count["prepare"] += 1
+            yield "QUERY: UART不通\nTASK: debug"
         else:
             call_count["answer"] += 1
             captured["prompt"] = prompt
@@ -403,7 +409,7 @@ def test_task_classification_selects_debug_prompt(rag_service, app_config) -> No
     rag_service.llm.generate_stream = _fake_stream
 
     rag_service.answer("UART不通")
-    assert call_count["classify"] == 1
+    assert call_count["prepare"] == 1
     assert call_count["answer"] == 1
     assert "hardware debug assistant" in captured["prompt"].lower()
 
@@ -423,19 +429,19 @@ def test_explicit_task_skips_classification(rag_service, app_config) -> None:
         chunks=[chunk], top_rerank_score=1.0,
     )
 
-    call_count = {"classify": 0}
+    call_count = {"prepare": 0}
 
     def _fake_stream(prompt: str, cancel_event=None, max_new_tokens=None):
-        if max_new_tokens and max_new_tokens <= 16:
-            call_count["classify"] += 1
-            yield "debug"
+        if max_new_tokens == PREPARE_MAX_TOKENS:
+            call_count["prepare"] += 1
+            yield "QUERY: test\nTASK: debug"
         else:
             yield "answer"
 
     rag_service.llm.generate_stream = _fake_stream
 
     rag_service.answer("test", task="fa")
-    assert call_count["classify"] == 0
+    assert call_count["prepare"] == 0
 
 
 def test_classification_disabled_uses_default(rag_service, app_config) -> None:
@@ -453,29 +459,30 @@ def test_classification_disabled_uses_default(rag_service, app_config) -> None:
         chunks=[chunk], top_rerank_score=1.0,
     )
 
-    call_count = {"classify": 0}
+    call_count = {"prepare": 0}
 
     def _fake_stream(prompt: str, cancel_event=None, max_new_tokens=None):
-        if max_new_tokens and max_new_tokens <= 16:
-            call_count["classify"] += 1
-            yield "debug"
+        if max_new_tokens == PREPARE_MAX_TOKENS:
+            call_count["prepare"] += 1
+            yield "QUERY: test\nTASK: debug"
         else:
             yield "answer"
 
     rag_service.llm.generate_stream = _fake_stream
 
     rag_service.answer("test")
-    assert call_count["classify"] == 0
+    assert call_count["prepare"] == 0
 
 
 def test_weak_retrieval_skips_classification(rag_service, app_config) -> None:
-    """Assistant fallback fires before classification, saving the LLM call."""
+    """Separate prepare mode skips post-retrieval classify on assistant fallback."""
     rag_service.config = replace(
         app_config,
         generation=replace(
             app_config.generation,
             assistant_fallback=True,
             task_classification=True,
+            query_prepare="separate",
         ),
     )
     rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[])

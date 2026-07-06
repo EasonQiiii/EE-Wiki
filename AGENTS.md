@@ -321,7 +321,7 @@ V1 baseline is decided — do not re-litigate without a new ADR:
 | Chunking | Structure-aware; schematic page boundaries | [ADR 0001](docs/adr/0001-chunking-strategy.md) |
 | Index storage | Flat on-disk hybrid bundle (`data/indexes/`) | [ADR 0002](docs/adr/0002-v1-runtime-stack.md) |
 | Embedding / reranker | `sentence-transformers`; paths in `config/default.yaml` | ADR 0002 |
-| Local LLM | MLX default; Transformers alternative | ADR 0002 |
+| Local LLM | MLX default; Transformers alternative; external OpenAI-compatible HTTP (`openai`) per ADR 0003 | ADR 0002, ADR 0003 |
 
 **Still open (V2+):** external vector DB (Qdrant, pgvector), Ollama/vLLM/llama.cpp — require ADR 0003+ before adoption.
 

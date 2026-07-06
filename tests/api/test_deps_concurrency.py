@@ -19,6 +19,18 @@ def test_resolve_max_concurrent_caps_mlx_to_one(app_config) -> None:
     assert resolve_max_concurrent(config) == 1
 
 
+def test_resolve_max_concurrent_allows_openai_parallelism(app_config) -> None:
+    config = replace(
+        app_config,
+        generation=replace(app_config.generation, llm_backend="openai", openai_model="x"),
+        api=replace(
+            app_config.api,
+            concurrency=replace(app_config.api.concurrency, max_concurrent=6),
+        ),
+    )
+    assert resolve_max_concurrent(config) == 6
+
+
 def test_resolve_max_concurrent_allows_transformers_parallelism(app_config) -> None:
     config = replace(
         app_config,

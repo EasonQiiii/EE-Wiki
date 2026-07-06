@@ -57,12 +57,21 @@ def get_rag_service() -> RagService:
 def warmup_rag_service() -> None:
     """Preload indexes and retrieval models; LLM loads on first chat request."""
     service = get_rag_service()
+    config = get_config()
     logger.info("Warming up retrieval index and retrieval models...")
     service.engine.load_index()
     service.engine._load_embed_model()
     service.engine._load_reranker()
+    backend = config.generation.llm_backend
+    if backend == "openai":
+        logger.info(
+            "Retrieval warmup complete. LLM delegated to %s (model=%s).",
+            config.generation.openai_base_url,
+            config.generation.openai_model,
+        )
+        return
     logger.info(
         "Retrieval warmup complete. LLM (%s, backend=%s) loads on first chat request.",
-        get_config().models.resolve_llm_model(get_config().generation.llm_backend),
-        get_config().generation.llm_backend,
+        config.models.resolve_llm_model(backend),
+        backend,
     )

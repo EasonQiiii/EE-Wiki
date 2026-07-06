@@ -26,8 +26,24 @@ def build_llm_backend(config: AppConfig) -> LlmBackend:
     backend = config.generation.llm_backend
     max_new_tokens = config.generation.max_new_tokens
 
-    if backend not in {"mlx", "transformers"}:
+    if backend not in {"mlx", "transformers", "openai"}:
         raise ConfigError(f"Unsupported generation.llm_backend: {backend!r}")
+
+    if backend == "openai":
+        from ee_wiki.generation.llm.openai_http import OpenAiLlmBackend
+
+        gen = config.generation
+        if not gen.openai_model.strip():
+            raise RuntimeError(
+                "generation.openai_model is not configured for generation.llm_backend='openai'"
+            )
+        return OpenAiLlmBackend(
+            base_url=gen.openai_base_url,
+            model=gen.openai_model,
+            max_new_tokens=max_new_tokens,
+            api_key=gen.openai_api_key,
+            timeout_seconds=config.generation.llm_timeout_seconds,
+        )
 
     llm_path = config.models.resolve_llm_model(backend)
     if llm_path is None:

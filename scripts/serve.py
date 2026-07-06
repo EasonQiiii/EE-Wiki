@@ -33,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable DEBUG logging",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Uvicorn worker processes (default: 1; use 2 for openai backend on single host)",
+    )
     return parser
 
 
@@ -55,8 +61,15 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("uvicorn is not installed; run: pip install -e '.[api]'")
         return 1
 
-    logger.info("Starting EE-Wiki API on %s:%s", host, port)
-    uvicorn.run("ee_wiki.api.app:create_app", host=host, port=port, factory=True)
+    logger.info("Starting EE-Wiki API on %s:%s (workers=%d)", host, port, args.workers)
+    run_kwargs: dict = {
+        "host": host,
+        "port": port,
+        "factory": True,
+    }
+    if args.workers > 1:
+        run_kwargs["workers"] = args.workers
+    uvicorn.run("ee_wiki.api.app:create_app", **run_kwargs)
     return 0
 
 

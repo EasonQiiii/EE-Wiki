@@ -18,17 +18,22 @@ models:
   # llm_mlx_model: GLM-4.7-Flash-MLX-8bit
 
 generation:
-  llm_backend: mlx          # mlx | transformers (MLX 4-bit weights require mlx)
+  llm_backend: openai          # mlx | transformers | openai (multi-user: openai + mlx-openai-server)
   max_new_tokens: 2048      # was 1024; long multi-citation answers need more headroom
   default_task: wiki
   default_template: default
   llm_timeout_seconds: 180  # allow ~2048 tokens on 9B MLX; null or 0 disables
+  # Multi-user LAN (llm_backend: openai) — start mlx-openai-server first, then serve.py
+  openai_base_url: http://127.0.0.1:8000/v1
+  openai_model: Qwen3-30B-A3B-Instruct-2507-MLX-4bit
+  # openai_api_key: null
   assistant_fallback: true   # when retrieval is weak, answer from the assistant role prompt instead of weak chunks
   assistant_task: assistant  # prompts/{task}/ for the weak-retrieval fallback (identity/usage or "no relevant content")
   weak_rerank_threshold: -4.0  # retrieval counts as weak (KB lacks answer) below this rerank logit; VLM-regenerated schematic chunks score ~-2.2 for relevant hits
   query_rewrite: true                   # rewrite follow-up questions using conversation history
   query_rewrite_max_history_turns: 4    # max prior turns fed to the rewrite prompt
   task_classification: true             # auto-select prompt task via LLM intent classification
+  query_prepare: merged                 # merged | separate — one LLM call for rewrite + classify
   inline_citation_images: true          # append referenced schematic/document images after the answer
   max_inline_images: 4                  # cap on images appended per answer
 
@@ -115,6 +120,6 @@ api:
   warmup_on_startup: true
   request_timeout_seconds: 300  # whole RAG request cap; null or 0 disables
   concurrency:
-    max_concurrent: 1       # MLX: must stay 1; >1 deadlocks single GPU stream
-    max_queue_depth: 8      # additional requests allowed to wait
+    max_concurrent: 6       # MLX in-process: must stay 1; openai backend: try 6
+    max_queue_depth: 12      # additional requests allowed to wait (openai: try 12)
     retry_after_seconds: 15 # Retry-After header when queue is full

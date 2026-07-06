@@ -39,7 +39,15 @@ pip install -e ".[dev,ml,mlx,api]"
 python scripts/serve.py
 ```
 
-RAG/chat uses `generation.llm_backend` (default `mlx`) with `models.llm_mlx_model` or `models.llm_transformers_model` depending on backend. Schematic PDF ingest still uses `models.visual_model` (Qwen3-VL via transformers).
+RAG/chat uses `generation.llm_backend`:
+
+| Backend | Runtime | Multi-user |
+|---------|---------|------------|
+| `mlx` (default) | In-process `mlx-lm` | No (`max_concurrent` capped at 1) |
+| `transformers` | In-process Hugging Face | Limited (configure `max_concurrent`) |
+| `openai` | External OpenAI-compatible HTTP API ([ADR 0003](../adr/0003-external-llm-openai-compatible.md)) | Yes — use with mlx-openai-server |
+
+Model paths: `models.llm_mlx_model`, `models.llm_transformers_model`, or `generation.openai_*` depending on backend. Schematic PDF ingest still uses `models.visual_model` (Qwen3-VL via transformers).
 
 Default bind: `0.0.0.0:8080` (see `config/default.yaml` → `api`).
 
@@ -51,8 +59,8 @@ LAN deployments use a bounded queue on `/v1/query` and `/v1/chat/completions`:
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `api.concurrency.max_concurrent` | `1` | Active RAG requests |
-| `api.concurrency.max_queue_depth` | `8` | Additional requests allowed to wait |
+| `api.concurrency.max_concurrent` | `1` | Active RAG requests (`mlx` in-process is always capped at 1; `openai` backend: try `6` on 48 GB) |
+| `api.concurrency.max_queue_depth` | `8` | Additional requests allowed to wait (`openai` backend: try `12`) |
 | `api.concurrency.retry_after_seconds` | `15` | `Retry-After` when queue is full |
 | `api.request_timeout_seconds` | `300` | Whole RAG request wall-clock cap (`504` when exceeded; `null` or `0` disables) |
 

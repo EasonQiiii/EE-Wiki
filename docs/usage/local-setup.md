@@ -28,6 +28,9 @@ Optional:
 | `EE_WIKI_TESSDATA_DIR` | Tesseract data for prose PDF OCR |
 | `EE_WIKI_EMBED_DEVICE` | `cpu` (default) or `mps` for `scripts/index.py` |
 | `EE_WIKI_LIBREOFFICE_PATH` | Legacy `.doc` ingest via LibreOffice |
+| `EE_WIKI_OPENAI_BASE_URL` | External LLM when `generation.llm_backend: openai` |
+| `EE_WIKI_OPENAI_MODEL` | Model name on the inference server |
+| `EE_WIKI_OPENAI_API_KEY` | Optional bearer token for the inference server |
 
 ### System tools
 
@@ -68,6 +71,79 @@ python scripts/serve.py --host 0.0.0.0 --port 8080
 ```
 
 Set `api.public_base_url` to the URL your browser uses for citation links (e.g. `http://192.168.1.10:8080` when Open WebUI is on another machine).
+
+## Multi-user RAG (single Mac)
+
+For several engineers querying at once, run the LLM in a **separate inference process** and point EE-Wiki at it via the OpenAI-compatible HTTP backend. See [ADR 0003](../adr/0003-external-llm-openai-compatible.md).
+
+### 1. Install mlx-openai-server
+
+Install into the **EE-Wiki venv** (not the Open WebUI venv — version pins conflict):
+
+```bash
+source .venv/bin/activate
+pip install mlx-openai-server
+```
+
+Verify the CLI:
+
+```bash
+mlx-openai-server --help
+```
+
+### 2. Start inference (terminal 1)
+
+```bash
+export EE_WIKI_MODELS_DIR=/path/to/models
+./scripts/start_mlx_openai_server.sh
+```
+
+Or manually (note: use the `launch` subcommand, not `python -m mlx_openai_server`):
+
+```bash
+mlx-openai-server launch \
+  --model-type lm \
+  --model-path "$EE_WIKI_MODELS_DIR/Qwen3-30B-A3B-Instruct-2507-MLX-4bit" \
+  --served-model-name Qwen3-30B-A3B-Instruct-2507-MLX-4bit \
+  --host 127.0.0.1 --port 8000 \
+  --decode-concurrency 4 \
+  --prompt-concurrency 2
+```
+
+On **48 GB** RAM, start with `--decode-concurrency 4`; reduce to `2` if you see Metal OOM. Monitor queue stats at `http://127.0.0.1:8000/v1/queue/stats` when available.
+
+### 3. Configure EE-Wiki
+
+In [`config/default.yaml`](../../config/default.yaml) (or via env vars):
+
+```yaml
+generation:
+  llm_backend: openai
+  openai_base_url: http://127.0.0.1:8000/v1
+  openai_model: Qwen3-30B-A3B-Instruct-2507-MLX-4bit
+
+api:
+  concurrency:
+    max_concurrent: 6
+    max_queue_depth: 12
+```
+
+### 4. Start EE-Wiki API (terminal 2)
+
+```bash
+python scripts/serve.py
+# optional: python scripts/serve.py --workers 2
+```
+
+Or use [`scripts/serve_with_llm.sh`](../../scripts/serve_with_llm.sh) to verify the inference server is up before starting EE-Wiki.
+
+Open WebUI still connects to `http://<host>:8080/v1` — no frontend change.
+
+**Notes:**
+
+- `generation.llm_backend: mlx` remains the single-user default (`max_concurrent: 1`).
+- Schematic/datasheet **ingest** (VLM) still runs via `scripts/ingest.py`; do not run heavy ingest while the inference server is under load.
+- `query_prepare: merged` (default) combines query rewrite + task classification into one LLM call before retrieval.
 
 ## Operator workflow
 

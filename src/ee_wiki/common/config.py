@@ -150,6 +150,10 @@ class GenerationConfig:
     query_rewrite: bool = True
     query_rewrite_max_history_turns: int = 4
     task_classification: bool = True
+    query_prepare: str = "merged"  # merged | separate — one LLM call vs rewrite + classify
+    openai_base_url: str = "http://127.0.0.1:8000/v1"
+    openai_model: str = ""
+    openai_api_key: str | None = None
     inline_citation_images: bool = True
     max_inline_images: int = 4
 
@@ -429,6 +433,19 @@ def load_config(
                 generation.get("query_rewrite_max_history_turns", 4)
             ),
             task_classification=bool(generation.get("task_classification", True)),
+            query_prepare=str(generation.get("query_prepare", "merged")),
+            openai_base_url=os.environ.get(
+                "EE_WIKI_OPENAI_BASE_URL",
+                str(generation.get("openai_base_url", "http://127.0.0.1:8000/v1")),
+            ),
+            openai_model=os.environ.get(
+                "EE_WIKI_OPENAI_MODEL",
+                str(generation.get("openai_model", "")),
+            ),
+            openai_api_key=os.environ.get(
+                "EE_WIKI_OPENAI_API_KEY",
+                generation.get("openai_api_key"),
+            ),
             inline_citation_images=bool(generation.get("inline_citation_images", True)),
             max_inline_images=int(generation.get("max_inline_images", 4)),
         ),

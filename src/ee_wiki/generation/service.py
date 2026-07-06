@@ -14,6 +14,7 @@ from ee_wiki.generation.classify import classify_task
 from ee_wiki.generation.context import format_context_blocks, format_history_block
 from ee_wiki.generation.inline_images import build_image_block
 from ee_wiki.generation.llm.factory import build_llm_backend
+from ee_wiki.generation.prepare import prepare_query, should_prepare_query
 from ee_wiki.generation.prompt_stats import prompt_size_fields
 from ee_wiki.generation.templates.loader import (
     load_scope_rules,
@@ -63,12 +64,13 @@ class RagService:
             RuntimeError: If the model path for ``generation.llm_backend`` is not configured.
         """
         backend = config.generation.llm_backend
-        llm_path = config.models.resolve_llm_model(backend)
-        if llm_path is None:
-            key = config.models.llm_config_key(backend)
-            raise RuntimeError(
-                f"models.{key} is not configured for generation.llm_backend={backend!r}"
-            )
+        if backend != "openai":
+            llm_path = config.models.resolve_llm_model(backend)
+            if llm_path is None:
+                key = config.models.llm_config_key(backend)
+                raise RuntimeError(
+                    f"models.{key} is not configured for generation.llm_backend={backend!r}"
+                )
         engine = HybridRagEngine(config)
         return cls(
             config=config,
@@ -83,19 +85,72 @@ class RagService:
         resolved_task = task or self.template_task
         return load_template(self.config.repo_root, resolved_task, self.template_name)
 
+    def _prepare_for_retrieval(
+        self,
+        question: str,
+        history: list[ConversationTurn] | None,
+        caller_task: str | None,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> tuple[str, str | None]:
+        """Prepare retrieval query and optional task before hybrid search.
+
+        Args:
+            question: Current user question.
+            history: Prior conversation turns.
+            caller_task: Explicit task from the API caller.
+            cancel_event: Cancellation signal.
+
+        Returns:
+            Tuple of retrieval query and optional prepared task label.
+        """
+        gen = self.config.generation
+
+        if gen.query_prepare == "separate":
+            retrieval_query = self._maybe_rewrite_query(
+                question,
+                history,
+                cancel_event=cancel_event,
+            )
+            return retrieval_query, None
+
+        if not should_prepare_query(
+            question,
+            history,
+            query_rewrite=gen.query_rewrite,
+            task_classification=gen.task_classification,
+            caller_task=caller_task,
+        ):
+            return question, None
+
+        prepared = prepare_query(
+            question,
+            history,
+            llm=self.llm,
+            repo_root=self.config.repo_root,
+            default_task=self.template_task,
+            query_rewrite=gen.query_rewrite,
+            task_classification=gen.task_classification,
+            caller_task=caller_task,
+            cancel_event=cancel_event,
+            max_history_turns=gen.query_rewrite_max_history_turns,
+        )
+        return prepared.retrieval_query, prepared.task
+
     def _resolve_task(
         self,
         caller_task: str | None,
         retrieval_query: str,
+        prepared_task: str | None,
         *,
         cancel_event: threading.Event | None = None,
     ) -> str | None:
-        """Resolve the prompt task, using LLM classification when enabled.
+        """Resolve the prompt task after retrieval.
 
         Args:
             caller_task: Explicit task from the API caller (takes priority).
-            retrieval_query: The (possibly rewritten) user question for
-                classification input.
+            retrieval_query: Query used for retrieval (for separate-mode classify).
+            prepared_task: Task from merged prepare step, if any.
             cancel_event: Cancellation signal.
 
         Returns:
@@ -103,7 +158,11 @@ class RagService:
         """
         if caller_task is not None:
             return caller_task
+        if prepared_task is not None:
+            return prepared_task
         if not self.config.generation.task_classification:
+            return None
+        if self.config.generation.query_prepare != "separate":
             return None
         return classify_task(
             retrieval_query,
@@ -111,6 +170,38 @@ class RagService:
             repo_root=self.config.repo_root,
             default_task=self.template_task,
             cancel_event=cancel_event,
+        )
+
+    def _maybe_rewrite_query(
+        self,
+        question: str,
+        history: list[ConversationTurn] | None,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        """Rewrite question using history if configured and applicable.
+
+        Used only when ``generation.query_prepare`` is ``separate``.
+
+        Args:
+            question: Current user question.
+            history: Prior conversation turns (may be None or empty).
+            cancel_event: Cancellation signal.
+
+        Returns:
+            Rewritten query or the original question.
+        """
+        if not self.config.generation.query_rewrite:
+            return question
+        if not history:
+            return question
+        return rewrite_query(
+            question,
+            history,
+            llm=self.llm,
+            repo_root=self.config.repo_root,
+            cancel_event=cancel_event,
+            max_history_turns=self.config.generation.query_rewrite_max_history_turns,
         )
 
     def _should_use_assistant_fallback(
@@ -144,36 +235,6 @@ class RagService:
         if top is None:
             return False
         return top < self.config.generation.weak_rerank_threshold
-
-    def _maybe_rewrite_query(
-        self,
-        question: str,
-        history: list[ConversationTurn] | None,
-        *,
-        cancel_event: threading.Event | None = None,
-    ) -> str:
-        """Rewrite question using history if configured and applicable.
-
-        Args:
-            question: Current user question.
-            history: Prior conversation turns (may be None or empty).
-            cancel_event: Cancellation signal.
-
-        Returns:
-            Rewritten query or the original question.
-        """
-        if not self.config.generation.query_rewrite:
-            return question
-        if not history:
-            return question
-        return rewrite_query(
-            question,
-            history,
-            llm=self.llm,
-            repo_root=self.config.repo_root,
-            cancel_event=cancel_event,
-            max_history_turns=self.config.generation.query_rewrite_max_history_turns,
-        )
 
     def _load_assistant_role(self) -> str:
         """Load static assistant role text from ``prompts/{assistant_task}/role.md``."""
@@ -293,7 +354,12 @@ class RagService:
         if cancel_event and cancel_event.is_set():
             return RagAnswer(answer="", citations=[], insufficient_context=False)
 
-        retrieval_query = self._maybe_rewrite_query(question, history, cancel_event=cancel_event)
+        retrieval_query, prepared_task = self._prepare_for_retrieval(
+            question,
+            history,
+            task,
+            cancel_event=cancel_event,
+        )
         if cancel_event and cancel_event.is_set():
             return RagAnswer(answer="", citations=[], insufficient_context=False)
 
@@ -316,7 +382,10 @@ class RagService:
             return RagAnswer(answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True)
 
         resolved_task = self._resolve_task(
-            task, retrieval_query, cancel_event=cancel_event,
+            task,
+            retrieval_query,
+            prepared_task,
+            cancel_event=cancel_event,
         )
         if cancel_event and cancel_event.is_set():
             return RagAnswer(answer="", citations=[], insufficient_context=False)
@@ -384,7 +453,12 @@ class RagService:
         if cancel_event and cancel_event.is_set():
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
 
-        retrieval_query = self._maybe_rewrite_query(question, history, cancel_event=cancel_event)
+        retrieval_query, prepared_task = self._prepare_for_retrieval(
+            question,
+            history,
+            task,
+            cancel_event=cancel_event,
+        )
         if cancel_event and cancel_event.is_set():
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
 
@@ -419,7 +493,10 @@ class RagService:
             return AnswerStreamResult(citations=[], text_chunks=_insufficient())
 
         resolved_task = self._resolve_task(
-            task, retrieval_query, cancel_event=cancel_event,
+            task,
+            retrieval_query,
+            prepared_task,
+            cancel_event=cancel_event,
         )
         if cancel_event and cancel_event.is_set():
             return AnswerStreamResult(citations=[], text_chunks=iter(()))

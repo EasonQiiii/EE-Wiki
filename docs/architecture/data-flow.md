@@ -36,15 +36,14 @@ python scripts/index.py    # drops removed documents from the index
 
 ```
 User question (via Open WebUI → api/)
-    → query rewrite (optional; resolve pronouns from conversation history)
+    → query prepare (optional; merged rewrite + task classification — one LLM call)
     → metadata filter (project, build, document_type)
     → scope expansion: build → + project/common → + global  (when scope_inheritance=true)
     → retrieval/ (embedding + BM25 + merge + rerank)
     → section expansion (optional; merge sibling chunks — see below)
-    → assistant fallback check (weak retrieval → skip classification, use assistant prompt)
-    → task classification (optional; LLM selects wiki/debug/fa/design_review when task not explicit)
+    → assistant fallback check (weak retrieval → assistant prompt, no KB chunks)
     → top context blocks with Citations
-    → generation/ (prompt template + local LLM)
+    → generation/ (prompt template + LLM: in-process mlx/transformers or external openai HTTP)
     → answer with citations
 ```
 

@@ -25,6 +25,7 @@ from ee_wiki.generation.llm.errors import LlmLoadError
 from ee_wiki.generation.llm.factory import build_llm_backend
 from ee_wiki.generation.llm.local import LocalLlmBackend
 from ee_wiki.generation.llm.mlx import MlxLlmBackend
+from ee_wiki.generation.llm.openai_http import OpenAiLlmBackend
 
 
 def _app_config(
@@ -32,6 +33,7 @@ def _app_config(
     llm_backend: str,
     llm_mlx_model: Path | None = None,
     llm_transformers_model: Path | None = None,
+    openai_model: str = "",
 ) -> AppConfig:
     return AppConfig(
         repo_root=Path("/repo"),
@@ -66,7 +68,11 @@ def _app_config(
             raw_dir=Path("/repo/data/raw"),
             processed_dir=Path("/repo/data/processed"),
         ),
-        generation=GenerationConfig(llm_backend=llm_backend, max_new_tokens=512),
+        generation=GenerationConfig(
+            llm_backend=llm_backend,
+            max_new_tokens=512,
+            openai_model=openai_model,
+        ),
         api=ApiConfig(host="0.0.0.0", port=8080),
     )
 
@@ -102,6 +108,22 @@ def test_build_llm_backend_rejects_mlx_weights_for_transformers(tmp_path: Path) 
     config = _app_config(llm_backend="transformers", llm_transformers_model=model_dir)
 
     with pytest.raises(LlmLoadError, match="MLX-quantized checkpoint"):
+        build_llm_backend(config)
+
+
+def test_build_llm_backend_selects_openai() -> None:
+    config = _app_config(llm_backend="openai", openai_model="remote-llm")
+
+    backend = build_llm_backend(config)
+
+    assert isinstance(backend, OpenAiLlmBackend)
+    assert backend.model == "remote-llm"
+
+
+def test_build_llm_backend_requires_openai_model() -> None:
+    config = _app_config(llm_backend="openai", openai_model="")
+
+    with pytest.raises(RuntimeError, match="generation.openai_model is not configured"):
         build_llm_backend(config)
 
 
