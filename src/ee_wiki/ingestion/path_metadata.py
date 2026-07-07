@@ -72,24 +72,37 @@ def parse_path_metadata(
 
     type_folders = layout.document_type_folders
     enterprise = layout.enterprise_project
+    known_folders = ", ".join(sorted(type_folders))
+
+    def _unknown_type_folder(folder: str, layout_hint: str) -> PathMetadataError:
+        return PathMetadataError(
+            f"Unknown type folder '{folder}' ({layout_hint}). "
+            f"Add '{folder}: <document_type>' to data_layout.document_type_folders "
+            f"in config/default.yaml. Known folders: {known_folders}"
+        )
 
     # Enterprise library: global/{type}/file
-    if parts[0] == enterprise and parts[1] in type_folders:
+    if parts[0] == enterprise:
         if len(parts) < 3:
             raise PathMetadataError(f"Missing filename under enterprise path: {Path(*parts)}")
+        if parts[1] not in type_folders:
+            raise _unknown_type_folder(parts[1], f"{enterprise}/{{type}}/file")
         project = enterprise
         build = enterprise
         type_folder = parts[1]
         filename = parts[-1]
     # Project library: {project}/{build}/{type}/file
-    elif len(parts) >= 4 and parts[2] in type_folders:
+    elif len(parts) >= 4:
+        if parts[2] not in type_folders:
+            raise _unknown_type_folder(parts[2], "{project}/{build}/{type}/file")
         project = parts[0]
         build = parts[1]
         type_folder = parts[2]
         filename = parts[-1]
     else:
         raise PathMetadataError(
-            f"Path does not match enterprise or project layout: {Path(*parts)}"
+            f"Path does not match enterprise ({enterprise}/{{type}}/file) or "
+            f"project ({{project}}/{{build}}/{{type}}/file) layout: {Path(*parts)}"
         )
 
     document_type = type_folders[type_folder]

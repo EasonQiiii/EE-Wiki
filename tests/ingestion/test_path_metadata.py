@@ -52,7 +52,7 @@ class TestParsePathMetadata:
 
     def test_rejects_invalid_layout(self, data_layout) -> None:
         path = data_layout.raw_dir / "logan" / "p1" / "unknown" / "file.pdf"
-        with pytest.raises(PathMetadataError, match="does not match"):
+        with pytest.raises(PathMetadataError, match="Unknown type folder"):
             parse_path_metadata(path, data_layout)
 
     def test_rejects_hidden_file(self, data_layout) -> None:

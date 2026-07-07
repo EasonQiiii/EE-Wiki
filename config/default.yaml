@@ -112,6 +112,7 @@ data_layout:
     sch: schematic
     sop: sop
     datasheet: datasheet
+    fa: failure_analysis   # add new folders here — no code change required
 
 api:
   host: 0.0.0.0
