@@ -55,9 +55,9 @@ def test_ingest_txt_file_uses_markdown_parser(ingest_config: AppConfig) -> None:
 
 
 def test_ingest_path_rejects_unsupported_suffix(ingest_config: AppConfig) -> None:
-    raw_path = ingest_config.raw_dir / "logan/p1/note/file.key"
+    raw_path = ingest_config.raw_dir / "logan/p1/note/archive.zip"
     raw_path.parent.mkdir(parents=True)
-    raw_path.write_text("x", encoding="utf-8")
+    raw_path.write_bytes(b"zip")
     with pytest.raises(IngestionError, match="Unsupported"):
         ingest_file(raw_path, ingest_config)
 

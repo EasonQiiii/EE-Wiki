@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from ee_wiki.common.fingerprint import raw_fingerprint
 from ee_wiki.common.logging import get_logger
 from ee_wiki.common.types import DataLayoutConfig
 from ee_wiki.ingestion.parsers.excel import EXCEL_SUFFIXES
+from ee_wiki.ingestion.parsers.iwork import IWORK_SUFFIXES
 from ee_wiki.ingestion.parsers.markdown import MARKDOWN_SUFFIXES
 from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
 from ee_wiki.ingestion.parsers.word import WORD_SUFFIXES
@@ -18,7 +20,6 @@ from ee_wiki.ingestion.processed_paths import resolve_processed_paths
 logger = get_logger(__name__)
 
 TEXT_SUFFIXES = {".txt"}
-DEFERRED_SUFFIXES = {".key", ".numbers"}
 
 
 def _relative_raw_path(raw_path: Path, raw_dir: Path) -> Path | str:
@@ -37,9 +38,10 @@ def expected_content_extension(raw_path: Path, layout: DataLayoutConfig) -> str 
         layout: Data layout for path metadata parsing.
 
     Returns:
-        ``\".md\"`` for PDF sources, otherwise ``None``.
+        ``\".md\"`` for PDF and iWork sources, otherwise ``None``.
     """
-    if raw_path.suffix.lower() not in PDF_SUFFIXES | EXCEL_SUFFIXES | WORD_SUFFIXES:
+    convertible_suffixes = PDF_SUFFIXES | EXCEL_SUFFIXES | WORD_SUFFIXES | IWORK_SUFFIXES
+    if raw_path.suffix.lower() not in convertible_suffixes:
         return None
     try:
         parse_path_metadata(raw_path, layout)
@@ -48,15 +50,23 @@ def expected_content_extension(raw_path: Path, layout: DataLayoutConfig) -> str 
     return ".md"
 
 
-def is_supported_raw_file(raw_path: Path) -> bool:
+def is_supported_raw_file(raw_path: Path, *, iwork_enabled: bool = False) -> bool:
     """Return whether ``raw_path`` has a supported ingest suffix."""
     suffix = raw_path.suffix.lower()
-    return suffix in MARKDOWN_SUFFIXES | TEXT_SUFFIXES | PDF_SUFFIXES | EXCEL_SUFFIXES | WORD_SUFFIXES
+    supported = MARKDOWN_SUFFIXES | TEXT_SUFFIXES | PDF_SUFFIXES | EXCEL_SUFFIXES | WORD_SUFFIXES
+    if iwork_enabled:
+        supported |= IWORK_SUFFIXES
+    return suffix in supported
 
 
-def is_ingestible_raw_file(raw_path: Path, layout: DataLayoutConfig) -> bool:
+def is_ingestible_raw_file(
+    raw_path: Path,
+    layout: DataLayoutConfig,
+    *,
+    iwork_enabled: bool = False,
+) -> bool:
     """Return whether the file can be ingested (supported type and valid layout)."""
-    if not is_supported_raw_file(raw_path):
+    if not is_supported_raw_file(raw_path, iwork_enabled=iwork_enabled):
         return False
     if raw_path.suffix.lower() in PDF_SUFFIXES:
         try:
@@ -71,12 +81,18 @@ def is_ingestible_raw_file(raw_path: Path, layout: DataLayoutConfig) -> bool:
     return True
 
 
-def log_skipped_raw_files(raw_scope: Path, layout: DataLayoutConfig) -> None:
+def log_skipped_raw_files(
+    raw_scope: Path,
+    layout: DataLayoutConfig,
+    *,
+    iwork_enabled: bool = False,
+) -> None:
     """Log deferred and unsupported raw files discovered under ``raw_scope``.
 
     Args:
         raw_scope: File or directory under ``layout.raw_dir`` to scan.
         layout: Data layout with ``raw_dir`` for relative log labels.
+        iwork_enabled: When ``False``, ``.key`` / ``.numbers`` are logged as deferred.
     """
     resolved = raw_scope.resolve()
     if resolved.is_file():
@@ -93,13 +109,20 @@ def log_skipped_raw_files(raw_scope: Path, layout: DataLayoutConfig) -> None:
         if not suffix:
             continue
         rel = _relative_raw_path(candidate, layout.raw_dir)
-        if suffix in DEFERRED_SUFFIXES:
-            logger.warning(
-                "Skipping deferred format %s (%s): export to PDF before ingest",
-                suffix,
-                rel,
-            )
-        elif not is_supported_raw_file(candidate):
+        if suffix in IWORK_SUFFIXES and not iwork_enabled:
+            if sys.platform != "darwin":
+                logger.warning(
+                    "Skipping iWork format %s (%s): requires macOS with Keynote/Numbers",
+                    suffix,
+                    rel,
+                )
+            else:
+                logger.warning(
+                    "Skipping iWork format %s (%s): set ingestion.iwork.enabled: true",
+                    suffix,
+                    rel,
+                )
+        elif not is_supported_raw_file(candidate, iwork_enabled=iwork_enabled):
             logger.warning("Skipping unsupported raw file: %s", rel)
 
 
@@ -151,7 +174,12 @@ def needs_ingest(
     return True
 
 
-def collect_raw_files(raw_dir: Path, layout: DataLayoutConfig) -> list[Path]:
+def collect_raw_files(
+    raw_dir: Path,
+    layout: DataLayoutConfig,
+    *,
+    iwork_enabled: bool = False,
+) -> list[Path]:
     """Walk ``raw_dir`` and return ingestible files in stable order."""
     if not raw_dir.is_dir():
         return []
@@ -160,7 +188,7 @@ def collect_raw_files(raw_dir: Path, layout: DataLayoutConfig) -> list[Path]:
     for candidate in sorted(raw_dir.rglob("*")):
         if not candidate.is_file() or candidate.name.startswith("."):
             continue
-        if not is_ingestible_raw_file(candidate, layout):
+        if not is_ingestible_raw_file(candidate, layout, iwork_enabled=iwork_enabled):
             continue
         files.append(candidate)
     return files

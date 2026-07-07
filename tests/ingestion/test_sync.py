@@ -84,7 +84,7 @@ def test_log_skipped_raw_files_warns_on_key_and_numbers(
 
     from ee_wiki.ingestion.sync import log_skipped_raw_files
 
-    log_skipped_raw_files(sync_config.raw_dir, sync_config.data_layout)
+    log_skipped_raw_files(sync_config.raw_dir, sync_config.data_layout, iwork_enabled=False)
 
     warnings = [record.message for record in caplog.records if record.levelname == "WARNING"]
     assert any("slides.key" in message and ".key" in message for message in warnings)

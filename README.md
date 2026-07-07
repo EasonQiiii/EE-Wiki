@@ -369,7 +369,7 @@ Example:
 data/raw/logan/p1/sch/power-tree.pdf
 ```
 
-Supported raw formats (V1 priority): PDF, Markdown, TXT, Excel. Keynote (`.key`) and Numbers (`.numbers`) should be exported to PDF before ingest until dedicated parsers exist.
+Supported raw formats (V1 priority): PDF, Markdown, TXT, Excel, Word. On macOS, Keynote (`.key`) and Numbers (`.numbers`) are ingested via AppleScript export — see [ADR 0004](docs/adr/0004-iwork-macos-export.md) and `ingestion.iwork` in `config/default.yaml`.
 
 ## Processed Mirror
 

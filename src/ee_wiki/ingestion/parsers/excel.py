@@ -7,7 +7,7 @@ from pathlib import Path
 from ee_wiki.common.config import ExcelConfig
 from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
-from ee_wiki.common.types import DataLayoutConfig, StandardDocument
+from ee_wiki.common.types import DataLayoutConfig, Metadata, StandardDocument
 from ee_wiki.ingestion.path_metadata import parse_path_metadata
 
 logger = get_logger(__name__)
@@ -98,14 +98,19 @@ def parse_excel(
     excel_config: ExcelConfig,
     *,
     repo_root: Path | None = None,
+    metadata: Metadata | None = None,
 ) -> StandardDocument:
     """Read an Excel workbook and build a :class:`StandardDocument`.
 
     Args:
-        raw_path: Path to a ``.xlsx`` file under ``layout.raw_dir``.
+        raw_path: Path to a ``.xlsx`` file. Normally under ``layout.raw_dir``; when
+            ``metadata`` is provided (e.g. Numbers export temp file), path-derived
+            metadata is taken from ``metadata`` instead.
         layout: Data layout configuration for path-derived metadata.
         excel_config: Excel ingest settings.
         repo_root: Optional repository root for ``source_file`` labels.
+        metadata: Optional pre-parsed metadata when ``raw_path`` is not under
+            ``layout.raw_dir`` (e.g. temporary export from ``.numbers``).
 
     Returns:
         Parsed document with one section per worksheet.
@@ -120,7 +125,8 @@ def parse_excel(
             "openpyxl is required for Excel ingest; install with pip install 'ee-wiki[ml]'"
         ) from exc
 
-    metadata = parse_path_metadata(raw_path, layout, repo_root=repo_root)
+    if metadata is None:
+        metadata = parse_path_metadata(raw_path, layout, repo_root=repo_root)
     try:
         workbook = load_workbook(raw_path, read_only=True, data_only=True)
     except OSError as exc:

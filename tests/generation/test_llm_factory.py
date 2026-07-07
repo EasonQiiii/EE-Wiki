@@ -14,6 +14,7 @@ from ee_wiki.common.config import (
     ExcelConfig,
     GenerationConfig,
     IndexingConfig,
+    IworkConfig,
     ProsePdfConfig,
     RetrievalConfig,
     SchematicPdfConfig,
@@ -51,6 +52,7 @@ def _app_config(
         prose_pdf=ProsePdfConfig(),
         excel=ExcelConfig(),
         word=WordConfig(),
+        iwork=IworkConfig(),
         chunking=ChunkingConfig(),
         indexing=IndexingConfig(),
         retrieval=RetrievalConfig(

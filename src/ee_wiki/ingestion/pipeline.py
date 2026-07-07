@@ -14,6 +14,15 @@ from ee_wiki.ingestion.cleanup import RemovedProcessed, cleanup_orphaned_process
 from ee_wiki.ingestion.keywords import extract_keywords
 from ee_wiki.ingestion.parsers.datasheet_pdf import parse_datasheet_pdf
 from ee_wiki.ingestion.parsers.excel import EXCEL_SUFFIXES, parse_excel
+from ee_wiki.ingestion.parsers.iwork import (
+    IWORK_SUFFIXES,
+    KEYNOTE_SUFFIXES,
+    NUMBERS_SUFFIXES,
+    IworkParserError,
+    iwork_ingest_active,
+    parse_keynote,
+    parse_numbers,
+)
 from ee_wiki.ingestion.parsers.markdown import MARKDOWN_SUFFIXES, parse_markdown
 from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
 from ee_wiki.ingestion.parsers.prose_pdf import parse_prose_pdf
@@ -21,7 +30,6 @@ from ee_wiki.ingestion.parsers.schematic_pdf import parse_schematic_pdf
 from ee_wiki.ingestion.parsers.word import WORD_SUFFIXES, parse_word
 from ee_wiki.ingestion.path_metadata import parse_path_metadata
 from ee_wiki.ingestion.sync import (
-    DEFERRED_SUFFIXES,
     collect_raw_files,
     expected_content_extension,
     is_ingestible_raw_file,
@@ -142,10 +150,26 @@ def ingest_file(
                 config,
                 repo_root=config.repo_root,
             )
+        elif suffix in KEYNOTE_SUFFIXES:
+            document = parse_keynote(
+                path,
+                layout,
+                config,
+                repo_root=config.repo_root,
+            )
+        elif suffix in NUMBERS_SUFFIXES:
+            document = parse_numbers(
+                path,
+                layout,
+                config,
+                repo_root=config.repo_root,
+            )
         else:
             raise IngestionError(
                 f"Unsupported file type for V1 ingest: {path.suffix} ({path.name})"
             )
+    except IworkParserError as exc:
+        raise IngestionError(f"Failed to ingest {path.name}: {exc}") from exc
     except EEWikiError as exc:
         raise IngestionError(f"Failed to ingest {path.name}: {exc}") from exc
 
@@ -186,27 +210,28 @@ def ingest_path(
     app_config = config or load_config()
     path = (target or app_config.raw_dir).resolve()
     layout = app_config.data_layout
+    iwork_enabled = iwork_ingest_active(app_config.iwork)
 
     if not path.exists():
         raise IngestionError(f"Path does not exist: {path}")
 
     if path.is_file():
         suffix = path.suffix.lower()
-        if suffix in DEFERRED_SUFFIXES:
-            log_skipped_raw_files(path, layout)
+        if suffix in IWORK_SUFFIXES and not iwork_enabled:
+            log_skipped_raw_files(path, layout, iwork_enabled=iwork_enabled)
             return IngestRunResult()
-        if not is_supported_raw_file(path):
-            log_skipped_raw_files(path, layout)
+        if not is_supported_raw_file(path, iwork_enabled=iwork_enabled):
+            log_skipped_raw_files(path, layout, iwork_enabled=iwork_enabled)
             return IngestRunResult()
-        if not is_ingestible_raw_file(path, layout):
+        if not is_ingestible_raw_file(path, layout, iwork_enabled=iwork_enabled):
             raise IngestionError(
                 f"Raw path does not match expected layout under {layout.raw_dir}: {path.name}"
             )
         files = [path]
         run_cleanup = False
     else:
-        log_skipped_raw_files(path, layout)
-        files = collect_raw_files(path, layout)
+        log_skipped_raw_files(path, layout, iwork_enabled=iwork_enabled)
+        files = collect_raw_files(path, layout, iwork_enabled=iwork_enabled)
         run_cleanup = True
 
     removed = (

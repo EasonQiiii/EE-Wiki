@@ -136,6 +136,16 @@ class WordConfig:
 
 
 @dataclass(frozen=True)
+class IworkConfig:
+    """Settings for Apple Keynote / Numbers ingest on macOS."""
+
+    enabled: bool = True
+    keynote_export_timeout_seconds: int = 600
+    numbers_export_timeout_seconds: int = 600
+    quit_apps_after_export: bool = False
+
+
+@dataclass(frozen=True)
 class GenerationConfig:
     """Answer generation settings."""
 
@@ -194,6 +204,7 @@ class AppConfig:
     datasheet_pdf: DatasheetPdfConfig
     excel: ExcelConfig
     word: WordConfig
+    iwork: IworkConfig
     chunking: ChunkingConfig
     indexing: IndexingConfig
     retrieval: RetrievalConfig
@@ -305,6 +316,7 @@ def load_config(
     datasheet = ingestion.get("datasheet_pdf", {})
     excel = ingestion.get("excel", {})
     word = ingestion.get("word") or {}
+    iwork = ingestion.get("iwork") or {}
     api = raw.get("api", {})
     concurrency = api.get("concurrency", {})
     generation = raw.get("generation", {})
@@ -397,6 +409,16 @@ def load_config(
                 if word.get("libreoffice_path")
                 else None
             ),
+        ),
+        iwork=IworkConfig(
+            enabled=bool(iwork.get("enabled", True)),
+            keynote_export_timeout_seconds=int(
+                iwork.get("keynote_export_timeout_seconds", 600)
+            ),
+            numbers_export_timeout_seconds=int(
+                iwork.get("numbers_export_timeout_seconds", 600)
+            ),
+            quit_apps_after_export=bool(iwork.get("quit_apps_after_export", False)),
         ),
         chunking=ChunkingConfig(
             max_chars=int(chunking.get("max_chars", 1500)),

@@ -59,7 +59,7 @@ Supported formats (V1):
 
 | Folder | Formats |
 |--------|---------|
-| `note/`, `sop/`, `datasheet/`, etc. | `.md`, `.markdown`, `.txt`, `.pdf` (text + OCR), `.xlsx`, `.doc`, `.docx` |
+| `note/`, `sop/`, `datasheet/`, etc. | `.md`, `.markdown`, `.txt`, `.pdf` (text + OCR), `.xlsx`, `.doc`, `.docx`, `.key`, `.numbers` (macOS) |
 | `sch/` | `.pdf` (schematic vision pipeline) |
 
 Prose PDFs (`note/`, `sop/`, `datasheet/`, …) extract embedded text per page. Pages with little selectable text fall back to **Tesseract OCR** via PyMuPDF. Install Tesseract locally for scanned documents:
@@ -122,6 +122,25 @@ If LibreOffice is not on `PATH`, set one of:
 - Config: `ingestion.word.libreoffice_path` in `config/default.yaml`
 
 Legacy `.doc` files are converted to PDF headlessly, then text is extracted with the same prose PDF logic (embedded text + Tesseract OCR fallback for scanned pages). Chinese datasheets benefit from the same `ocr_language: auto` settings as PDFs.
+
+### Apple iWork (`.key` / `.numbers`, macOS only)
+
+On macOS with Keynote and Numbers installed, EE-Wiki exports iWork files before parsing:
+
+| Format | Export | Parser |
+|--------|--------|--------|
+| `.key` | PDF via Keynote (AppleScript) | Prose PDF pipeline |
+| `.numbers` | `.xlsx` via Numbers (AppleScript) | Excel pipeline |
+
+Config: `config/default.yaml` → `ingestion.iwork` (`enabled`, export timeouts, `quit_apps_after_export`).
+
+Requirements:
+
+- macOS with **Keynote** and **Numbers** (App Store or iWork)
+- **Automation** permission for Terminal or your Python process (System Settings → Privacy & Security → Automation)
+- A logged-in GUI session (export is not headless; Keynote/Numbers may open briefly)
+
+On Linux or when `ingestion.iwork.enabled: false`, `.key` and `.numbers` are skipped with a warning. See [ADR 0004](../adr/0004-iwork-macos-export.md).
 
 ## Basic command
 

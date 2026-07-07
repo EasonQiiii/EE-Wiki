@@ -44,6 +44,11 @@ ingestion:
     include_empty_sheets: false
   word: {}
     # libreoffice_path: /Applications/LibreOffice.app/Contents/MacOS/soffice
+  iwork:
+    enabled: true                      # macOS only; .key / .numbers via Keynote/Numbers export
+    keynote_export_timeout_seconds: 600
+    numbers_export_timeout_seconds: 600
+    quit_apps_after_export: false      # keep false for faster batch sync
   prose_pdf:
     max_pages: null
     min_text_chars: 40       # per-page embedded text below this triggers OCR
