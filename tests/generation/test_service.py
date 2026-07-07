@@ -474,8 +474,8 @@ def test_classification_disabled_uses_default(rag_service, app_config) -> None:
     assert call_count["prepare"] == 0
 
 
-def test_weak_retrieval_skips_classification(rag_service, app_config) -> None:
-    """Separate prepare mode skips post-retrieval classify on assistant fallback."""
+def test_weak_retrieval_classifies_before_retrieval_not_after(rag_service, app_config) -> None:
+    """Separate prepare mode classifies once before retrieval; assistant fallback skips a second pass."""
     rag_service.config = replace(
         app_config,
         generation=replace(
@@ -499,4 +499,4 @@ def test_weak_retrieval_skips_classification(rag_service, app_config) -> None:
     rag_service.llm.generate_stream = _fake_stream
 
     rag_service.answer("你好")
-    assert call_count["classify"] == 0
+    assert call_count["classify"] == 1

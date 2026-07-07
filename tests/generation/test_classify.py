@@ -20,7 +20,7 @@ from ee_wiki.generation.classify import (
 class TestParseTaskLabel:
     """Parsing logic for extracting valid labels from noisy LLM output."""
 
-    @pytest.mark.parametrize("raw", ["wiki", "debug", "fa", "design_review"])
+    @pytest.mark.parametrize("raw", ["wiki", "debug", "fa", "design_review", "translate"])
     def test_exact_match(self, raw: str) -> None:
         assert _parse_task_label(raw) == raw
 

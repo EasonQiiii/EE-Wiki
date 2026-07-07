@@ -23,6 +23,11 @@ from ee_wiki.generation.templates.loader import (
     render_template,
     resolve_prompts_dir,
 )
+from ee_wiki.generation.translate import (
+    build_translation_prompt,
+    is_translation_task,
+    log_translation_task,
+)
 from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.retrieval.hybrid.engine import HybridChunk, HybridRagEngine, RetrievalResult
 from ee_wiki.retrieval.rewrite import ConversationTurn, rewrite_query
@@ -112,7 +117,16 @@ class RagService:
                 history,
                 cancel_event=cancel_event,
             )
-            return retrieval_query, None
+            prepared_task: str | None = None
+            if gen.task_classification and caller_task is None:
+                prepared_task = classify_task(
+                    question,
+                    llm=self.llm,
+                    repo_root=self.config.repo_root,
+                    default_task=self.template_task,
+                    cancel_event=cancel_event,
+                )
+            return retrieval_query, prepared_task
 
         if not should_prepare_query(
             question,
@@ -324,6 +338,47 @@ class RagService:
             return RagAnswer(answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True)
         return RagAnswer(answer=answer_text, citations=[], insufficient_context=False)
 
+    def _answer_translation(
+        self,
+        question: str,
+        *,
+        history: list[ConversationTurn] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> RagAnswer:
+        """Translate conversation content or quoted text (中英互译)."""
+        log_translation_task(question)
+        prompt = build_translation_prompt(
+            self.config.repo_root,
+            question=question,
+            history=history,
+            template_name=self.template_name,
+        )
+        size = prompt_size_fields(prompt)
+        logger.info(
+            "Translation answer (prompt_chars=%d, prompt_tokens_est=%d)",
+            size["prompt_chars"],
+            size["prompt_tokens_est"],
+        )
+        answer_text = self._generate_answer_text(prompt, cancel_event=cancel_event)
+        if cancel_event and cancel_event.is_set():
+            return RagAnswer(answer="", citations=[], insufficient_context=False)
+        if not answer_text:
+            logger.warning("Translation LLM returned empty text")
+            return RagAnswer(
+                answer="无法完成翻译，请提供需要翻译的文本或先进行一次问答。",
+                citations=[],
+                insufficient_context=False,
+            )
+        return RagAnswer(answer=answer_text, citations=[], insufficient_context=False)
+
+    def _should_translate(
+        self,
+        caller_task: str | None,
+        prepared_task: str | None,
+    ) -> bool:
+        """Return whether to skip retrieval and run the translation prompt."""
+        return is_translation_task(caller_task) or is_translation_task(prepared_task)
+
     def answer(
         self,
         question: str,
@@ -354,6 +409,9 @@ class RagService:
         if cancel_event and cancel_event.is_set():
             return RagAnswer(answer="", citations=[], insufficient_context=False)
 
+        if is_translation_task(task):
+            return self._answer_translation(question, history=history, cancel_event=cancel_event)
+
         retrieval_query, prepared_task = self._prepare_for_retrieval(
             question,
             history,
@@ -362,6 +420,9 @@ class RagService:
         )
         if cancel_event and cancel_event.is_set():
             return RagAnswer(answer="", citations=[], insufficient_context=False)
+
+        if self._should_translate(task, prepared_task):
+            return self._answer_translation(question, history=history, cancel_event=cancel_event)
 
         retrieval = self.engine.retrieve(
             retrieval_query,
@@ -453,6 +514,26 @@ class RagService:
         if cancel_event and cancel_event.is_set():
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
 
+        if is_translation_task(task):
+            prompt = build_translation_prompt(
+                self.config.repo_root,
+                question=question,
+                history=history,
+                template_name=self.template_name,
+            )
+            log_translation_task(question)
+
+            def _explicit_translation_stream() -> Iterator[str]:
+                yield from self._generate_answer_text_stream(
+                    prompt,
+                    cancel_event=cancel_event,
+                )
+
+            return AnswerStreamResult(
+                citations=[],
+                text_chunks=_explicit_translation_stream(),
+            )
+
         retrieval_query, prepared_task = self._prepare_for_retrieval(
             question,
             history,
@@ -461,6 +542,23 @@ class RagService:
         )
         if cancel_event and cancel_event.is_set():
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
+
+        if self._should_translate(task, prepared_task):
+            prompt = build_translation_prompt(
+                self.config.repo_root,
+                question=question,
+                history=history,
+                template_name=self.template_name,
+            )
+            log_translation_task(question)
+
+            def _translation_stream() -> Iterator[str]:
+                yield from self._generate_answer_text_stream(
+                    prompt,
+                    cancel_event=cancel_event,
+                )
+
+            return AnswerStreamResult(citations=[], text_chunks=_translation_stream())
 
         retrieval = self.engine.retrieve(
             retrieval_query,

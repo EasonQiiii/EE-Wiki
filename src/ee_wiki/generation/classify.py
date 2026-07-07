@@ -21,6 +21,7 @@ VALID_TASKS: frozenset[str] = frozenset({
     "debug",
     "fa",
     "design_review",
+    "translate",
 })
 
 MAX_CLASSIFY_TOKENS = 16
