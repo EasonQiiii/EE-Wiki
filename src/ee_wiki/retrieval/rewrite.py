@@ -81,6 +81,44 @@ def needs_rewrite(question: str, history: list[ConversationTurn]) -> bool:
     return False
 
 
+def needs_answer_history(
+    question: str,
+    history: list[ConversationTurn],
+    *,
+    task: str | None = None,
+    prepared_task: str | None = None,
+    retrieval_query: str | None = None,
+) -> bool:
+    """Return whether prior turns should appear in the answer-generation prompt.
+
+    Unrelated new questions in the same Open WebUI chat should not inherit
+    conversation context. History is included when prepare/classify signals
+    a follow-up (``translate`` task or rewritten retrieval query) or when
+    cheap rewrite heuristics indicate the question depends on prior turns.
+
+    Args:
+        question: Current user question.
+        history: Prior conversation turns.
+        task: Resolved prompt task from caller or post-retrieval classification.
+        prepared_task: Task label from merged prepare, if any.
+        retrieval_query: Retrieval query after prepare/rewrite, if any.
+
+    Returns:
+        True when conversation history should be injected into answer prompts.
+    """
+    if not history:
+        return False
+
+    effective_task = task if task is not None else prepared_task
+    if effective_task == "translate":
+        return True
+
+    if retrieval_query is not None and retrieval_query.strip() != question.strip():
+        return True
+
+    return needs_rewrite(question, history)
+
+
 def format_history(history: list[ConversationTurn], max_turns: int = MAX_HISTORY_TURNS) -> str:
     """Format conversation history for the rewrite prompt.
 

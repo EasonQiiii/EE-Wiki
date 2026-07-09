@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 from ee_wiki.retrieval.rewrite import (
     ConversationTurn,
     format_history,
+    needs_answer_history,
     needs_rewrite,
     rewrite_query,
 )
@@ -57,6 +58,49 @@ class TestNeedsRewrite:
             ConversationTurn(role="assistant", content="USB uses a switch IC."),
         ]
         assert needs_rewrite("继续展开说说", history) is True
+
+
+class TestNeedsAnswerHistory:
+    """Tests for when conversation history should reach answer prompts."""
+
+    def test_unrelated_long_question_returns_false(self) -> None:
+        history = [
+            ConversationTurn(role="user", content="ipad快速放电指令"),
+            ConversationTurn(role="assistant", content="方案 A：OSDBatteryTester [1]"),
+        ]
+        question = "What is the maximum input voltage for TPS2514A on Logan P1?"
+        assert needs_answer_history(question, history) is False
+
+    def test_prepared_translate_task_returns_true(self) -> None:
+        history = [
+            ConversationTurn(role="user", content="ipad快速放电指令"),
+            ConversationTurn(role="assistant", content="方案 A"),
+        ]
+        question = "Please render the previous answer in English for the team."
+        assert needs_answer_history(
+            question,
+            history,
+            prepared_task="translate",
+        ) is True
+
+    def test_rewritten_retrieval_query_returns_true(self) -> None:
+        history = [
+            ConversationTurn(role="user", content="Tell me about TPS2514A."),
+            ConversationTurn(role="assistant", content="TPS2514A is a USB switch."),
+        ]
+        question = "它的EN接在哪？"
+        assert needs_answer_history(
+            question,
+            history,
+            retrieval_query="Logan P1 TPS2514A EN pin connection",
+        ) is True
+
+    def test_short_follow_up_uses_rewrite_heuristic(self) -> None:
+        history = [
+            ConversationTurn(role="user", content="ipad快速放电指令"),
+            ConversationTurn(role="assistant", content="方案 A"),
+        ]
+        assert needs_answer_history("用英文", history) is True
 
 
 class TestFormatHistory:

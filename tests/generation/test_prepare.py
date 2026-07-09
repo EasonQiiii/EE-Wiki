@@ -120,6 +120,30 @@ class TestPrepareQuery:
         llm.generate.assert_called_once()
         assert llm.generate.call_args.kwargs["max_new_tokens"] == PREPARE_MAX_TOKENS
 
+    def test_prepare_includes_history_for_semantic_classification(self, repo_root: Path) -> None:
+        llm = MagicMock()
+        captured: dict[str, str] = {}
+
+        def _fake_generate(prompt, max_new_tokens=PREPARE_MAX_TOKENS, cancel_event=None):
+            captured["prompt"] = prompt
+            return "QUERY: TPS2514A max input voltage\nTASK: wiki"
+
+        llm.generate_stream = None
+        llm.generate.side_effect = _fake_generate
+
+        history = [
+            ConversationTurn(role="user", content="ipad快速放电指令"),
+            ConversationTurn(role="assistant", content="方案 A"),
+        ]
+        prepare_query(
+            "What is the maximum input voltage for TPS2514A on Logan P1?",
+            history,
+            llm=llm,
+            repo_root=repo_root,
+        )
+        assert "方案 A" in captured["prompt"]
+        assert "(none)" not in captured["prompt"]
+
     def test_streaming_llm(self, repo_root: Path) -> None:
         llm = MagicMock()
 

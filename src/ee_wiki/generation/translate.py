@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ee_wiki.common.logging import get_logger
-from ee_wiki.generation.context import format_history_block
+from ee_wiki.generation.context import resolve_history_for_prompt
 from ee_wiki.generation.templates.loader import load_template, render_template
 from ee_wiki.retrieval.rewrite import ConversationTurn
 
@@ -50,7 +50,7 @@ def build_translation_prompt(
         context="",
         question=question,
         scope_rules="",
-        history=format_history_block(history),
+        history=resolve_history_for_prompt(question, history, task=TRANSLATE_TASK),
     )
 
 

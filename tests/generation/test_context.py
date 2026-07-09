@@ -7,6 +7,7 @@ from ee_wiki.generation.context import (
     format_context_blocks,
     format_history_block,
     knowledge_scope_tier,
+    resolve_history_for_prompt,
 )
 from ee_wiki.retrieval.hybrid.engine import HybridChunk
 from ee_wiki.retrieval.rewrite import ConversationTurn
@@ -82,6 +83,40 @@ def test_format_context_blocks_includes_heading_path() -> None:
     rendered = format_context_blocks(chunks)
     assert "section=iPad 工程操作手册 › 9. 快速放电方案 › 9.1 方案 A（基础）" in rendered
     assert "diagstool hwmisc" in rendered
+
+
+def test_resolve_history_for_prompt_omits_unrelated_turns() -> None:
+    history = [
+        ConversationTurn(role="user", content="topic A"),
+        ConversationTurn(role="assistant", content="answer A"),
+    ]
+    rendered = resolve_history_for_prompt(
+        "What is the maximum voltage for TPS2514A on Logan P1?",
+        history,
+    )
+    assert rendered == "(none)"
+
+
+def test_resolve_history_for_prompt_keeps_semantic_translate_follow_up() -> None:
+    history = [
+        ConversationTurn(role="user", content="topic A"),
+        ConversationTurn(role="assistant", content="answer A"),
+    ]
+    rendered = resolve_history_for_prompt(
+        "Please render the previous answer in English for the team.",
+        history,
+        prepared_task="translate",
+    )
+    assert "answer A" in rendered
+
+
+def test_resolve_history_for_prompt_keeps_short_follow_up_turns() -> None:
+    history = [
+        ConversationTurn(role="user", content="topic A"),
+        ConversationTurn(role="assistant", content="answer A"),
+    ]
+    rendered = resolve_history_for_prompt("用英文", history)
+    assert "answer A" in rendered
 
 
 def test_format_history_block_empty_returns_placeholder() -> None:

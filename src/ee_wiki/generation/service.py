@@ -11,7 +11,7 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.common.types import Citation, RagAnswer
 from ee_wiki.generation.citations import build_enriched_citations
 from ee_wiki.generation.classify import classify_task
-from ee_wiki.generation.context import format_context_blocks, format_history_block
+from ee_wiki.generation.context import format_context_blocks, resolve_history_for_prompt
 from ee_wiki.generation.inline_images import build_image_block
 from ee_wiki.generation.llm.factory import build_llm_backend
 from ee_wiki.generation.prepare import prepare_query, should_prepare_query
@@ -263,6 +263,9 @@ class RagService:
         self,
         question: str,
         history: list[ConversationTurn] | None = None,
+        *,
+        prepared_task: str | None = None,
+        retrieval_query: str | None = None,
     ) -> str:
         """Render the assistant-meta prompt without retrieval context."""
         assistant_task = self.config.generation.assistant_task
@@ -271,7 +274,12 @@ class RagService:
             template,
             role=self._load_assistant_role(),
             question=question,
-            history=format_history_block(history),
+            history=resolve_history_for_prompt(
+                question,
+                history,
+                prepared_task=prepared_task,
+                retrieval_query=retrieval_query,
+            ),
         )
 
     def _finalize_answer(
@@ -320,10 +328,17 @@ class RagService:
         question: str,
         *,
         history: list[ConversationTurn] | None = None,
+        prepared_task: str | None = None,
+        retrieval_query: str | None = None,
         cancel_event: threading.Event | None = None,
     ) -> RagAnswer:
         """Answer from the assistant role prompt when the KB has no evidence."""
-        prompt = self._build_assistant_prompt(question, history)
+        prompt = self._build_assistant_prompt(
+            question,
+            history,
+            prepared_task=prepared_task,
+            retrieval_query=retrieval_query,
+        )
         size = prompt_size_fields(prompt)
         logger.info(
             "Assistant-meta answer (prompt_chars=%d, prompt_tokens_est=%d)",
@@ -435,7 +450,13 @@ class RagService:
             return RagAnswer(answer="", citations=[], insufficient_context=False)
 
         if self._should_use_assistant_fallback(task, retrieval):
-            return self._answer_assistant_meta(question, history=history, cancel_event=cancel_event)
+            return self._answer_assistant_meta(
+                question,
+                history=history,
+                prepared_task=prepared_task,
+                retrieval_query=retrieval_query,
+                cancel_event=cancel_event,
+            )
 
         chunks = retrieval.chunks
         if not chunks:
@@ -459,7 +480,13 @@ class RagService:
             context=context,
             question=question,
             scope_rules=scope_rules,
-            history=format_history_block(history),
+            history=resolve_history_for_prompt(
+                question,
+                history,
+                task=resolved_task,
+                prepared_task=prepared_task,
+                retrieval_query=retrieval_query,
+            ),
         )
         size = prompt_size_fields(prompt)
         logger.info(
@@ -571,7 +598,12 @@ class RagService:
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
 
         if self._should_use_assistant_fallback(task, retrieval):
-            prompt = self._build_assistant_prompt(question, history)
+            prompt = self._build_assistant_prompt(
+                question,
+                history,
+                prepared_task=prepared_task,
+                retrieval_query=retrieval_query,
+            )
 
             def _assistant_stream() -> Iterator[str]:
                 yield from self._generate_answer_text_stream(
@@ -607,7 +639,13 @@ class RagService:
             context=context,
             question=question,
             scope_rules=scope_rules,
-            history=format_history_block(history),
+            history=resolve_history_for_prompt(
+                question,
+                history,
+                task=resolved_task,
+                prepared_task=prepared_task,
+                retrieval_query=retrieval_query,
+            ),
         )
         size = prompt_size_fields(prompt)
         logger.info(

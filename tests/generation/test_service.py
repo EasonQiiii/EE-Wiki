@@ -232,6 +232,37 @@ def test_strong_retrieval_prevents_assistant_fallback(rag_service, app_config) -
     assert len(result.citations) == 1
 
 
+def test_answer_omits_history_for_unrelated_question_in_same_session(rag_service, app_config) -> None:
+    rag_service.config = replace(
+        app_config,
+        generation=replace(app_config.generation, assistant_fallback=False, query_rewrite=False),
+    )
+    chunk = HybridChunk(
+        chunk_id="note__power",
+        content="VBAT connects to PMIC.",
+        metadata={"project": "logan", "build": "p1", "document_type": "engineering_note"},
+        citation={"source_file": "data/raw/logan/p1/note/note.md", "chunk_id": "note__power"},
+    )
+    rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[chunk], top_rerank_score=1.0)
+
+    captured: dict[str, str] = {}
+
+    def _fake_stream(prompt: str, cancel_event=None):
+        captured["prompt"] = prompt
+        yield "VBAT answer [1]."
+
+    rag_service.llm.generate_stream = _fake_stream
+
+    history = [
+        ConversationTurn(role="user", content="ipad快速放电指令"),
+        ConversationTurn(role="assistant", content="方案 A：OSDBatteryTester StateOfCharge [1]"),
+    ]
+    question = "What is the maximum input voltage for TPS2514A on Logan P1?"
+    rag_service.answer(question, history=history)
+    assert "方案 A：OSDBatteryTester StateOfCharge [1]" not in captured["prompt"]
+    assert question in captured["prompt"]
+
+
 def test_answer_includes_history_in_generation_prompt(rag_service, app_config) -> None:
     """Follow-up turns must be visible to the LLM, not only to query rewrite."""
     rag_service.config = replace(
