@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ee_wiki.common.types import Citation
 from ee_wiki.retrieval.hybrid.engine import HybridChunk
-from ee_wiki.retrieval.rewrite import ConversationTurn
+from ee_wiki.retrieval.rewrite import ConversationTurn, needs_answer_history
 
 ENTERPRISE_PROJECT = "global"
 PROJECT_SHARED_BUILD = "common"
@@ -57,6 +57,37 @@ def format_context_blocks(chunks: list[HybridChunk]) -> str:
             header = f"{header} section={chunk.heading_path}"
         blocks.append(f"{header}\n{chunk.content.strip()}")
     return "\n\n".join(blocks)
+
+
+def resolve_history_for_prompt(
+    question: str,
+    history: list[ConversationTurn] | None,
+    *,
+    task: str | None = None,
+    prepared_task: str | None = None,
+    retrieval_query: str | None = None,
+) -> str:
+    """Render conversation history only when the question depends on prior turns.
+
+    Args:
+        question: Current user question.
+        history: Prior conversation turns, if any.
+        task: Resolved prompt task label, if known.
+        prepared_task: Task label from merged prepare, if any.
+        retrieval_query: Retrieval query after prepare/rewrite, if any.
+
+    Returns:
+        Formatted history block, or ``(none)`` when history should be omitted.
+    """
+    if history and needs_answer_history(
+        question,
+        history,
+        task=task,
+        prepared_task=prepared_task,
+        retrieval_query=retrieval_query,
+    ):
+        return format_history_block(history)
+    return format_history_block(None)
 
 
 def format_history_block(
