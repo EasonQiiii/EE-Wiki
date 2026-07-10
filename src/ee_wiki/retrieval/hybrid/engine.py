@@ -20,12 +20,61 @@ from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
 from ee_wiki.retrieval.metadata_boost import metadata_keyword_boost
 from ee_wiki.retrieval.query_boost import query_boost_tokens
 from ee_wiki.retrieval.query_expand import expand_hw_query
-from ee_wiki.retrieval.query_intent import effective_document_type
+from ee_wiki.retrieval.query_intent import effective_document_type, is_board_interface_pin_query
 from ee_wiki.retrieval.rerank_excerpt import query_focused_excerpt
+from ee_wiki.retrieval.scope_catalog import ScopeCatalog
 from ee_wiki.retrieval.section_expand import build_section_index, expand_retrieved_sections
 from ee_wiki.retrieval.tokenizer import tokenize_hw_text
 
 logger = get_logger(__name__)
+
+
+def _is_build_schematic_chunk(
+    chunk: HybridChunk,
+    *,
+    target_project: str | None,
+    target_build: str | None,
+    enterprise_project: str,
+    project_shared_build: str,
+) -> bool:
+    """Return whether ``chunk`` is a build-specific schematic in scope."""
+    if chunk.metadata.get("document_type") != "schematic":
+        return False
+    project = chunk.metadata.get("project")
+    build = chunk.metadata.get("build")
+    if not project or not build:
+        return False
+    if project == enterprise_project or build == project_shared_build:
+        return False
+    if target_project and project != target_project:
+        return False
+    if target_build and build != target_build:
+        return False
+    return True
+
+
+def _document_type_rank(
+    chunk: HybridChunk,
+    *,
+    board_pin_query: bool,
+    enterprise_project: str,
+    project_shared_build: str,
+) -> int:
+    """Lower is better: prefer build schematics over global datasheets for pin queries."""
+    if not board_pin_query:
+        return 1
+    doc_type = chunk.metadata.get("document_type")
+    project = chunk.metadata.get("project")
+    build = chunk.metadata.get("build")
+    if (
+        doc_type == "schematic"
+        and project != enterprise_project
+        and build != project_shared_build
+    ):
+        return 0
+    if doc_type == "datasheet" and project == enterprise_project:
+        return 2
+    return 1
 
 
 @dataclass
@@ -78,6 +127,19 @@ class HybridRagEngine:
     _device: str | None = field(default=None, repr=False)
     _model_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _section_index: dict[str, list[HybridChunk]] = field(default_factory=dict, repr=False)
+    _scope_catalog: ScopeCatalog | None = field(default=None, repr=False)
+
+    def get_scope_catalog(self) -> ScopeCatalog:
+        """Return cached product/revision catalog derived from the loaded index."""
+        if self._scope_catalog is not None:
+            return self._scope_catalog
+        if not self.knowledge_base:
+            self.load_index()
+        self._scope_catalog = ScopeCatalog.from_chunk_metadata(
+            self.knowledge_base,
+            self.config.data_layout,
+        )
+        return self._scope_catalog
 
     def __post_init__(self) -> None:
         self._device = self._detect_device()
@@ -134,6 +196,7 @@ class HybridRagEngine:
         }
         self.bm25 = BM25Okapi(bm25_corpus) if bm25_corpus else None
         self._section_index = build_section_index(self.knowledge_base)
+        self._scope_catalog = None
         logger.info("Hybrid index loaded with %d chunk(s)", len(self.knowledge_base))
 
     def load_index(self) -> None:
@@ -187,13 +250,66 @@ class HybridRagEngine:
             if chunk.metadata.get("document_type") == document_type
         ]
 
+    def _recall_build_schematic_chunks(
+        self,
+        filtered: list[HybridChunk],
+        search_query: str,
+        *,
+        target_project: str | None,
+        target_build: str | None,
+        limit: int,
+    ) -> list[HybridChunk]:
+        """Add build-schematic candidates for board interface pin queries."""
+        if not is_board_interface_pin_query(search_query) or not target_project:
+            return []
+        layout = self.config.data_layout
+        candidates = [
+            chunk
+            for chunk in filtered
+            if _is_build_schematic_chunk(
+                chunk,
+                target_project=target_project,
+                target_build=target_build,
+                enterprise_project=layout.enterprise_project,
+                project_shared_build=layout.project_shared_build,
+            )
+        ]
+        if not candidates or self.bm25 is None:
+            return []
+
+        query_tokens = tokenize_hw_text(search_query)
+        all_scores = self.bm25.get_scores(query_tokens)
+        scored: list[tuple[float, HybridChunk]] = []
+        for chunk in candidates:
+            position = self._chunk_positions.get(chunk.chunk_id)
+            if position is None:
+                continue
+            scored.append((float(all_scores[position]), chunk))
+        return [
+            item[1]
+            for item in sorted(scored, key=lambda item: item[0], reverse=True)[:limit]
+        ]
+
     def _filter_by_scope(
         self,
         *,
         target_project: str | None,
         target_build: str | None,
         document_type: str | None = None,
+        scope_ranks_override: dict[tuple[str, str], int] | None = None,
     ) -> tuple[list[HybridChunk], dict[tuple[str, str], int]]:
+        if scope_ranks_override:
+            scope_set = set(scope_ranks_override)
+            filtered = [
+                chunk
+                for chunk in self.knowledge_base
+                if (chunk.metadata.get("project"), chunk.metadata.get("build")) in scope_set
+            ]
+            return (
+                self._apply_document_type_filter(filtered, document_type),
+                scope_ranks_override,
+            )
+
         if not target_project:
             filtered = self.knowledge_base
             return self._apply_document_type_filter(filtered, document_type), {}
@@ -234,6 +350,7 @@ class HybridRagEngine:
         top_k_dense: int | None = None,
         top_k_sparse: int | None = None,
         top_k_final: int | None = None,
+        scope_ranks_override: dict[tuple[str, str], int] | None = None,
     ) -> RetrievalResult:
         """Run scope filter → dense + sparse recall → rerank → scope priority.
 
@@ -245,6 +362,7 @@ class HybridRagEngine:
             top_k_dense: Dense recall count override.
             top_k_sparse: Sparse recall count override.
             top_k_final: Final reranked result count override.
+            scope_ranks_override: Optional precomputed scope rank map for multi-pair filters.
 
         Returns:
             Ranked chunks with citation metadata and top rerank score.
@@ -267,6 +385,7 @@ class HybridRagEngine:
             target_project=target_project,
             target_build=target_build,
             document_type=resolved_document_type,
+            scope_ranks_override=scope_ranks_override,
         )
         if not filtered:
             return RetrievalResult(chunks=[], top_rerank_score=None)
@@ -309,6 +428,26 @@ class HybridRagEngine:
             if chunk.chunk_id not in seen:
                 seen.add(chunk.chunk_id)
                 combined.append(chunk)
+
+        board_pin_query = is_board_interface_pin_query(search_query)
+        if board_pin_query and target_project:
+            schematic_selected = self._recall_build_schematic_chunks(
+                filtered,
+                search_query,
+                target_project=target_project,
+                target_build=target_build,
+                limit=dense_k,
+            )
+            for chunk in schematic_selected:
+                if chunk.chunk_id not in seen:
+                    seen.add(chunk.chunk_id)
+                    combined.append(chunk)
+            if schematic_selected:
+                logger.info(
+                    "Added %d build-schematic chunk(s) for board interface pin query",
+                    len(schematic_selected),
+                )
+
         if not combined:
             return RetrievalResult(chunks=[], top_rerank_score=None)
 
@@ -348,6 +487,7 @@ class HybridRagEngine:
             return scope_ranks.get(pair, 0) if scope_ranks else 0
 
         boost_tokens = query_boost_tokens(query)
+        layout = self.config.data_layout
 
         def keyword_boost(chunk: HybridChunk) -> int:
             if not boost_tokens:
@@ -363,6 +503,12 @@ class HybridRagEngine:
                 zip(logits, combined),
                 key=lambda item: (
                     scope_rank(item[1]),
+                    _document_type_rank(
+                        item[1],
+                        board_pin_query=board_pin_query,
+                        enterprise_project=layout.enterprise_project,
+                        project_shared_build=layout.project_shared_build,
+                    ),
                     -keyword_boost(item[1]),
                     -float(item[0]),
                 ),

@@ -17,7 +17,13 @@ from ee_wiki.ingestion.parsers.iwork import (
     parse_keynote,
     parse_numbers,
 )
-from ee_wiki.ingestion.parsers.iwork.export import require_darwin
+from ee_wiki.ingestion.parsers.iwork.export import (
+    _OPEN_WAIT_LOOPS,
+    _export_opened_iwork_document,
+    _maybe_clear_quarantine,
+    _open_in_app,
+    require_darwin,
+)
 from ee_wiki.ingestion.pipeline import IngestionError, ingest_file
 
 
@@ -136,6 +142,58 @@ def test_require_darwin_raises_off_mac(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("ee_wiki.ingestion.parsers.iwork.export.sys.platform", "linux")
     with pytest.raises(IworkParserError, match="macOS"):
         require_darwin()
+
+
+def test_open_wait_loops_is_one_minute() -> None:
+    assert _OPEN_WAIT_LOOPS == 120
+
+
+def test_maybe_clear_quarantine_ignores_missing_attribute(tmp_path: Path) -> None:
+    source = tmp_path / "slides.key"
+    source.write_bytes(b"fake-key")
+    _maybe_clear_quarantine(source)
+
+
+def test_open_in_app_uses_launchservices(tmp_path: Path) -> None:
+    source = tmp_path / "slides.key"
+    source.write_bytes(b"fake-key")
+    with patch("ee_wiki.ingestion.parsers.iwork.export.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        _open_in_app("Keynote", source)
+    command = mock_run.call_args.args[0]
+    assert command[:3] == ["open", "-a", "Keynote"]
+    assert command[3] == str(source.resolve())
+
+
+def test_export_opened_iwork_document_orchestrates_open_then_osascript(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "slides.key"
+    source.write_bytes(b"fake-key")
+    dest = tmp_path / "slides.pdf"
+    with (
+        patch("ee_wiki.ingestion.parsers.iwork.export._maybe_clear_quarantine") as mock_clear,
+        patch(
+            "ee_wiki.ingestion.parsers.iwork.export._iwork_document_count",
+            return_value=0,
+        ) as mock_count,
+        patch("ee_wiki.ingestion.parsers.iwork.export._open_in_app") as mock_open,
+        patch("ee_wiki.ingestion.parsers.iwork.export._run_osascript") as mock_osascript,
+    ):
+        _export_opened_iwork_document(
+            app_name="Keynote",
+            script="script",
+            source=source,
+            dest=dest,
+            quit_after=False,
+            timeout=600,
+        )
+    mock_clear.assert_called_once_with(source.resolve())
+    mock_count.assert_called_once_with("Keynote")
+    mock_open.assert_called_once_with("Keynote", source.resolve())
+    mock_osascript.assert_called_once()
+    assert mock_osascript.call_args.args[1] == str(source.resolve())
+    assert mock_osascript.call_args.args[5] == str(_OPEN_WAIT_LOOPS)
 
 
 def test_ingest_file_key_mocked(iwork_config: AppConfig, tmp_path: Path) -> None:

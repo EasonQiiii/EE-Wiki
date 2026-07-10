@@ -15,6 +15,7 @@ from ee_wiki.generation.prepare import (
     should_prepare_query,
 )
 from ee_wiki.retrieval.rewrite import ConversationTurn
+from ee_wiki.retrieval.scope_catalog import ScopeCatalog
 
 
 class TestParsePrepareOutput:
@@ -27,6 +28,8 @@ class TestParsePrepareOutput:
             question="它呢？",
             default_task="wiki",
             classify=True,
+            catalog=None,
+            scope_inference=False,
         )
         assert result == PreparedQuery(
             retrieval_query="RMII interface pinout",
@@ -39,6 +42,8 @@ class TestParsePrepareOutput:
             question="UART不通",
             default_task="wiki",
             classify=True,
+            catalog=None,
+            scope_inference=False,
         )
         assert result.retrieval_query == "UART wiring"
         assert result.task == "wiki"
@@ -49,6 +54,8 @@ class TestParsePrepareOutput:
             question="UART不通",
             default_task="wiki",
             classify=False,
+            catalog=None,
+            scope_inference=False,
         )
         assert result.task is None
 
@@ -96,6 +103,81 @@ class TestShouldPrepareQuery:
             caller_task=None,
         )
 
+    def test_scope_inference_runs_on_first_message(self) -> None:
+        assert should_prepare_query(
+            "Logan p1 LCD pins",
+            [],
+            query_rewrite=False,
+            task_classification=False,
+            caller_task=None,
+            scope_inference=True,
+            scope_inference_mode="merged",
+        )
+
+    def test_scope_inference_skipped_when_api_scope_set(self) -> None:
+        assert not should_prepare_query(
+            "LCD pins",
+            [],
+            query_rewrite=False,
+            task_classification=False,
+            caller_task=None,
+            scope_inference=True,
+            caller_has_scope=True,
+        )
+
+
+class TestParsePrepareScope:
+    """Parsing PRODUCT/REVISION/LAYER lines."""
+
+    @pytest.fixture()
+    def catalog(self, data_layout) -> ScopeCatalog:
+        return ScopeCatalog(
+            products={"logan": frozenset({"p1", "p2"})},
+            enterprise_segment=data_layout.enterprise_project,
+            project_shared_segment=data_layout.project_shared_build,
+        )
+
+    def test_parses_product_revision_layer(self, catalog: ScopeCatalog) -> None:
+        raw = (
+            "PRODUCT: logan\n"
+            "REVISION: p1\n"
+            "LAYER: build\n"
+            "QUERY: LCD touch pins\n"
+            "TASK: wiki"
+        )
+        result = _parse_prepare_output(
+            raw,
+            question="Logan p1 lcd的pin有哪些",
+            default_task="wiki",
+            classify=True,
+            catalog=catalog,
+            scope_inference=True,
+        )
+        assert result.product == "logan"
+        assert result.revision == "p1"
+        assert result.layer == "build"
+        assert result.retrieval_query == "LCD touch pins"
+
+    def test_rejects_global_as_product(self, catalog: ScopeCatalog) -> None:
+        raw = (
+            "PRODUCT: global\n"
+            "REVISION: none\n"
+            "LAYER: enterprise\n"
+            "QUERY: CH340 pins\n"
+            "TASK: wiki"
+        )
+        result = _parse_prepare_output(
+            raw,
+            question="global CH340 pins",
+            default_task="wiki",
+            classify=True,
+            catalog=catalog,
+            scope_inference=True,
+        )
+        assert result.product is None
+        assert result.revision is None
+        assert result.layer == "enterprise"
+
 
 class TestPrepareQuery:
     """End-to-end merged prepare with mocked LLM."""
@@ -142,7 +224,7 @@ class TestPrepareQuery:
             repo_root=repo_root,
         )
         assert "方案 A" in captured["prompt"]
-        assert "(none)" not in captured["prompt"]
+        assert "TPS2514A" in captured["prompt"]
 
     def test_streaming_llm(self, repo_root: Path) -> None:
         llm = MagicMock()

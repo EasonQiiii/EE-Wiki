@@ -11,14 +11,20 @@ from ee_wiki.generation.prepare import PREPARE_MAX_TOKENS
 from ee_wiki.generation.service import INSUFFICIENT_ANSWER, RagService
 from ee_wiki.retrieval.hybrid.engine import HybridChunk, RetrievalResult
 from ee_wiki.retrieval.rewrite import ConversationTurn
+from ee_wiki.retrieval.scope_catalog import ScopeCatalog
+
+
+def _generation_config(app_config, **kwargs):
+    """Generation config for service tests with scope inference off by default."""
+    return replace(app_config.generation, scope_inference=False, **kwargs)
 
 
 @pytest.fixture
 def rag_service(app_config):
     config = replace(
         app_config,
-        generation=replace(
-            app_config.generation,
+        generation=_generation_config(
+            app_config,
             assistant_fallback=False,
             task_classification=False,
         ),
@@ -153,7 +159,7 @@ def test_stream_answer_honours_cancel_before_generation(rag_service) -> None:
 def test_answer_uses_assistant_fallback_when_no_chunks(rag_service, app_config) -> None:
     rag_service.config = replace(
         app_config,
-        generation=replace(app_config.generation, assistant_fallback=True),
+        generation=_generation_config(app_config, assistant_fallback=True),
     )
     rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[])
 
@@ -175,7 +181,7 @@ def test_stream_answer_uses_assistant_fallback_when_rerank_weak(
     """Chunks below the weak threshold are treated as no evidence."""
     rag_service.config = replace(
         app_config,
-        generation=replace(app_config.generation, assistant_fallback=True),
+        generation=_generation_config(app_config, assistant_fallback=True),
     )
     chunk = HybridChunk(
         chunk_id="note__misc",
@@ -204,7 +210,7 @@ def test_strong_retrieval_prevents_assistant_fallback(rag_service, app_config) -
     """KB evidence must win regardless of how the question is phrased."""
     rag_service.config = replace(
         app_config,
-        generation=replace(app_config.generation, assistant_fallback=True),
+        generation=_generation_config(app_config, assistant_fallback=True),
     )
     chunk = HybridChunk(
         chunk_id="ipadmanal__astris",
@@ -235,7 +241,7 @@ def test_strong_retrieval_prevents_assistant_fallback(rag_service, app_config) -
 def test_answer_omits_history_for_unrelated_question_in_same_session(rag_service, app_config) -> None:
     rag_service.config = replace(
         app_config,
-        generation=replace(app_config.generation, assistant_fallback=False, query_rewrite=False),
+        generation=_generation_config(app_config, assistant_fallback=False, query_rewrite=False),
     )
     chunk = HybridChunk(
         chunk_id="note__power",
@@ -267,7 +273,7 @@ def test_answer_includes_history_in_generation_prompt(rag_service, app_config) -
     """Follow-up turns must be visible to the LLM, not only to query rewrite."""
     rag_service.config = replace(
         app_config,
-        generation=replace(app_config.generation, assistant_fallback=False, query_rewrite=False),
+        generation=_generation_config(app_config, assistant_fallback=False, query_rewrite=False),
     )
     chunk = HybridChunk(
         chunk_id="ipadmanal__discharge",
@@ -302,7 +308,7 @@ def test_assistant_fallback_includes_history_in_prompt(rag_service, app_config) 
     """Weak retrieval on a follow-up must still expose the previous answer."""
     rag_service.config = replace(
         app_config,
-        generation=replace(app_config.generation, assistant_fallback=True, query_rewrite=False),
+        generation=_generation_config(app_config, assistant_fallback=True, query_rewrite=False),
     )
     rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[])
 
@@ -414,8 +420,8 @@ def test_task_classification_selects_debug_prompt(rag_service, app_config) -> No
     """When task=None and classification enabled, LLM output drives template."""
     rag_service.config = replace(
         app_config,
-        generation=replace(
-            app_config.generation,
+        generation=_generation_config(
+            app_config,
             assistant_fallback=False,
             task_classification=True,
         ),
@@ -449,8 +455,8 @@ def test_explicit_task_skips_classification(rag_service, app_config) -> None:
     """When task is explicitly provided, no classification call happens."""
     rag_service.config = replace(
         app_config,
-        generation=replace(
-            app_config.generation,
+        generation=_generation_config(
+            app_config,
             assistant_fallback=False,
             task_classification=True,
         ),
@@ -479,8 +485,8 @@ def test_classification_disabled_uses_default(rag_service, app_config) -> None:
     """When task_classification is False, no classification call happens."""
     rag_service.config = replace(
         app_config,
-        generation=replace(
-            app_config.generation,
+        generation=_generation_config(
+            app_config,
             assistant_fallback=False,
             task_classification=False,
         ),
@@ -505,12 +511,65 @@ def test_classification_disabled_uses_default(rag_service, app_config) -> None:
     assert call_count["prepare"] == 0
 
 
-def test_weak_retrieval_classifies_before_retrieval_not_after(rag_service, app_config) -> None:
-    """Separate prepare mode classifies once before retrieval; assistant fallback skips a second pass."""
+def test_scope_inference_resolves_logan_p1_from_question(
+    rag_service, app_config, data_layout,
+) -> None:
+    catalog = ScopeCatalog(
+        products={"logan": frozenset({"p1", "p2"})},
+        enterprise_segment=data_layout.enterprise_project,
+        project_shared_segment=data_layout.project_shared_build,
+    )
     rag_service.config = replace(
         app_config,
         generation=replace(
             app_config.generation,
+            assistant_fallback=False,
+            task_classification=False,
+            scope_inference=True,
+            scope_inference_mode="rules",
+        ),
+    )
+    rag_service.engine.get_scope_catalog.return_value = catalog
+    chunk = HybridChunk(
+        chunk_id="Explorer STM32F4_V2.2_SCH__p002",
+        content="T_CS T_MOSI T_MISO T_CLK LCD touch pins",
+        metadata={
+            "project": "logan",
+            "build": "p1",
+            "document_type": "schematic",
+            "title": "Explorer STM32F4_V2.2_SCH",
+        },
+        citation={
+            "source_file": "data/raw/logan/p1/sch/Explorer STM32F4_V2.2_SCH.pdf",
+            "chunk_id": "Explorer STM32F4_V2.2_SCH__p002",
+        },
+    )
+    rag_service.engine.retrieve.return_value = RetrievalResult(
+        chunks=[chunk],
+        top_rerank_score=1.0,
+    )
+
+    def _fake_stream(prompt: str, cancel_event=None):
+        yield "LCD pins include T_CS [1]."
+
+    rag_service.llm.generate_stream = _fake_stream
+
+    rag_service.answer("Logan p1 lcd的pin有哪些")
+    rag_service.engine.retrieve.assert_called_once()
+    call_args = rag_service.engine.retrieve.call_args
+    assert call_args.kwargs["target_project"] == "logan"
+    assert call_args.kwargs["target_build"] == "p1"
+    assert call_args.kwargs["scope_ranks_override"] is not None
+    assert "logan" not in call_args.args[0].lower()
+    assert "p1" not in call_args.args[0].lower()
+
+
+def test_weak_retrieval_classifies_before_retrieval_not_after(rag_service, app_config) -> None:
+    """Separate prepare mode classifies once before retrieval; assistant fallback skips a second pass."""
+    rag_service.config = replace(
+        app_config,
+        generation=_generation_config(
+            app_config,
             assistant_fallback=True,
             task_classification=True,
             query_prepare="separate",

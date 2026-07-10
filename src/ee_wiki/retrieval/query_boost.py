@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import re
 
+from ee_wiki.retrieval.query_intent import is_board_interface_pin_query
 from ee_wiki.retrieval.tokenizer import tokenize_hw_text
 
 _MIN_TOKEN_LEN = 2
-_SKIP_TOKENS = frozenset({"的", "有", "哪", "几", "组", "是", "在", "和", "与", "及", "pin", "pins", "signal", "signals"})
+_SKIP_TOKENS = frozenset({
+    "的", "有", "哪", "几", "组", "是", "在", "和", "与", "及",
+    "pin", "pins", "signal", "signals", "哪些", "什么",
+})
+
+_LCD_INTERFACE_NETS = (
+    "T_CS", "T_MOSI", "T_MISO", "T_SCK", "T_PEN", "LCD_BL", "PITFTLC",
+)
 
 
 def query_boost_tokens(query: str) -> list[str]:
@@ -34,4 +42,18 @@ def query_boost_tokens(query: str) -> list[str]:
             continue
         seen.add(key)
         ordered.append(cleaned)
+
+    if is_board_interface_pin_query(query):
+        if re.search(r"lcd|display|touch|触摸屏|屏幕", query, re.IGNORECASE):
+            for net in _LCD_INTERFACE_NETS:
+                key = net.casefold()
+                if key not in seen:
+                    seen.add(key)
+                    ordered.append(net)
+        if re.search(r"引脚|脚", query):
+            key = "引脚"
+            if key not in seen:
+                seen.add(key)
+                ordered.append(key)
+
     return ordered

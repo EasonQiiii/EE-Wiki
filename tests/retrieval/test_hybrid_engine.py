@@ -173,6 +173,88 @@ def test_retrieve_pin_query_does_not_auto_filter_document_type(engine_with_index
     assert results.chunks[0].chunk_id == "note__power"
 
 
+def test_retrieve_lcd_pin_query_prefers_build_schematic(engine_with_index) -> None:
+    lcd_chunk = _make_chunk(
+        "sch__lcd",
+        "LCD module uses T_CS T_MOSI T_MISO T_SCK T_PEN touch pins.",
+        document_type="schematic",
+    )
+    embeddings = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.5, 0.5, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.2, 0.8, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    chunks = [
+        _make_chunk("note__power", "VBAT power rail connects to PMIC."),
+        _make_chunk(
+            "sch__rmii",
+            "RMII interface connects ETH_MDIO and PHY.",
+            document_type="schematic",
+        ),
+        _make_chunk("common__sop", "Bring-up SOP for UART debug.", build="common"),
+        _make_chunk(
+            "global__datasheet",
+            "TPS62840 datasheet excerpt.",
+            project="global",
+            build="global",
+            document_type="datasheet",
+        ),
+        lcd_chunk,
+    ]
+    engine_with_index.knowledge_base = [
+        _hybrid_from_chunk(chunk, embeddings[index])
+        for index, chunk in enumerate(chunks)
+    ]
+    engine_with_index._chunk_positions = {
+        chunk.chunk_id: index for index, chunk in enumerate(engine_with_index.knowledge_base)
+    }
+    engine_with_index.bm25.get_scores.return_value = [0.1, 0.2, 0.3, 0.95, 0.4]
+    engine_with_index._embed_model.encode.return_value = np.array(
+        [0.0, 0.0, 1.0], dtype=np.float32
+    )
+    _mock_rerank_logits(engine_with_index._rerank_model, [0.2, 0.1, 0.3, 0.95, 0.5])
+
+    results = engine_with_index.retrieve(
+        "lcd的pin有哪些",
+        target_project="logan",
+        target_build="p1",
+        top_k_final=1,
+    )
+    assert len(results.chunks) == 1
+    assert results.chunks[0].chunk_id == "sch__lcd"
+
+
+def test_retrieve_scope_ranks_override_filters_inherit_product(
+    engine_with_index,
+) -> None:
+    scope_ranks = {
+        ("logan", "p1"): 0,
+        ("logan", "common"): 1,
+        ("global", "global"): 2,
+    }
+    engine_with_index._embed_model.encode.return_value = np.array(
+        [0.5, 0.5, 0.0], dtype=np.float32
+    )
+    _mock_rerank_logits(engine_with_index._rerank_model, [0.3, 0.2, 0.9, 0.1])
+
+    results = engine_with_index.retrieve(
+        "UART debug",
+        target_project="logan",
+        target_build=None,
+        scope_ranks_override=scope_ranks,
+        top_k_final=4,
+    )
+    chunk_ids = {chunk.chunk_id for chunk in results.chunks}
+    assert "note__power" in chunk_ids
+    assert "common__sop" in chunk_ids
+    assert "global__datasheet" in chunk_ids
+
+
 def test_retrieve_scope_rank_prefers_build_over_higher_rerank_common(
     engine_with_index,
 ) -> None:

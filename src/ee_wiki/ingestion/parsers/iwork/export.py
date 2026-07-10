@@ -14,13 +14,40 @@ logger = get_logger(__name__)
 
 _export_lock = threading.Lock()
 
+_OPEN_WAIT_LOOPS = 120  # 60 seconds at 0.5s per loop
+
 _KEYNOTE_EXPORT_SCRIPT = """on run argv
     set srcPath to item 1 of argv
     set destPath to item 2 of argv
     set quitAfter to item 3 of argv
+    set priorCount to (item 4 of argv) as integer
+    set maxWaitLoops to (item 5 of argv) as integer
+    set srcAlias to POSIX file srcPath as alias
     tell application "Keynote"
-        set docRef to open (POSIX file srcPath)
-        export docRef to (POSIX file destPath) as PDF
+        activate
+        set docRef to missing value
+        repeat with i from 1 to maxWaitLoops
+            if (count of documents) > priorCount then
+                set docRef to front document
+            end if
+            if docRef is missing value then
+                repeat with d in documents
+                    try
+                        if (file of d) is srcAlias then
+                            set docRef to d
+                            exit repeat
+                        end if
+                    end try
+                end repeat
+            end if
+            if docRef is not missing value then exit repeat
+            delay 0.5
+        end repeat
+        if docRef is missing value then ¬
+            error "Keynote document did not open in time"
+        with timeout of 1200 seconds
+            export docRef to (POSIX file destPath) as PDF
+        end timeout
         close docRef saving no
         if quitAfter is "true" then quit
     end tell
@@ -30,11 +57,31 @@ _NUMBERS_EXPORT_SCRIPT = """on run argv
     set srcPath to item 1 of argv
     set destPath to item 2 of argv
     set quitAfter to item 3 of argv
+    set priorCount to (item 4 of argv) as integer
+    set maxWaitLoops to (item 5 of argv) as integer
+    set srcAlias to POSIX file srcPath as alias
     tell application "Numbers"
-        set docRef to open (POSIX file srcPath)
-        repeat until exists document 1
+        activate
+        set docRef to missing value
+        repeat with i from 1 to maxWaitLoops
+            if (count of documents) > priorCount then
+                set docRef to front document
+            end if
+            if docRef is missing value then
+                repeat with d in documents
+                    try
+                        if (file of d) is srcAlias then
+                            set docRef to d
+                            exit repeat
+                        end if
+                    end try
+                end repeat
+            end if
+            if docRef is not missing value then exit repeat
             delay 0.5
         end repeat
+        if docRef is missing value then ¬
+            error "Numbers document did not open in time"
         with timeout of 1200 seconds
             export docRef to (POSIX file destPath) as Microsoft Excel
         end timeout
@@ -53,6 +100,89 @@ def require_darwin() -> None:
     if sys.platform != "darwin":
         raise IworkParserError(
             ".key and .numbers ingest requires macOS with Keynote and Numbers installed"
+        )
+
+
+def _maybe_clear_quarantine(source: Path) -> None:
+    """Remove the quarantine xattr when present so LaunchServices can open the file."""
+    try:
+        subprocess.run(
+            ["xattr", "-d", "com.apple.quarantine", str(source)],
+            check=False,
+            capture_output=True,
+        )
+    except OSError:
+        pass
+
+
+def _osascript_int(script: str, *, timeout: int = 30) -> int:
+    """Evaluate a short AppleScript expression that returns an integer."""
+    try:
+        completed = subprocess.run(
+            ["osascript", "-e", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    if completed.returncode != 0:
+        return 0
+    raw = (completed.stdout or "").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
+
+
+def _iwork_document_count(app_name: str) -> int:
+    """Return how many documents an iWork app currently has open."""
+    script = (
+        f'try\n'
+        f'  tell application "{app_name}"\n'
+        f'    if not running then return 0\n'
+        f'    return count of documents\n'
+        f'  end tell\n'
+        f'on error\n'
+        f'  return 0\n'
+        f'end try'
+    )
+    return _osascript_int(script)
+
+
+def _open_in_app(app_name: str, source: Path, *, timeout: int = 60) -> None:
+    """Open a document with the native iWork app via LaunchServices.
+
+    Args:
+        app_name: Application name understood by ``open -a`` (e.g. ``Keynote``).
+        source: File to open.
+        timeout: Seconds to wait for ``open`` to return.
+
+    Raises:
+        IworkParserError: If ``open`` fails or times out.
+    """
+    resolved = source.resolve()
+    logger.info("Opening %s with %s via LaunchServices", resolved.name, app_name)
+    try:
+        completed = subprocess.run(
+            ["open", "-a", app_name, str(resolved)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except OSError as exc:
+        raise IworkParserError(f"Failed to run open for {resolved.name}: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise IworkParserError(
+            f"Timed out opening {resolved.name} with {app_name}"
+        ) from exc
+
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise IworkParserError(
+            f"Failed to open {resolved.name} with {app_name}: {detail or 'unknown error'}"
         )
 
 
@@ -94,6 +224,31 @@ def _run_osascript(script: str, *argv: str, timeout: int) -> None:
         raise IworkParserError(f"osascript export failed: {detail}")
 
 
+def _export_opened_iwork_document(
+    *,
+    app_name: str,
+    script: str,
+    source: Path,
+    dest: Path,
+    quit_after: bool,
+    timeout: int,
+) -> None:
+    """Open an iWork file with LaunchServices, then export it via AppleScript."""
+    resolved = source.resolve()
+    _maybe_clear_quarantine(resolved)
+    prior_count = _iwork_document_count(app_name)
+    _open_in_app(app_name, resolved)
+    _run_osascript(
+        script,
+        str(resolved),
+        str(dest.resolve()),
+        "true" if quit_after else "false",
+        str(prior_count),
+        str(_OPEN_WAIT_LOOPS),
+        timeout=timeout,
+    )
+
+
 def export_keynote_to_pdf(
     source: Path,
     *,
@@ -117,11 +272,12 @@ def export_keynote_to_pdf(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / f"{source.stem}.pdf"
-    _run_osascript(
-        _KEYNOTE_EXPORT_SCRIPT,
-        str(source.resolve()),
-        str(dest.resolve()),
-        "true" if quit_after else "false",
+    _export_opened_iwork_document(
+        app_name="Keynote",
+        script=_KEYNOTE_EXPORT_SCRIPT,
+        source=source,
+        dest=dest,
+        quit_after=quit_after,
         timeout=timeout,
     )
     if not dest.is_file():
@@ -152,11 +308,12 @@ def export_numbers_to_xlsx(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / f"{source.stem}.xlsx"
-    _run_osascript(
-        _NUMBERS_EXPORT_SCRIPT,
-        str(source.resolve()),
-        str(dest.resolve()),
-        "true" if quit_after else "false",
+    _export_opened_iwork_document(
+        app_name="Numbers",
+        script=_NUMBERS_EXPORT_SCRIPT,
+        source=source,
+        dest=dest,
+        quit_after=quit_after,
         timeout=timeout,
     )
     if not dest.is_file():

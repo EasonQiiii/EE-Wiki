@@ -105,7 +105,15 @@ If your Open WebUI build cannot send custom fields on chat requests, use `POST /
 python scripts/ask.py "RMII 接口说明" --project logan --build p1
 ```
 
-Without `project` / `build`, retrieval searches the **entire index**; answers should list findings **per scope** and recommend specifying scope for build-level conclusions.
+Without `project` / `build`, EE-Wiki can **infer scope from the question** when `generation.scope_inference` is enabled (default: `true`). Examples:
+
+- `Logan p1 lcd的pin有哪些` → product `logan`, revision `p1`, build-layer retrieval
+- `logan common 架构` → project-wide `common` knowledge for `logan`
+- `global CH340` → enterprise `global` layer (not a product name)
+
+`global` and `common` are **knowledge layers**, not product or revision names. API `project` / `build` fields still override inferred scope when provided.
+
+When scope cannot be inferred, retrieval searches the **entire index**; answers should list findings **per scope** and recommend specifying scope for build-level conclusions.
 
 ## Troubleshooting
 

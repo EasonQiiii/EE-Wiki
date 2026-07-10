@@ -14,7 +14,7 @@ from ee_wiki.generation.classify import classify_task
 from ee_wiki.generation.context import format_context_blocks, resolve_history_for_prompt
 from ee_wiki.generation.inline_images import build_image_block
 from ee_wiki.generation.llm.factory import build_llm_backend
-from ee_wiki.generation.prepare import prepare_query, should_prepare_query
+from ee_wiki.generation.prepare import PreparedQuery, prepare_query, should_prepare_query
 from ee_wiki.generation.prompt_stats import prompt_size_fields
 from ee_wiki.generation.templates.loader import (
     load_scope_rules,
@@ -31,6 +31,8 @@ from ee_wiki.generation.translate import (
 from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.retrieval.hybrid.engine import HybridChunk, HybridRagEngine, RetrievalResult
 from ee_wiki.retrieval.rewrite import ConversationTurn, rewrite_query
+from ee_wiki.retrieval.scope_extract import InferredScope, extract_scope_rules
+from ee_wiki.retrieval.scope_resolve import merge_inferred_scope, resolve_retrieval_targets
 
 logger = get_logger(__name__)
 
@@ -96,20 +98,28 @@ class RagService:
         history: list[ConversationTurn] | None,
         caller_task: str | None,
         *,
+        caller_project: str | None = None,
+        caller_build: str | None = None,
         cancel_event: threading.Event | None = None,
-    ) -> tuple[str, str | None]:
-        """Prepare retrieval query and optional task before hybrid search.
+    ) -> PreparedQuery:
+        """Prepare retrieval query, optional scope, and task before hybrid search.
 
         Args:
             question: Current user question.
             history: Prior conversation turns.
             caller_task: Explicit task from the API caller.
+            caller_project: Explicit API project filter, if any.
+            caller_build: Explicit API build filter, if any.
             cancel_event: Cancellation signal.
 
         Returns:
-            Tuple of retrieval query and optional prepared task label.
+            Prepared retrieval query with optional scope and task fields.
         """
         gen = self.config.generation
+        caller_has_scope = bool(caller_project or caller_build)
+        scope_inference = gen.scope_inference and not caller_has_scope
+        scope_mode = gen.scope_inference_mode
+        catalog = self.engine.get_scope_catalog() if scope_inference else None
 
         if gen.query_prepare == "separate":
             retrieval_query = self._maybe_rewrite_query(
@@ -126,7 +136,7 @@ class RagService:
                     default_task=self.template_task,
                     cancel_event=cancel_event,
                 )
-            return retrieval_query, prepared_task
+            return PreparedQuery(retrieval_query=retrieval_query, task=prepared_task)
 
         if not should_prepare_query(
             question,
@@ -134,10 +144,13 @@ class RagService:
             query_rewrite=gen.query_rewrite,
             task_classification=gen.task_classification,
             caller_task=caller_task,
+            scope_inference=scope_inference,
+            scope_inference_mode=scope_mode,
+            caller_has_scope=caller_has_scope,
         ):
-            return question, None
+            return PreparedQuery(retrieval_query=question, task=None)
 
-        prepared = prepare_query(
+        return prepare_query(
             question,
             history,
             llm=self.llm,
@@ -145,11 +158,72 @@ class RagService:
             default_task=self.template_task,
             query_rewrite=gen.query_rewrite,
             task_classification=gen.task_classification,
+            scope_inference=scope_inference and scope_mode in {"llm", "merged"},
+            catalog=catalog,
             caller_task=caller_task,
             cancel_event=cancel_event,
             max_history_turns=gen.query_rewrite_max_history_turns,
         )
-        return prepared.retrieval_query, prepared.task
+
+    def _resolve_scope_for_retrieval(
+        self,
+        question: str,
+        prepared: PreparedQuery,
+        *,
+        caller_project: str | None,
+        caller_build: str | None,
+    ) -> tuple[str, str | None, str | None, dict[tuple[str, str], int] | None]:
+        """Resolve retrieval scope and the stripped query used for hybrid search."""
+        if caller_project:
+            return prepared.retrieval_query, caller_project, caller_build, None
+
+        gen = self.config.generation
+        if not gen.scope_inference:
+            return prepared.retrieval_query, None, None, None
+
+        catalog = self.engine.get_scope_catalog()
+        rules_scope: InferredScope | None = None
+        if gen.scope_inference_mode in {"rules", "merged"}:
+            rules_scope = extract_scope_rules(question, catalog)
+
+        inferred, stripped_from_rules = merge_inferred_scope(
+            rules=rules_scope,
+            prepared_product=prepared.product,
+            prepared_revision=prepared.revision,
+            prepared_layer=prepared.layer,
+            catalog=catalog,
+            stripped_from_rules=rules_scope.stripped_query if rules_scope else "",
+        )
+
+        retrieval_query = prepared.retrieval_query
+        if inferred is None:
+            return retrieval_query, None, None, None
+
+        if (
+            rules_scope is not None
+            and prepared.product is None
+            and prepared.revision is None
+            and prepared.layer is None
+            and rules_scope.stripped_query
+        ):
+            retrieval_query = rules_scope.stripped_query
+        elif stripped_from_rules and prepared.retrieval_query == question:
+            retrieval_query = stripped_from_rules
+
+        target_project, target_build, scope_ranks = resolve_retrieval_targets(
+            inferred,
+            catalog,
+            self.config.data_layout,
+        )
+        logger.info(
+            "Inferred scope product=%s revision=%s layer=%s -> target=%s/%s",
+            inferred.product,
+            inferred.revision,
+            inferred.layer,
+            target_project,
+            target_build,
+        )
+        return retrieval_query, target_project, target_build, scope_ranks or None
 
     def _resolve_task(
         self,
@@ -427,24 +501,36 @@ class RagService:
         if is_translation_task(task):
             return self._answer_translation(question, history=history, cancel_event=cancel_event)
 
-        retrieval_query, prepared_task = self._prepare_for_retrieval(
+        prepared = self._prepare_for_retrieval(
             question,
             history,
             task,
+            caller_project=target_project,
+            caller_build=target_build,
             cancel_event=cancel_event,
         )
         if cancel_event and cancel_event.is_set():
             return RagAnswer(answer="", citations=[], insufficient_context=False)
 
-        if self._should_translate(task, prepared_task):
+        if self._should_translate(task, prepared.task):
             return self._answer_translation(question, history=history, cancel_event=cancel_event)
+
+        retrieval_query, resolved_project, resolved_build, scope_ranks = (
+            self._resolve_scope_for_retrieval(
+                question,
+                prepared,
+                caller_project=target_project,
+                caller_build=target_build,
+            )
+        )
 
         retrieval = self.engine.retrieve(
             retrieval_query,
-            target_project=target_project,
-            target_build=target_build,
+            target_project=resolved_project,
+            target_build=resolved_build,
             document_type=document_type,
             top_k_final=top_k_final,
+            scope_ranks_override=scope_ranks,
         )
         if cancel_event and cancel_event.is_set():
             return RagAnswer(answer="", citations=[], insufficient_context=False)
@@ -453,7 +539,7 @@ class RagService:
             return self._answer_assistant_meta(
                 question,
                 history=history,
-                prepared_task=prepared_task,
+                prepared_task=prepared.task,
                 retrieval_query=retrieval_query,
                 cancel_event=cancel_event,
             )
@@ -466,7 +552,7 @@ class RagService:
         resolved_task = self._resolve_task(
             task,
             retrieval_query,
-            prepared_task,
+            prepared.task,
             cancel_event=cancel_event,
         )
         if cancel_event and cancel_event.is_set():
@@ -484,7 +570,7 @@ class RagService:
                 question,
                 history,
                 task=resolved_task,
-                prepared_task=prepared_task,
+                prepared_task=prepared.task,
                 retrieval_query=retrieval_query,
             ),
         )
@@ -561,16 +647,18 @@ class RagService:
                 text_chunks=_explicit_translation_stream(),
             )
 
-        retrieval_query, prepared_task = self._prepare_for_retrieval(
+        prepared = self._prepare_for_retrieval(
             question,
             history,
             task,
+            caller_project=target_project,
+            caller_build=target_build,
             cancel_event=cancel_event,
         )
         if cancel_event and cancel_event.is_set():
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
 
-        if self._should_translate(task, prepared_task):
+        if self._should_translate(task, prepared.task):
             prompt = build_translation_prompt(
                 self.config.repo_root,
                 question=question,
@@ -585,14 +673,27 @@ class RagService:
                     cancel_event=cancel_event,
                 )
 
-            return AnswerStreamResult(citations=[], text_chunks=_translation_stream())
+            return AnswerStreamResult(
+                citations=[],
+                text_chunks=_translation_stream(),
+            )
+
+        retrieval_query, resolved_project, resolved_build, scope_ranks = (
+            self._resolve_scope_for_retrieval(
+                question,
+                prepared,
+                caller_project=target_project,
+                caller_build=target_build,
+            )
+        )
 
         retrieval = self.engine.retrieve(
             retrieval_query,
-            target_project=target_project,
-            target_build=target_build,
+            target_project=resolved_project,
+            target_build=resolved_build,
             document_type=document_type,
             top_k_final=top_k_final,
+            scope_ranks_override=scope_ranks,
         )
         if cancel_event and cancel_event.is_set():
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
@@ -601,7 +702,7 @@ class RagService:
             prompt = self._build_assistant_prompt(
                 question,
                 history,
-                prepared_task=prepared_task,
+                prepared_task=prepared.task,
                 retrieval_query=retrieval_query,
             )
 
@@ -625,7 +726,7 @@ class RagService:
         resolved_task = self._resolve_task(
             task,
             retrieval_query,
-            prepared_task,
+            prepared.task,
             cancel_event=cancel_event,
         )
         if cancel_event and cancel_event.is_set():
@@ -643,7 +744,7 @@ class RagService:
                 question,
                 history,
                 task=resolved_task,
-                prepared_task=prepared_task,
+                prepared_task=prepared.task,
                 retrieval_query=retrieval_query,
             ),
         )

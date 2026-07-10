@@ -166,6 +166,8 @@ class GenerationConfig:
     openai_api_key: str | None = None
     inline_citation_images: bool = True
     max_inline_images: int = 4
+    scope_inference: bool = True
+    scope_inference_mode: str = "merged"  # rules | llm | merged
 
 
 @dataclass(frozen=True)
@@ -470,6 +472,8 @@ def load_config(
             ),
             inline_citation_images=bool(generation.get("inline_citation_images", True)),
             max_inline_images=int(generation.get("max_inline_images", 4)),
+            scope_inference=bool(generation.get("scope_inference", True)),
+            scope_inference_mode=str(generation.get("scope_inference_mode", "merged")),
         ),
         api=ApiConfig(
             host=str(api.get("host", "0.0.0.0")),

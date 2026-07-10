@@ -27,6 +27,7 @@ def rag_service(app_config):
             assistant_fallback=False,
             task_classification=True,
             query_prepare="merged",
+            scope_inference=False,
         ),
     )
     engine = MagicMock()

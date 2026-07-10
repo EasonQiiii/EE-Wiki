@@ -14,7 +14,7 @@ models:
   embedding_model: bge-m3
   reranker_model: bge-reranker-v2-m3
   # llm_transformers_model: Qwen3.5-4B
-  llm_mlx_model: Qwen3-30B-A3B-Instruct-2507-MLX-4bit
+  # llm_mlx_model: Meta-Llama-3-70B-Instruct-4bit
   # llm_mlx_model: GLM-4.7-Flash-MLX-8bit
 
 generation:
@@ -36,6 +36,8 @@ generation:
   query_prepare: merged                 # merged | separate — one LLM call for rewrite + classify
   inline_citation_images: true          # append referenced schematic/document images after the answer
   max_inline_images: 4                  # cap on images appended per answer
+  scope_inference: true                 # infer product/revision/layer from natural language
+  scope_inference_mode: merged          # rules | llm | merged
 
 ingestion:
   excel:
@@ -101,7 +103,7 @@ indexing:
 retrieval:
   top_k_embed: 20
   top_k_bm25: 20
-  top_k_final: 6            # was 8; fewer chunks → shorter prompt, room for longer answers
+  top_k_final: 8            # was 8; fewer chunks → shorter prompt, room for longer answers
   scope_inheritance: true
   top_k_dense: 4
   top_k_sparse: 4
