@@ -22,7 +22,15 @@ from ee_wiki.retrieval.query_boost import query_boost_tokens
 from ee_wiki.retrieval.query_expand import expand_hw_query
 from ee_wiki.retrieval.query_intent import effective_document_type, is_board_interface_pin_query
 from ee_wiki.retrieval.rerank_excerpt import query_focused_excerpt
+from ee_wiki.retrieval.scope_cascade import (
+    ScopeQuotas,
+    assemble_mixed_quota,
+    build_cascade_phases_from_ranks,
+    merge_tier_results,
+    should_run_scope_cascade,
+)
 from ee_wiki.retrieval.scope_catalog import ScopeCatalog
+from ee_wiki.retrieval.scope_resolve import _inherit_product_scope_ranks
 from ee_wiki.retrieval.section_expand import build_section_index, expand_retrieved_sections
 from ee_wiki.retrieval.tokenizer import tokenize_hw_text
 
@@ -373,61 +381,67 @@ class HybridRagEngine:
         ]
         return self._apply_document_type_filter(filtered, document_type), {}
 
-    def retrieve(
+    def _resolve_scope_ranks(
         self,
-        query: str,
         *,
-        target_project: str | None = None,
-        target_build: str | None = None,
-        document_type: str | None = None,
-        top_k_dense: int | None = None,
-        top_k_sparse: int | None = None,
-        top_k_final: int | None = None,
-        scope_ranks_override: dict[tuple[str, str], int] | None = None,
-    ) -> RetrievalResult:
-        """Run scope filter → dense + sparse recall → rerank → scope priority.
+        target_project: str | None,
+        target_build: str | None,
+        scope_ranks_override: dict[tuple[str, str], int] | None,
+    ) -> dict[tuple[str, str], int]:
+        """Build scope rank map for cascade or flat inherited retrieval."""
+        if scope_ranks_override:
+            return scope_ranks_override
+        layout = self.config.data_layout
+        if not target_project:
+            return {}
+        if self.config.retrieval.scope_inheritance:
+            if target_build:
+                scopes = expand_retrieval_scope(
+                    target_project,
+                    target_build,
+                    layout,
+                )
+                return {pair: rank for rank, pair in enumerate(scopes)}
+            catalog = self.get_scope_catalog()
+            return _inherit_product_scope_ranks(target_project, catalog, layout)
+        if target_build:
+            return {(target_project, target_build): 0}
+        return {}
 
-        Args:
-            query: Natural language or keyword search string.
-            target_project: Optional project metadata filter.
-            target_build: Optional build metadata filter.
-            document_type: Optional document type filter (e.g. ``schematic``).
-            top_k_dense: Dense recall count override.
-            top_k_sparse: Sparse recall count override.
-            top_k_final: Final reranked result count override.
-            scope_ranks_override: Optional precomputed scope rank map for multi-pair filters.
+    def _filter_chunks_by_scope_pairs(
+        self,
+        scope_pairs: set[tuple[str, str]],
+        document_type: str | None,
+    ) -> list[HybridChunk]:
+        """Return indexed chunks whose metadata pair is in ``scope_pairs``."""
+        filtered = [
+            chunk
+            for chunk in self.knowledge_base
+            if (chunk.metadata.get("project"), chunk.metadata.get("build")) in scope_pairs
+        ]
+        return self._apply_document_type_filter(filtered, document_type)
 
-        Returns:
-            Ranked chunks with citation metadata and top rerank score.
-        """
-        if not self.knowledge_base:
-            self.load_index()
-        if not self.knowledge_base:
-            return RetrievalResult(chunks=[], top_rerank_score=None)
-
-        dense_k = top_k_dense or self.config.retrieval.top_k_dense
-        sparse_k = top_k_sparse or self.config.retrieval.top_k_sparse
-        final_k = top_k_final or self.config.retrieval.top_k_final
-        search_query = expand_hw_query(query)
-        if search_query != query:
-            logger.info("Expanded retrieval query: %s", search_query)
-
-        resolved_document_type = effective_document_type(query, document_type)
-
-        filtered, scope_ranks = self._filter_by_scope(
-            target_project=target_project,
-            target_build=target_build,
-            document_type=resolved_document_type,
-            scope_ranks_override=scope_ranks_override,
-        )
-        if not filtered:
-            return RetrievalResult(chunks=[], top_rerank_score=None)
-
+    def _encode_query(self, search_query: str) -> np.ndarray:
+        """Embed the search query once per retrieval request."""
         self._load_embed_model()
         with self._model_lock:
-            query_emb = self._embed_model.encode(search_query, convert_to_numpy=True)
-        # Vectorized cosine scoring against the pre-normalized embedding matrix.
-        dense_selected: list[HybridChunk] = []
+            return self._embed_model.encode(search_query, convert_to_numpy=True)
+
+    def _bm25_scores_for_query(self, search_query: str) -> Any | None:
+        """Return full-corpus BM25 scores for ``search_query``, or ``None``."""
+        if self.bm25 is None:
+            return None
+        query_tokens = tokenize_hw_text(search_query)
+        return self.bm25.get_scores(query_tokens)
+
+    def _dense_recall(
+        self,
+        filtered: list[HybridChunk],
+        query_emb: np.ndarray,
+        *,
+        dense_k: int,
+    ) -> list[HybridChunk]:
+        """Return top dense embedding matches from ``filtered``."""
         matrix = getattr(self, "_embedding_matrix", None)
         id_to_row = getattr(self, "_embed_id_to_row", None)
         if matrix is not None and matrix.shape[0] > 0 and id_to_row:
@@ -441,44 +455,63 @@ class HybridRagEngine:
                     row_idx.append(i)
                     row_ids.append(r)
             if row_ids:
-                sims = matrix[row_ids] @ q  # (m,) cosine similarity
+                sims = matrix[row_ids] @ q
                 k = min(dense_k, sims.shape[0])
                 order = np.argsort(-sims)[:k]
-                dense_selected = [filtered[row_idx[j]] for j in order]
-        else:
-            # Fallback: per-chunk loop (e.g. index loaded without a matrix).
-            dense_scores: list[tuple[float, HybridChunk]] = []
-            for chunk in filtered:
-                if chunk.embedding is None:
-                    continue
-                score = float(
-                    np.dot(query_emb, chunk.embedding)
-                    / (np.linalg.norm(query_emb) * np.linalg.norm(chunk.embedding) + 1e-12)
-                )
-                dense_scores.append((score, chunk))
-            dense_selected = [
-                item[1]
-                for item in sorted(dense_scores, key=lambda item: item[0], reverse=True)[:dense_k]
-            ]
+                return [filtered[row_idx[j]] for j in order]
+            return []
 
-        # BM25 sparse scoring — computed once here and reused by the
-        # build-schematic recall path below (avoids a second full-corpus
-        # get_scores for the same query).
-        sparse_selected: list[HybridChunk] = []
-        all_scores: Any | None = None
-        if self.bm25 is not None:
-            query_tokens = tokenize_hw_text(search_query)
-            all_scores = self.bm25.get_scores(query_tokens)
-            sparse_scores: list[tuple[float, HybridChunk]] = []
-            for chunk in filtered:
-                position = self._chunk_positions.get(chunk.chunk_id)
-                if position is None:
-                    continue
-                sparse_scores.append((float(all_scores[position]), chunk))
-            sparse_selected = [
-                item[1]
-                for item in sorted(sparse_scores, key=lambda item: item[0], reverse=True)[:sparse_k]
-            ]
+        dense_scores: list[tuple[float, HybridChunk]] = []
+        for chunk in filtered:
+            if chunk.embedding is None:
+                continue
+            score = float(
+                np.dot(query_emb, chunk.embedding)
+                / (np.linalg.norm(query_emb) * np.linalg.norm(chunk.embedding) + 1e-12)
+            )
+            dense_scores.append((score, chunk))
+        return [
+            item[1]
+            for item in sorted(dense_scores, key=lambda item: item[0], reverse=True)[:dense_k]
+        ]
+
+    def _sparse_recall(
+        self,
+        filtered: list[HybridChunk],
+        all_scores: Any | None,
+        *,
+        sparse_k: int,
+    ) -> list[HybridChunk]:
+        """Return top BM25 matches from ``filtered``."""
+        if all_scores is None:
+            return []
+        sparse_scores: list[tuple[float, HybridChunk]] = []
+        for chunk in filtered:
+            position = self._chunk_positions.get(chunk.chunk_id)
+            if position is None:
+                continue
+            sparse_scores.append((float(all_scores[position]), chunk))
+        return [
+            item[1]
+            for item in sorted(sparse_scores, key=lambda item: item[0], reverse=True)[:sparse_k]
+        ]
+
+    def _recall_candidates(
+        self,
+        filtered: list[HybridChunk],
+        *,
+        query: str,
+        search_query: str,
+        query_emb: np.ndarray,
+        all_scores: Any | None,
+        dense_k: int,
+        sparse_k: int,
+        target_project: str | None,
+        target_build: str | None,
+    ) -> list[HybridChunk]:
+        """Merge dense, sparse, and optional schematic-boost recall."""
+        dense_selected = self._dense_recall(filtered, query_emb, dense_k=dense_k)
+        sparse_selected = self._sparse_recall(filtered, all_scores, sparse_k=sparse_k)
 
         combined: list[HybridChunk] = []
         seen: set[str] = set()
@@ -506,10 +539,14 @@ class HybridRagEngine:
                     "Added %d build-schematic chunk(s) for board interface pin query",
                     len(schematic_selected),
                 )
+        return combined
 
-        if not combined:
-            return RetrievalResult(chunks=[], top_rerank_score=None)
-
+    def _rerank_logits(
+        self,
+        combined: list[HybridChunk],
+        search_query: str,
+    ) -> np.ndarray:
+        """Score candidate chunks with the cross-encoder reranker."""
         self._load_reranker()
         import torch
 
@@ -525,21 +562,24 @@ class HybridRagEngine:
                 return_tensors="pt",
                 max_length=512,
             ).to(self._device)
-            logits = self._rerank_model(**inputs).logits.view(-1).float().cpu().numpy()
-
-        top_rerank_score = float(np.max(logits)) if len(logits) else None
-        min_score = self.config.retrieval.min_rerank_score
-        if (
-            min_score is not None
-            and top_rerank_score is not None
-            and top_rerank_score < min_score
-        ):
-            logger.info(
-                "Retrieval skipped: top rerank score %.3f below min_rerank_score %.3f",
-                top_rerank_score,
-                min_score,
+            return (
+                self._rerank_model(**inputs)
+                .logits.view(-1)
+                .float()
+                .cpu()
+                .numpy()
             )
-            return RetrievalResult(chunks=[], top_rerank_score=top_rerank_score)
+
+    def _sort_reranked_candidates(
+        self,
+        logits: np.ndarray,
+        combined: list[HybridChunk],
+        *,
+        query: str,
+        search_query: str,
+        scope_ranks: dict[tuple[str, str], int],
+    ) -> list[tuple[float, HybridChunk]]:
+        """Sort reranked candidates; lower scope rank and higher logit win."""
 
         def scope_rank(chunk: HybridChunk) -> int:
             pair = (chunk.metadata.get("project"), chunk.metadata.get("build"))
@@ -547,6 +587,7 @@ class HybridRagEngine:
 
         boost_tokens = query_boost_tokens(query)
         layout = self.config.data_layout
+        board_pin_query = is_board_interface_pin_query(search_query)
 
         def keyword_boost(chunk: HybridChunk) -> int:
             if not boost_tokens:
@@ -556,24 +597,332 @@ class HybridRagEngine:
             meta_hits = metadata_keyword_boost(chunk.metadata, boost_tokens)
             return content_hits + (meta_hits * 2)
 
-        reranked = [
-            item[1]
-            for item in sorted(
-                zip(logits, combined),
-                key=lambda item: (
-                    scope_rank(item[1]),
-                    _document_type_rank(
-                        item[1],
-                        board_pin_query=board_pin_query,
-                        enterprise_project=layout.enterprise_project,
-                        project_shared_build=layout.project_shared_build,
-                    ),
-                    -keyword_boost(item[1]),
-                    -float(item[0]),
+        return sorted(
+            zip(logits, combined),
+            key=lambda item: (
+                scope_rank(item[1]),
+                _document_type_rank(
+                    item[1],
+                    board_pin_query=board_pin_query,
+                    enterprise_project=layout.enterprise_project,
+                    project_shared_build=layout.project_shared_build,
                 ),
+                -keyword_boost(item[1]),
+                -float(item[0]),
+            ),
+        )
+
+    def _retrieve_from_filtered(
+        self,
+        filtered: list[HybridChunk],
+        *,
+        query: str,
+        search_query: str,
+        query_emb: np.ndarray,
+        all_scores: Any | None,
+        dense_k: int,
+        sparse_k: int,
+        target_project: str | None,
+        target_build: str | None,
+        scope_ranks: dict[tuple[str, str], int],
+    ) -> tuple[list[tuple[float, HybridChunk]], float | None]:
+        """Recall, rerank, and sort candidates from a pre-filtered chunk pool."""
+        combined = self._recall_candidates(
+            filtered,
+            query=query,
+            search_query=search_query,
+            query_emb=query_emb,
+            all_scores=all_scores,
+            dense_k=dense_k,
+            sparse_k=sparse_k,
+            target_project=target_project,
+            target_build=target_build,
+        )
+        if not combined:
+            return [], None
+
+        logits = self._rerank_logits(combined, search_query)
+        paired_logits = logits[: len(combined)]
+        top_rerank_score = float(np.max(paired_logits)) if len(paired_logits) else None
+        scored = self._sort_reranked_candidates(
+            paired_logits,
+            combined,
+            query=query,
+            search_query=search_query,
+            scope_ranks=scope_ranks,
+        )
+        return [(float(score), chunk) for score, chunk in scored], top_rerank_score
+
+    def _scope_quotas(self) -> ScopeQuotas:
+        retrieval = self.config.retrieval
+        return ScopeQuotas(
+            build=retrieval.scope_quota_build,
+            common=retrieval.scope_quota_common,
+            global_=retrieval.scope_quota_global,
+        )
+
+    def _retrieve_cascade(
+        self,
+        *,
+        query: str,
+        search_query: str,
+        target_project: str | None,
+        target_build: str | None,
+        document_type: str | None,
+        scope_ranks: dict[tuple[str, str], int],
+        dense_k: int,
+        sparse_k: int,
+        final_k: int,
+    ) -> RetrievalResult:
+        """Run tier cascade: build → project_common → global with mixed quotas."""
+        from ee_wiki.retrieval.scope_cascade import SCOPE_TIER_GLOBAL
+
+        layout = self.config.data_layout
+        phases = build_cascade_phases_from_ranks(scope_ranks, layout)
+        threshold = self.config.retrieval.scope_sufficient_rerank
+        quotas = self._scope_quotas()
+
+        query_emb = self._encode_query(search_query)
+        all_scores = self._bm25_scores_for_query(search_query)
+
+        reranked_by_tier: dict[int, list[tuple[float, HybridChunk]]] = {}
+        primary_tier = SCOPE_TIER_GLOBAL
+        primary_sufficient = False
+        top_rerank_score: float | None = None
+
+        for phase in phases:
+            filtered = self._filter_chunks_by_scope_pairs(
+                set(phase.scope_pairs),
+                document_type,
             )
-        ]
-        hits = reranked[:final_k]
+            if not filtered:
+                continue
+
+            scored, phase_top = self._retrieve_from_filtered(
+                filtered,
+                query=query,
+                search_query=search_query,
+                query_emb=query_emb,
+                all_scores=all_scores,
+                dense_k=dense_k,
+                sparse_k=sparse_k,
+                target_project=target_project,
+                target_build=target_build,
+                scope_ranks=scope_ranks,
+            )
+            reranked_by_tier = merge_tier_results(reranked_by_tier, phase.tier, scored)
+            if phase_top is not None:
+                top_rerank_score = (
+                    phase_top if top_rerank_score is None else max(top_rerank_score, phase_top)
+                )
+            if scored:
+                primary_tier = phase.tier
+
+            logger.info(
+                "scope_cascade phase tier=%d pairs=%d hits=%d top_rerank=%s",
+                phase.tier,
+                len(phase.scope_pairs),
+                len(scored),
+                f"{phase_top:.3f}" if phase_top is not None else "none",
+            )
+
+            if scored and phase_top is not None and phase_top >= threshold:
+                primary_tier = phase.tier
+                primary_sufficient = True
+                logger.info(
+                    "scope_cascade primary_tier=%d sufficient at rerank %.3f",
+                    primary_tier,
+                    phase_top,
+                )
+                break
+
+        if primary_sufficient:
+            for phase in phases:
+                if phase.tier <= primary_tier or phase.tier in reranked_by_tier:
+                    continue
+                filtered = self._filter_chunks_by_scope_pairs(
+                    set(phase.scope_pairs),
+                    document_type,
+                )
+                if not filtered:
+                    continue
+                scored, phase_top = self._retrieve_from_filtered(
+                    filtered,
+                    query=query,
+                    search_query=search_query,
+                    query_emb=query_emb,
+                    all_scores=all_scores,
+                    dense_k=dense_k,
+                    sparse_k=sparse_k,
+                    target_project=target_project,
+                    target_build=target_build,
+                    scope_ranks=scope_ranks,
+                )
+                reranked_by_tier = merge_tier_results(reranked_by_tier, phase.tier, scored)
+                if phase_top is not None:
+                    top_rerank_score = (
+                        phase_top if top_rerank_score is None else max(top_rerank_score, phase_top)
+                    )
+
+        if not reranked_by_tier:
+            return RetrievalResult(chunks=[], top_rerank_score=None)
+
+        hits = assemble_mixed_quota(
+            reranked_by_tier,
+            primary_tier=primary_tier,
+            final_k=final_k,
+            quotas=quotas,
+        )
+        if hits:
+            selected_scores = []
+            for tier_chunks in reranked_by_tier.values():
+                hit_ids = {chunk.chunk_id for chunk in hits}
+                for score, chunk in tier_chunks:
+                    if chunk.chunk_id in hit_ids:
+                        selected_scores.append(score)
+            if selected_scores:
+                top_rerank_score = max(selected_scores)
+
+        return RetrievalResult(chunks=hits, top_rerank_score=top_rerank_score)
+
+    def _retrieve_flat(
+        self,
+        *,
+        query: str,
+        search_query: str,
+        target_project: str | None,
+        target_build: str | None,
+        document_type: str | None,
+        scope_ranks: dict[tuple[str, str], int],
+        scope_ranks_override: dict[tuple[str, str], int] | None,
+        dense_k: int,
+        sparse_k: int,
+        final_k: int,
+    ) -> RetrievalResult:
+        """Parallel-pool retrieval (legacy path when cascade is disabled)."""
+        filtered, resolved_ranks = self._filter_by_scope(
+            target_project=target_project,
+            target_build=target_build,
+            document_type=document_type,
+            scope_ranks_override=scope_ranks_override,
+        )
+        if not filtered:
+            return RetrievalResult(chunks=[], top_rerank_score=None)
+
+        query_emb = self._encode_query(search_query)
+        all_scores = self._bm25_scores_for_query(search_query)
+        scored, top_rerank_score = self._retrieve_from_filtered(
+            filtered,
+            query=query,
+            search_query=search_query,
+            query_emb=query_emb,
+            all_scores=all_scores,
+            dense_k=dense_k,
+            sparse_k=sparse_k,
+            target_project=target_project,
+            target_build=target_build,
+            scope_ranks=resolved_ranks or scope_ranks,
+        )
+        if not scored:
+            return RetrievalResult(chunks=[], top_rerank_score=None)
+
+        hits = [chunk for _, chunk in scored[:final_k]]
+        return RetrievalResult(chunks=hits, top_rerank_score=top_rerank_score)
+
+    def retrieve(
+        self,
+        query: str,
+        *,
+        target_project: str | None = None,
+        target_build: str | None = None,
+        document_type: str | None = None,
+        top_k_dense: int | None = None,
+        top_k_sparse: int | None = None,
+        top_k_final: int | None = None,
+        scope_ranks_override: dict[tuple[str, str], int] | None = None,
+    ) -> RetrievalResult:
+        """Run scope filter → dense + sparse recall → rerank → scope priority.
+
+        When ``scope_cascade`` is enabled with scope inheritance, retrieval runs
+        tier phases (build → project_common → global) instead of a single mixed pool.
+
+        Args:
+            query: Natural language or keyword search string.
+            target_project: Optional project metadata filter.
+            target_build: Optional build metadata filter.
+            document_type: Optional document type filter (e.g. ``schematic``).
+            top_k_dense: Dense recall count override.
+            top_k_sparse: Sparse recall count override.
+            top_k_final: Final reranked result count override.
+            scope_ranks_override: Optional precomputed scope rank map for multi-pair filters.
+
+        Returns:
+            Ranked chunks with citation metadata and top rerank score.
+        """
+        if not self.knowledge_base:
+            self.load_index()
+        if not self.knowledge_base:
+            return RetrievalResult(chunks=[], top_rerank_score=None)
+
+        dense_k = top_k_dense or self.config.retrieval.top_k_dense
+        sparse_k = top_k_sparse or self.config.retrieval.top_k_sparse
+        final_k = top_k_final or self.config.retrieval.top_k_final
+        search_query = expand_hw_query(query)
+        if search_query != query:
+            logger.info("Expanded retrieval query: %s", search_query)
+
+        resolved_document_type = effective_document_type(query, document_type)
+        scope_ranks = self._resolve_scope_ranks(
+            target_project=target_project,
+            target_build=target_build,
+            scope_ranks_override=scope_ranks_override,
+        )
+
+        if should_run_scope_cascade(
+            scope_inheritance=self.config.retrieval.scope_inheritance,
+            scope_cascade=self.config.retrieval.scope_cascade,
+            target_project=target_project,
+            scope_ranks=scope_ranks,
+        ):
+            result = self._retrieve_cascade(
+                query=query,
+                search_query=search_query,
+                target_project=target_project,
+                target_build=target_build,
+                document_type=resolved_document_type,
+                scope_ranks=scope_ranks,
+                dense_k=dense_k,
+                sparse_k=sparse_k,
+                final_k=final_k,
+            )
+        else:
+            result = self._retrieve_flat(
+                query=query,
+                search_query=search_query,
+                target_project=target_project,
+                target_build=target_build,
+                document_type=resolved_document_type,
+                scope_ranks=scope_ranks,
+                scope_ranks_override=scope_ranks_override,
+                dense_k=dense_k,
+                sparse_k=sparse_k,
+                final_k=final_k,
+            )
+
+        min_score = self.config.retrieval.min_rerank_score
+        if (
+            min_score is not None
+            and result.top_rerank_score is not None
+            and result.top_rerank_score < min_score
+        ):
+            logger.info(
+                "Retrieval skipped: top rerank score %.3f below min_rerank_score %.3f",
+                result.top_rerank_score,
+                min_score,
+            )
+            return RetrievalResult(chunks=[], top_rerank_score=result.top_rerank_score)
+
+        hits = result.chunks
         if self.config.retrieval.expand_sections:
             hits = expand_retrieved_sections(hits, self._section_index)
-        return RetrievalResult(chunks=hits, top_rerank_score=top_rerank_score)
+        return RetrievalResult(chunks=hits, top_rerank_score=result.top_rerank_score)

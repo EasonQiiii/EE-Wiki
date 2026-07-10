@@ -38,8 +38,9 @@ python scripts/index.py    # drops removed documents from the index
 User question (via Open WebUI → api/)
     → query prepare (optional; merged rewrite + task classification — one LLM call)
     → metadata filter (project, build, document_type)
-    → scope expansion: build → + project/common → + global  (when scope_inheritance=true)
-    → retrieval/ (embedding + BM25 + merge + rerank)
+    → scope cascade (when scope_inheritance + scope_cascade): build tier → project/common → global; each phase recalled and reranked separately; expand only when top rerank < scope_sufficient_rerank
+    → mixed quota assembly (build-heavy slots; common/global supplement)
+    → retrieval/ (embedding + BM25 + merge + rerank per phase)
     → section expansion (optional; merge sibling chunks — see below)
     → assistant fallback check (weak retrieval → assistant prompt, no KB chunks)
     → top context blocks with Citations

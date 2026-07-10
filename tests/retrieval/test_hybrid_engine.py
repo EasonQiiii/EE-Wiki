@@ -291,3 +291,104 @@ def test_retrieve_returns_empty_when_below_min_rerank_score(
     assert results.chunks == []
     assert results.top_rerank_score is not None
     assert results.top_rerank_score < 10.0
+
+
+def test_cascade_build_sufficient_limits_global_primary(engine_with_index) -> None:
+    """When build tier meets rerank threshold, global chunks are not primary."""
+    engine_with_index._embed_model.encode.return_value = np.array(
+        [1.0, 0.0, 0.0], dtype=np.float32
+    )
+    _mock_rerank_logits(engine_with_index._rerank_model, [0.5, 0.2, 0.1, 0.95])
+
+    results = engine_with_index.retrieve(
+        "reset module",
+        target_project="logan",
+        target_build="p1",
+        top_k_final=2,
+    )
+    assert len(results.chunks) == 2
+    assert all(chunk.metadata.get("build") == "p1" for chunk in results.chunks)
+
+
+def test_cascade_build_insufficient_falls_back_to_common(engine_with_index) -> None:
+    from dataclasses import replace
+
+    engine_with_index.config = replace(
+        engine_with_index.config,
+        retrieval=replace(
+            engine_with_index.config.retrieval,
+            scope_sufficient_rerank=0.5,
+        ),
+    )
+    engine_with_index._embed_model.encode.return_value = np.array(
+        [0.5, 0.5, 0.0], dtype=np.float32
+    )
+    score_by_id = {
+        "note__power": 0.1,
+        "sch__rmii": 0.2,
+        "common__sop": 0.95,
+        "global__datasheet": 0.05,
+    }
+
+    def _rerank_by_chunk_id(
+        combined: list[HybridChunk],
+        search_query: str,
+    ) -> np.ndarray:
+        _ = search_query
+        return np.array([score_by_id[chunk.chunk_id] for chunk in combined], dtype=np.float32)
+
+    engine_with_index._rerank_logits = _rerank_by_chunk_id
+
+    results = engine_with_index.retrieve(
+        "UART debug",
+        target_project="logan",
+        target_build="p1",
+        top_k_final=1,
+    )
+    assert len(results.chunks) == 1
+    assert results.chunks[0].chunk_id == "common__sop"
+
+
+def test_cascade_mixed_quota_supplements_common_when_build_partial(engine_with_index) -> None:
+    engine_with_index._embed_model.encode.return_value = np.array(
+        [1.0, 0.0, 0.0], dtype=np.float32
+    )
+    _mock_rerank_logits(engine_with_index._rerank_model, [0.8, 0.2, 0.7, 0.1])
+
+    results = engine_with_index.retrieve(
+        "power debug",
+        target_project="logan",
+        target_build="p1",
+        top_k_final=4,
+    )
+    chunk_ids = [chunk.chunk_id for chunk in results.chunks]
+    assert chunk_ids[0] in {"note__power", "sch__rmii"}
+    assert "common__sop" in chunk_ids
+    build_count = sum(1 for chunk in results.chunks if chunk.metadata.get("build") == "p1")
+    assert build_count >= 2
+
+
+def test_scope_inheritance_false_skips_cascade(engine_with_index) -> None:
+    from dataclasses import replace
+
+    engine_with_index.config = replace(
+        engine_with_index.config,
+        retrieval=replace(
+            engine_with_index.config.retrieval,
+            scope_inheritance=False,
+        ),
+    )
+    engine_with_index._embed_model.encode.return_value = np.array(
+        [0.5, 0.5, 0.0], dtype=np.float32
+    )
+    _mock_rerank_logits(engine_with_index._rerank_model, [0.3, 0.2, 0.95, 0.1])
+
+    results = engine_with_index.retrieve(
+        "UART debug",
+        target_project="logan",
+        target_build="p1",
+        top_k_final=4,
+    )
+    chunk_ids = {chunk.chunk_id for chunk in results.chunks}
+    assert "common__sop" not in chunk_ids
+    assert "global__datasheet" not in chunk_ids

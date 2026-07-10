@@ -13,6 +13,7 @@
 | [docs/usage/knowledge-authoring.md](docs/usage/knowledge-authoring.md) | **How to write & place documents** (authoring spec for humans + AI) |
 | [docs/usage/index.md](docs/usage/index.md) | **How to run `scripts/index.py`** (processed → indexes) |
 | [docs/usage/query.md](docs/usage/query.md) | **CLI retrieval and RAG** (`query.py`, `ask.py`) |
+| [docs/usage/eval.md](docs/usage/eval.md) | **RAG regression eval** (`eval_rag.py`, golden QA) |
 | [docs/usage/open-webui.md](docs/usage/open-webui.md) | **Open WebUI integration** |
 | [docs/architecture/repository-structure.md](docs/architecture/repository-structure.md) | Canonical directory layout and module boundaries |
 | [docs/architecture/data-flow.md](docs/architecture/data-flow.md) | Ingestion and query pipelines |
@@ -463,6 +464,8 @@ Search scope (in priority order):
 
 Rules:
 
+- **Cascade retrieval** (default: `retrieval.scope_cascade: true`): search **build tier first**; expand to `common` only when the top build rerank score is below `scope_sufficient_rerank`; expand to `global` only when both build and common are insufficient. Product-only queries (`inherit`) cascade across all revision builds → `common` → `global` the same way.
+- **Mixed quotas** (defaults in `config/default.yaml`): build tier fills up to `scope_quota_build` slots; `common` and `global` supplement remaining slots up to their quotas — they do not replace build evidence when build tier is sufficient.
 - Build-specific documents rank highest; `common` and `global` provide fallback context.
 - **`global/`** — enterprise or industry-wide background (tools, generic datasheets); answers must label it **global**, not as a specific board's fact.
 - **`{project}/common/`** — that project's shared knowledge across builds; label as **project common**; does not override build-to-build differences.
@@ -482,7 +485,7 @@ Generated answers **must distinguish** `project` / `build` and knowledge layer:
 - If the user did not specify `project` / `build`, list findings per scope and recommend specifying scope for a definitive build-level answer.
 - Retrieval ranking (build > common > global) does not remove the need to label sources in the answer.
 
-Implementation: context block headers in `generation/context.py`; shared rules in `prompts/_shared/scope_rules.md`.
+Implementation: tier cascade in `retrieval/scope_cascade.py` and `retrieval/hybrid/engine.py`; context block headers in `generation/context.py`; shared rules in `prompts/_shared/scope_rules.md`.
 
 ---
 

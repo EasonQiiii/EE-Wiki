@@ -46,6 +46,7 @@ EE-Wiki/
 │   ├── sync.py               # Ingest + index in one command
 │   ├── query.py              # Retrieval-only CLI
 │   ├── ask.py                # RAG CLI (retrieval + generation)
+│   ├── eval_rag.py           # Golden QA regression eval (retrieval / generation / both)
 │   └── serve.py              # Start the API server
 │
 ├── src/
@@ -188,5 +189,6 @@ When `retrieval.scope_inheritance` is true (default), a query for `{project}/{bu
 
 - [docs/usage/local-setup.md](../usage/local-setup.md) — local machine setup and V1 acceptance checklist
 - [docs/usage/ingest.md](../usage/ingest.md) — operator guide for `scripts/ingest.py`
+- [docs/usage/eval.md](../usage/eval.md) — golden QA regression eval (`scripts/eval_rag.py`)
 - [AGENTS.md](../../AGENTS.md) — rules for AI assistants working in this repo
 - [README.md](../../README.md) — vision, principles, and roadmap

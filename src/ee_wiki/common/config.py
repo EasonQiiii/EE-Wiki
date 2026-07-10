@@ -117,6 +117,11 @@ class RetrievalConfig:
     top_k_sparse: int
     expand_sections: bool = True
     min_rerank_score: float | None = None
+    scope_cascade: bool = True
+    scope_sufficient_rerank: float = -3.0
+    scope_quota_build: int = 6
+    scope_quota_common: int = 2
+    scope_quota_global: int = 2
 
 
 @dataclass(frozen=True)
@@ -441,6 +446,11 @@ def load_config(
             top_k_sparse=int(retrieval.get("top_k_sparse", 4)),
             expand_sections=bool(retrieval.get("expand_sections", True)),
             min_rerank_score=_optional_float(retrieval.get("min_rerank_score")),
+            scope_cascade=bool(retrieval.get("scope_cascade", True)),
+            scope_sufficient_rerank=float(retrieval.get("scope_sufficient_rerank", -3.0)),
+            scope_quota_build=int(retrieval.get("scope_quota_build", 6)),
+            scope_quota_common=int(retrieval.get("scope_quota_common", 2)),
+            scope_quota_global=int(retrieval.get("scope_quota_global", 2)),
         ),
         data_layout=layout,
         generation=GenerationConfig(

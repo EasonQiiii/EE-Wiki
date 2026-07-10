@@ -1,0 +1,462 @@
+# EE-Wiki RAG golden QA dataset (machine-readable).
+# Human-readable guide: docs/eval/qa.md
+# Schema: config/schema/qa_eval.schema.json
+
+version: "1.0"
+
+corpus:
+  manifest: data/indexes/manifest.json
+  chunk_count: 12554
+  built_at: "2026-07-10T03:10:47Z"
+  coverage:
+    - global
+    - kingboo/common
+    - logan/p1
+
+scoring:
+  dimensions:
+    retrieval:
+      weight: 0.30
+      max_score: 2
+      description: Top chunks hit required_sources; scope correct
+    answer_accuracy:
+      weight: 0.35
+      max_score: 2
+      description: Key facts match expected_answer; no hallucinated parts/nets/values
+    citation_scope:
+      weight: 0.20
+      max_score: 2
+      description: Citations correct; answer labels build/common/global layer
+    stability:
+      weight: 0.15
+      max_score: 2
+      description: Paraphrase variants score consistently (stability cases only)
+  pass_thresholds:
+    mandatory_accuracy: 0.90
+    weighted_mean: 1.6
+    negative_refusal_rate: 1.0
+
+cases:
+  - id: Q-001
+    title: STM32F407 核心参数
+    category: datasheet
+    mandatory: true
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: STM32F407ZGT6 的最高 CPU 主频、Flash 和 SRAM 容量分别是多少？
+    expected_answer: |
+      最高 CPU 频率 168 MHz；嵌入式 Flash 最高 1 Mbyte；嵌入式 SRAM 最高 192 Kbytes（含 64 Kbytes CCM）。
+    expected_facts:
+      - "168 MHz"
+      - "1 Mbyte"
+      - "192 Kbytes"
+    required_sources:
+      - data/processed/global/datasheet/STM32F407ZGT6.md
+    must_not_contain:
+      - "200 MHz"
+      - "2 Mbyte"
+
+  - id: Q-002
+    title: MP2359 关键规格
+    category: datasheet
+    mandatory: true
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: MP2359 是什么类型的电源芯片？峰值输出电流和开关频率是多少？
+    expected_answer: |
+      电流模式降压（step-down / buck）开关稳压器；峰值输出电流 1.2 A；开关频率 1.4 MHz；输入电压最高 24 V。
+    expected_facts:
+      - buck
+      - 1.2A
+      - 1.4MHz
+      - 24V
+    required_sources:
+      - data/processed/global/datasheet/MP2359.md
+      - data/processed/global/datasheet/MP2359 AN.md
+
+  - id: Q-003
+    title: Logan P1 以太网 PHY
+    category: schematic
+    mandatory: true
+    filters:
+      project: logan
+      build: p1
+    scope_label: build
+    question: Explorer STM32F4 V2.2 原理图中，以太网接口使用哪款 PHY 芯片？MCU 与 PHY 之间采用什么接口？参考时钟频率是多少？
+    expected_answer: |
+      PHY 芯片 LAN8720A；MCU 与 PHY 通过 RMII 连接（含 TXD0/1、RXD0/1、TXEN、MDIO/MDC、ETH_RESET 等）；参考时钟 25 MHz 晶振。
+    expected_facts:
+      - LAN8720A
+      - RMII
+      - "25 MHz"
+    required_sources:
+      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+    must_not_contain:
+      - 千兆 PHY
+
+  - id: Q-004
+    title: Logan P1 音频 Codec
+    category: schematic
+    mandatory: true
+    filters:
+      project: logan
+      build: p1
+    scope_label: build
+    question: 同一块 Explorer 开发板原理图里，I2S 音频编解码用的是什么芯片？I2S 总线有哪些信号？
+    expected_answer: |
+      音频 Codec WM8978；I2S 信号 LRCK、MCLK、SCLK、SDIN、SDOUT；可选补充 PHONE/SPEAKER/LINE_IN/MIC 等模拟接口。
+    expected_facts:
+      - WM8978
+      - LRCK
+      - MCLK
+      - SCLK
+      - SDIN
+      - SDOUT
+    required_sources:
+      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+
+  - id: Q-005
+    title: 以太网 MDIO 网络名
+    category: schematic
+    mandatory: false
+    filters:
+      project: logan
+      build: p1
+    scope_label: build
+    question: logan p1 原理图里以太网 MDIO 信号的网络名是什么？
+    expected_answer: ETH_MDIO（RMII 以太网相关网络）。
+    expected_facts:
+      - ETH_MDIO
+    required_sources:
+      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+
+  - id: Q-006
+    title: Mahi PingPong 测试
+    category: scope
+    mandatory: true
+    filters:
+      project: kingboo
+      build: common
+    scope_label: common
+    question: Kingboo 项目中 Mahi PingPong Test 的目的是什么？Feature 0x43 返回的数据里，前 4 字节和后 4 字节分别代表什么？
+    expected_answer: |
+      目的：Unit Tx 端发送固定包数（OOK），与 Rx 端接收包数（ASK）对比，验证收发包数一致。
+      Feature 43,A0,00,00,00,A0,00,00,00,00,00,00,00 中：第一组 4 字节为 PingPong package send number；
+      第二组 4 字节为 PingPong package receive number；后续 00,00,00,00 为 PingPong package error number。
+    expected_facts:
+      - OOK
+      - ASK
+      - send number
+      - receive number
+      - error number
+    required_sources:
+      - data/processed/kingboo/common/note/mahi_info.md
+
+  - id: Q-007
+    title: Mahi OOK 干扰测试
+    category: scope
+    mandatory: true
+    filters:
+      project: kingboo
+      build: common
+    scope_label: common
+    question: Mahi OOK Test 中，Unit 作为 Aggressor 会发送哪三种频率的 OOK-PRBS 信号？最恶劣条件下 VDDPA 和 SignalScale 设置是多少？
+    expected_answer: |
+      三种频率 53 kHz、70 kHz、105 kHz；worse case 下 VDDPA=7.2 V，SignalScale=50%；
+      目的为以 Mahi OOK 作为干扰源检测对 Victim 的影响。
+    expected_facts:
+      - "53"
+      - "70"
+      - "105"
+      - "7.2 V"
+      - "50%"
+    required_sources:
+      - data/processed/kingboo/common/note/mahi_info.md
+
+  - id: Q-008
+    title: Mahi LPCD
+    category: scope
+    mandatory: false
+    filters:
+      project: kingboo
+      build: common
+    scope_label: common
+    question: Mahi CoEx 文档中 LPCD 是什么？NFC Reader 发送 LPCD 脉冲的频率是多少？
+    expected_answer: |
+      LPCD 为 Low Power Card Detection（低功耗卡检测）；NFC Reader 发送 LPCD 脉冲频率 10 Hz。
+    expected_facts:
+      - Low Power Card Detection
+      - "10 Hz"
+    required_sources:
+      - data/processed/kingboo/common/note/mahi_info.md
+
+  - id: Q-009
+    title: Mahi 充电倍率
+    category: scope
+    mandatory: false
+    filters:
+      project: kingboo
+      build: common
+    scope_label: common
+    question: Mahi CoEx 工站 Pencil 额定容量 50 mAh 时，三种充电电流 5 mA / 50 mA / 200 mA 分别对应多少 C 倍率？
+    expected_answer: |
+      5 mA → 0.1 C；50 mA → 1 C；200 mA → 4 C；公式为充电倍率 = 充电电流 / 额定容量。
+    expected_facts:
+      - "0.1 C"
+      - "1 C"
+      - "4 C"
+    required_sources:
+      - data/processed/kingboo/common/note/mahi_info.md
+
+  - id: Q-010
+    title: TI 8D 客退分析
+    category: fa
+    mandatory: true
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: QEM-CCR-2311-00781 报告中，客户反馈的 TI 器件型号和客户料号是什么？TI 判定的根因是什么？是否存在系统性批次风险？
+    expected_answer: |
+      TI P/N XTPS612994YBHR；Customer P/N 353S03433；客户问题 output abnormally。
+      根因 Electrically Induced Physical Damage (EIPD)，最可能由 EOS 导致；无证据表明批次系统性问题。
+    expected_facts:
+      - XTPS612994YBHR
+      - "353S03433"
+      - EIPD
+      - EOS
+    required_sources:
+      - data/processed/global/fa/QEM-CCR-2311-00781_XTPS612994YBHR.md
+    must_not_contain:
+      - 设计缺陷
+      - 硅片批次不良
+
+  - id: Q-011
+    title: E4980A 探头端子
+    category: sop
+    mandatory: false
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: E4980A LCR 测量仪的 HCUR、HPOT、LPOT、LCUR 四个端子分别是什么作用？
+    expected_answer: |
+      HCUR 电流发生端子；HPOT HI 侧电压检测端子；LPOT LO 侧电压检测端子；LCUR 电流检测端子。
+    expected_facts:
+      - HCUR
+      - HPOT
+      - LPOT
+      - LCUR
+    required_sources:
+      - data/processed/global/sop/E4980A LCR 使用.md
+
+  - id: Q-012
+    title: iPad USB SSH 隧道
+    category: platform
+    mandatory: false
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: iPad 工程手册中，通过 USB 建立 SSH 时，Mac 端应执行什么命令开启隧道？连接端口是多少？
+    expected_answer: |
+      命令 tcprelay --portoffset 10000 ssh；监听 localhost:10022；
+      连接示例 ssh -o NoHostAuthenticationForLocalhost=yes -p 10022 root@localhost。
+    expected_facts:
+      - "tcprelay --portoffset 10000 ssh"
+      - "10022"
+    required_sources:
+      - data/processed/global/note/ipadmanal.md
+
+  - id: Q-013
+    title: iPad 运行模式
+    category: platform
+    mandatory: false
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: iPad 工程手册里 Diags 模式和 iBoot 模式分别用于什么场景？
+    expected_answer: |
+      iBoot（Recovery Mode）用于系统修复、固件升级、还原设备；
+      Diags（Diagnostics Mode）用于工厂测试/维修、硬件自检、传感器校准、日志抓取等。
+    expected_facts:
+      - iBoot
+      - Diags
+    required_sources:
+      - data/processed/global/note/ipadmanal.md
+
+  - id: Q-014
+    title: EE-Wiki 架构要点
+    category: platform
+    mandatory: false
+    filters: null
+    scope_label: global
+    question: EE-Wiki 研发汇报材料中，检索层的三层知识范围是什么？优先级顺序如何？
+    expected_answer: |
+      三层范围 build（版本专属）→ common（项目共享）→ global（企业通用）；
+      优先级 build 最高，其次 common，再次 global；混合检索为向量 + BM25 + Cross-Encoder 重排。
+    expected_facts:
+      - build
+      - common
+      - global
+    required_sources:
+      - data/processed/global/note/EE-Wiki-研发汇报.md
+
+  - id: Q-015
+    title: build 检索应优先原理图
+    category: scope
+    mandatory: true
+    filters:
+      project: logan
+      build: p1
+    scope_label: build
+    question: logan p1 Explorer 原理图中以太网 PHY 芯片型号是什么？
+    expected_answer: |
+      LAN8720A；板级结论应来自 logan/p1 原理图（build 级真相），
+      可补充 global LAN8720A datasheet 作器件参考，但不得用 datasheet 替代原理图。
+    expected_facts:
+      - LAN8720A
+    required_sources:
+      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+    must_not_contain:
+      - kingboo
+
+  - id: Q-016
+    title: 跨项目隔离
+    category: scope
+    mandatory: true
+    filters:
+      project: logan
+      build: p1
+    scope_label: build
+    question: logan p1 Explorer 以太网 PHY 是 LAN8720A，是否与 kingboo Mahi CoEx 有关？
+    expected_answer: |
+      否。logan p1 原理图为 STM32F407 + LAN8720A 以太网方案，与 Mahi CoEx 无关；
+      Mahi CoEx 属于 kingboo 项目。
+    expected_facts:
+      - LAN8720A
+    forbidden_sources:
+      - data/processed/kingboo/common/note/mahi_info.md
+    required_sources:
+      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+    must_not_contain:
+      - logan 使用 Mahi
+      - PingPong Test 在 logan p1
+
+  - id: Q-017
+    title: 库中不存在的板卡
+    category: negative
+    mandatory: true
+    filters:
+      project: logan
+      build: p2
+    scope_label: null
+    expect_refusal: true
+    question: logan p2 原理图上 U502 的 FB 引脚连接到哪个网络？
+    forbidden_scope:
+      project: logan
+      build: p2
+    expected_answer: |
+      知识库无 logan/p2 文档，应明确知识不足（insufficient knowledge），不得编造网络名或位号。
+    required_sources: []
+    must_not_contain: []
+
+  - id: Q-018
+    title: 不存在的器件参数
+    category: negative
+    mandatory: true
+    filters:
+      project: global
+      build: global
+    scope_label: null
+    expect_refusal: true
+    question: STM32F407ZGT6 的 GPU 算力是多少 TFLOPS？
+    expected_answer: |
+      STM32F407 为 MCU，无独立 GPU；datasheet 无 TFLOPS 指标，应拒答或说明文档未提供/不适用，不得编造数值。
+    required_sources: []
+    optional_sources:
+      - data/processed/global/datasheet/STM32F407ZGT6.md
+    must_not_contain:
+      - TFLOPS
+      - GPU 核心数
+
+  - id: Q-019
+    title: 虚构项目
+    category: negative
+    mandatory: true
+    filters:
+      project: apollo
+      build: evt
+    scope_label: null
+    expect_refusal: true
+    question: apollo evt 版本的 PMIC 上 VBAT 网络是否连接到 U0902？
+    forbidden_scope:
+      project: apollo
+      build: evt
+    expected_answer: 当前索引无 apollo 项目任何文档，应拒答。
+    required_sources: []
+    must_not_contain:
+      - U0902
+      - VBAT 连接
+
+  - id: Q-020
+    title: STM32 主频稳定性
+    category: stability
+    mandatory: true
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: STM32F407 最高能跑多少 MHz？
+    paraphrases:
+      - What is the maximum CPU frequency of STM32F407ZGT6?
+      - F407 主频上限是多少？
+      - Cortex-M4F in STM32F407 — peak clock?
+    expected_answer: 168 MHz
+    expected_facts:
+      - "168 MHz"
+    required_sources:
+      - data/processed/global/datasheet/STM32F407ZGT6.md
+
+  - id: Q-021
+    title: Mahi LPCD 稳定性
+    category: stability
+    mandatory: false
+    filters:
+      project: kingboo
+      build: common
+    scope_label: common
+    question: LPCD 脉冲频率是多少？
+    paraphrases:
+      - Kingboo Mahi 文档里 Low Power Card Detection 的发送频率？
+      - NFC reader LPCD pulse rate in mahi_info?
+    expected_answer: 10 Hz
+    expected_facts:
+      - "10 Hz"
+    required_sources:
+      - data/processed/kingboo/common/note/mahi_info.md
+
+  - id: Q-022
+    title: FA 根因稳定性
+    category: stability
+    mandatory: false
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: XTPS612994YBHR 客退最终是什么原因？
+    paraphrases:
+      - TI 8D report QEM-CCR-2311-00781 root cause?
+      - 353S03433 这颗料 TI 判定是什么问题？
+    expected_answer: |
+      EIPD（Electrically Induced Physical Damage），最可能 EOS 导致；非批次系统性问题。
+    expected_facts:
+      - EIPD
+      - EOS
+    required_sources:
+      - data/processed/global/fa/QEM-CCR-2311-00781_XTPS612994YBHR.md

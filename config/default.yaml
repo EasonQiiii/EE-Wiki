@@ -105,6 +105,11 @@ retrieval:
   top_k_bm25: 20
   top_k_final: 8            # was 8; fewer chunks → shorter prompt, room for longer answers
   scope_inheritance: true
+  scope_cascade: true                    # tier cascade: build → common → global when inheritance on
+  scope_sufficient_rerank: -3.0          # tier "found"; below → expand to next phase
+  scope_quota_build: 6                   # max build-tier slots in final context (of top_k_final)
+  scope_quota_common: 2                  # max project-common supplement slots
+  scope_quota_global: 2                  # max global supplement slots
   top_k_dense: 4
   top_k_sparse: 4
   expand_sections: true   # merge sibling chunks from the same heading section

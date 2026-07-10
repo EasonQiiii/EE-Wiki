@@ -100,5 +100,6 @@ See [open-webui.md](open-webui.md) for Open WebUI integration.
 
 - [index.md](index.md) — building and updating indexes
 - [ingest.md](ingest.md) — raw → processed pipeline
+- [eval.md](eval.md) — golden QA regression testing (`eval_rag.py`)
 - [data-flow.md](../architecture/data-flow.md) — ingestion and query pipelines
 - [api-overview.md](../architecture/api-overview.md) — REST endpoint contracts

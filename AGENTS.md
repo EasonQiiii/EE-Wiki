@@ -254,6 +254,7 @@ When your change affects structure or behavior, update the minimal set:
 | Knowledge authoring / placement rules | `docs/usage/knowledge-authoring.md` |
 | Raw path convention or scope rules | `README.md` (Raw Data / Retrieval Scope) + this file §4 + `.cursor/rules/raw-data-retrieval.mdc` |
 | Ingest CLI behavior or flags | `docs/usage/ingest.md` |
+| RAG golden QA / eval CLI | `docs/eval/qa.md`, `docs/eval/qa.yaml`, `docs/usage/eval.md` |
 | New module or directory | `docs/architecture/repository-structure.md` |
 | Pipeline or data contract | `docs/architecture/data-flow.md` |
 | New HTTP endpoint | `docs/architecture/api-overview.md` |
