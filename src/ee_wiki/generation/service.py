@@ -48,6 +48,56 @@ class AnswerStreamResult:
 
 
 @dataclass
+class _RagPrepared:
+    """Normal path: prompt + chunks are ready to generate from."""
+
+    chunks: list[HybridChunk]
+    prompt: str
+    retrieval_query: str
+    resolved_task: str | None
+    prepared_task: str | None
+    top_rerank_score: float | None
+
+
+@dataclass
+class _RagTranslation:
+    """Route to the translation prompt (no retrieval)."""
+
+    question: str
+    history: list[ConversationTurn] | None
+    cancel_event: threading.Event | None
+
+
+@dataclass
+class _RagAssistant:
+    """Route to the assistant-meta prompt (weak KB evidence)."""
+
+    question: str
+    history: list[ConversationTurn] | None
+    prepared_task: str | None
+    retrieval_query: str
+
+
+@dataclass
+class _RagInsufficient:
+    """No chunks retrieved; caller emits the insufficient-context message."""
+
+
+@dataclass
+class _RagCancelled:
+    """A cancel event fired mid-pipeline; caller returns an empty result."""
+
+
+_RagStep = (
+    _RagPrepared
+    | _RagTranslation
+    | _RagAssistant
+    | _RagInsufficient
+    | _RagCancelled
+)
+
+
+@dataclass
 class RagService:
     """End-to-end RAG orchestration without direct database access."""
 
@@ -468,6 +518,118 @@ class RagService:
         """Return whether to skip retrieval and run the translation prompt."""
         return is_translation_task(caller_task) or is_translation_task(prepared_task)
 
+    def _prepare_and_retrieve(
+        self,
+        question: str,
+        *,
+        target_project: str | None = None,
+        target_build: str | None = None,
+        document_type: str | None = None,
+        top_k_final: int | None = None,
+        task: str | None = None,
+        cancel_event: threading.Event | None = None,
+        history: list[ConversationTurn] | None = None,
+    ) -> _RagStep:
+        """Run the shared pre-generation pipeline for both entry points.
+
+        ``answer`` and ``stream_answer`` share the identical steps up to prompt
+        rendering: translation detection, query preparation, scope resolution,
+        retrieval, assistant fallback, task resolution, and template rendering.
+        This helper performs them once and returns a discriminated result so each
+        caller can assemble its own return type (``RagAnswer`` vs
+        ``AnswerStreamResult``).
+        """
+        if cancel_event and cancel_event.is_set():
+            return _RagCancelled()
+
+        if is_translation_task(task):
+            return _RagTranslation(
+                question=question, history=history, cancel_event=cancel_event
+            )
+
+        prepared = self._prepare_for_retrieval(
+            question,
+            history,
+            task,
+            caller_project=target_project,
+            caller_build=target_build,
+            cancel_event=cancel_event,
+        )
+        if cancel_event and cancel_event.is_set():
+            return _RagCancelled()
+
+        if self._should_translate(task, prepared.task):
+            return _RagTranslation(
+                question=question, history=history, cancel_event=cancel_event
+            )
+
+        retrieval_query, resolved_project, resolved_build, scope_ranks = (
+            self._resolve_scope_for_retrieval(
+                question,
+                prepared,
+                caller_project=target_project,
+                caller_build=target_build,
+            )
+        )
+
+        retrieval = self.engine.retrieve(
+            retrieval_query,
+            target_project=resolved_project,
+            target_build=resolved_build,
+            document_type=document_type,
+            top_k_final=top_k_final,
+            scope_ranks_override=scope_ranks,
+        )
+        if cancel_event and cancel_event.is_set():
+            return _RagCancelled()
+
+        if self._should_use_assistant_fallback(task, retrieval):
+            return _RagAssistant(
+                question=question,
+                history=history,
+                prepared_task=prepared.task,
+                retrieval_query=retrieval_query,
+            )
+
+        chunks = retrieval.chunks
+        if not chunks:
+            logger.info("No chunks retrieved for question: %s", question)
+            return _RagInsufficient()
+
+        resolved_task = self._resolve_task(
+            task,
+            retrieval_query,
+            prepared.task,
+            cancel_event=cancel_event,
+        )
+        if cancel_event and cancel_event.is_set():
+            return _RagCancelled()
+
+        template = self._load_prompt_template(resolved_task)
+        context = format_context_blocks(chunks)
+        scope_rules = load_scope_rules(self.config.repo_root)
+        prompt = render_template(
+            template,
+            context=context,
+            question=question,
+            scope_rules=scope_rules,
+            history=resolve_history_for_prompt(
+                question,
+                history,
+                task=resolved_task,
+                prepared_task=prepared.task,
+                retrieval_query=retrieval_query,
+            ),
+        )
+        return _RagPrepared(
+            chunks=chunks,
+            prompt=prompt,
+            retrieval_query=retrieval_query,
+            resolved_task=resolved_task,
+            prepared_task=prepared.task,
+            top_rerank_score=retrieval.top_rerank_score,
+        )
+
     def answer(
         self,
         question: str,
@@ -495,106 +657,58 @@ class RagService:
         Returns:
             Answer text with citations, or an insufficient-context response.
         """
-        if cancel_event and cancel_event.is_set():
-            return RagAnswer(answer="", citations=[], insufficient_context=False)
-
-        if is_translation_task(task):
-            return self._answer_translation(question, history=history, cancel_event=cancel_event)
-
-        prepared = self._prepare_for_retrieval(
+        step = self._prepare_and_retrieve(
             question,
-            history,
-            task,
-            caller_project=target_project,
-            caller_build=target_build,
-            cancel_event=cancel_event,
-        )
-        if cancel_event and cancel_event.is_set():
-            return RagAnswer(answer="", citations=[], insufficient_context=False)
-
-        if self._should_translate(task, prepared.task):
-            return self._answer_translation(question, history=history, cancel_event=cancel_event)
-
-        retrieval_query, resolved_project, resolved_build, scope_ranks = (
-            self._resolve_scope_for_retrieval(
-                question,
-                prepared,
-                caller_project=target_project,
-                caller_build=target_build,
-            )
-        )
-
-        retrieval = self.engine.retrieve(
-            retrieval_query,
-            target_project=resolved_project,
-            target_build=resolved_build,
+            target_project=target_project,
+            target_build=target_build,
             document_type=document_type,
             top_k_final=top_k_final,
-            scope_ranks_override=scope_ranks,
+            task=task,
+            cancel_event=cancel_event,
+            history=history,
         )
-        if cancel_event and cancel_event.is_set():
+        if isinstance(step, _RagCancelled):
             return RagAnswer(answer="", citations=[], insufficient_context=False)
-
-        if self._should_use_assistant_fallback(task, retrieval):
+        if isinstance(step, _RagTranslation):
+            return self._answer_translation(
+                step.question, history=step.history, cancel_event=step.cancel_event
+            )
+        if isinstance(step, _RagAssistant):
             return self._answer_assistant_meta(
-                question,
-                history=history,
-                prepared_task=prepared.task,
-                retrieval_query=retrieval_query,
+                step.question,
+                history=step.history,
+                prepared_task=step.prepared_task,
+                retrieval_query=step.retrieval_query,
                 cancel_event=cancel_event,
             )
+        if isinstance(step, _RagInsufficient):
+            return RagAnswer(
+                answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True
+            )
 
-        chunks = retrieval.chunks
-        if not chunks:
-            logger.info("No chunks retrieved for question: %s", question)
-            return RagAnswer(answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True)
-
-        resolved_task = self._resolve_task(
-            task,
-            retrieval_query,
-            prepared.task,
-            cancel_event=cancel_event,
-        )
-        if cancel_event and cancel_event.is_set():
-            return RagAnswer(answer="", citations=[], insufficient_context=False)
-
-        template = self._load_prompt_template(resolved_task)
-        context = format_context_blocks(chunks)
-        scope_rules = load_scope_rules(self.config.repo_root)
-        prompt = render_template(
-            template,
-            context=context,
-            question=question,
-            scope_rules=scope_rules,
-            history=resolve_history_for_prompt(
-                question,
-                history,
-                task=resolved_task,
-                prepared_task=prepared.task,
-                retrieval_query=retrieval_query,
-            ),
-        )
-        size = prompt_size_fields(prompt)
+        size = prompt_size_fields(step.prompt)
         logger.info(
             "Generating answer from %d chunk(s) "
             "(task=%s, top_rerank=%s, prompt_chars=%d, prompt_tokens_est=%d)",
-            len(chunks),
-            resolved_task or self.template_task,
+            len(step.chunks),
+            step.resolved_task or self.template_task,
             (
-                f"{retrieval.top_rerank_score:.3f}"
-                if retrieval.top_rerank_score is not None
+                f"{step.top_rerank_score:.3f}"
+                if step.top_rerank_score is not None
                 else "n/a"
             ),
             size["prompt_chars"],
             size["prompt_tokens_est"],
         )
-        answer_text = self._generate_answer_text(prompt, cancel_event=cancel_event)
+        answer_text = self._generate_answer_text(step.prompt, cancel_event=cancel_event)
         if cancel_event and cancel_event.is_set():
             return RagAnswer(answer="", citations=[], insufficient_context=False)
         if not answer_text:
             logger.warning("LLM returned empty text; using insufficient-context fallback")
-            return RagAnswer(answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True)
-        return self._finalize_answer(answer_text, chunks, insufficient_context=False)
+            return RagAnswer(
+                answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True
+            )
+        return self._finalize_answer(answer_text, step.chunks, insufficient_context=False)
 
     def stream_answer(
         self,
@@ -624,150 +738,79 @@ class RagService:
             Citation list plus text fragments from the LLM. When retrieval finds
             nothing, ``text_chunks`` yields a single insufficient-context message.
         """
-        if cancel_event and cancel_event.is_set():
+        step = self._prepare_and_retrieve(
+            question,
+            target_project=target_project,
+            target_build=target_build,
+            document_type=document_type,
+            top_k_final=top_k_final,
+            task=task,
+            cancel_event=cancel_event,
+            history=history,
+        )
+        if isinstance(step, _RagCancelled):
             return AnswerStreamResult(citations=[], text_chunks=iter(()))
-
-        if is_translation_task(task):
+        if isinstance(step, _RagTranslation):
             prompt = build_translation_prompt(
                 self.config.repo_root,
-                question=question,
-                history=history,
+                question=step.question,
+                history=step.history,
                 template_name=self.template_name,
             )
-            log_translation_task(question)
+            log_translation_task(step.question)
 
             def _explicit_translation_stream() -> Iterator[str]:
                 yield from self._generate_answer_text_stream(
-                    prompt,
-                    cancel_event=cancel_event,
+                    prompt, cancel_event=step.cancel_event
                 )
 
             return AnswerStreamResult(
-                citations=[],
-                text_chunks=_explicit_translation_stream(),
+                citations=[], text_chunks=_explicit_translation_stream()
             )
-
-        prepared = self._prepare_for_retrieval(
-            question,
-            history,
-            task,
-            caller_project=target_project,
-            caller_build=target_build,
-            cancel_event=cancel_event,
-        )
-        if cancel_event and cancel_event.is_set():
-            return AnswerStreamResult(citations=[], text_chunks=iter(()))
-
-        if self._should_translate(task, prepared.task):
-            prompt = build_translation_prompt(
-                self.config.repo_root,
-                question=question,
-                history=history,
-                template_name=self.template_name,
-            )
-            log_translation_task(question)
-
-            def _translation_stream() -> Iterator[str]:
-                yield from self._generate_answer_text_stream(
-                    prompt,
-                    cancel_event=cancel_event,
-                )
-
-            return AnswerStreamResult(
-                citations=[],
-                text_chunks=_translation_stream(),
-            )
-
-        retrieval_query, resolved_project, resolved_build, scope_ranks = (
-            self._resolve_scope_for_retrieval(
-                question,
-                prepared,
-                caller_project=target_project,
-                caller_build=target_build,
-            )
-        )
-
-        retrieval = self.engine.retrieve(
-            retrieval_query,
-            target_project=resolved_project,
-            target_build=resolved_build,
-            document_type=document_type,
-            top_k_final=top_k_final,
-            scope_ranks_override=scope_ranks,
-        )
-        if cancel_event and cancel_event.is_set():
-            return AnswerStreamResult(citations=[], text_chunks=iter(()))
-
-        if self._should_use_assistant_fallback(task, retrieval):
+        if isinstance(step, _RagAssistant):
             prompt = self._build_assistant_prompt(
-                question,
-                history,
-                prepared_task=prepared.task,
-                retrieval_query=retrieval_query,
+                step.question,
+                history=step.history,
+                prepared_task=step.prepared_task,
+                retrieval_query=step.retrieval_query,
             )
 
             def _assistant_stream() -> Iterator[str]:
                 yield from self._generate_answer_text_stream(
-                    prompt,
-                    cancel_event=cancel_event,
+                    prompt, cancel_event=cancel_event
                 )
 
             return AnswerStreamResult(citations=[], text_chunks=_assistant_stream())
-
-        chunks = retrieval.chunks
-        if not chunks:
-            logger.info("No chunks retrieved for question: %s", question)
+        if isinstance(step, _RagInsufficient):
 
             def _insufficient() -> Iterator[str]:
                 yield INSUFFICIENT_ANSWER
 
             return AnswerStreamResult(citations=[], text_chunks=_insufficient())
 
-        resolved_task = self._resolve_task(
-            task,
-            retrieval_query,
-            prepared.task,
-            cancel_event=cancel_event,
-        )
-        if cancel_event and cancel_event.is_set():
-            return AnswerStreamResult(citations=[], text_chunks=iter(()))
-
-        template = self._load_prompt_template(resolved_task)
-        context = format_context_blocks(chunks)
-        scope_rules = load_scope_rules(self.config.repo_root)
-        prompt = render_template(
-            template,
-            context=context,
-            question=question,
-            scope_rules=scope_rules,
-            history=resolve_history_for_prompt(
-                question,
-                history,
-                task=resolved_task,
-                prepared_task=prepared.task,
-                retrieval_query=retrieval_query,
-            ),
-        )
-        size = prompt_size_fields(prompt)
+        size = prompt_size_fields(step.prompt)
         logger.info(
             "Streaming answer from %d chunk(s) "
             "(task=%s, top_rerank=%s, prompt_chars=%d, prompt_tokens_est=%d)",
-            len(chunks),
-            resolved_task or self.template_task,
+            len(step.chunks),
+            step.resolved_task or self.template_task,
             (
-                f"{retrieval.top_rerank_score:.3f}"
-                if retrieval.top_rerank_score is not None
+                f"{step.top_rerank_score:.3f}"
+                if step.top_rerank_score is not None
                 else "n/a"
             ),
             size["prompt_chars"],
             size["prompt_tokens_est"],
         )
-        citations = build_enriched_citations(chunks, self.config)
+
+        citations = build_enriched_citations(step.chunks, self.config)
 
         def _text_stream() -> Iterator[str]:
             if cancel_event and cancel_event.is_set():
                 return
-            yield from self._generate_answer_text_stream(prompt, cancel_event=cancel_event)
+            yield from self._generate_answer_text_stream(
+                step.prompt, cancel_event=cancel_event
+            )
 
         return AnswerStreamResult(citations=citations, text_chunks=_text_stream())
 

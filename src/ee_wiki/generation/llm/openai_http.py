@@ -108,6 +108,23 @@ class OpenAiLlmBackend:
     def _chat_completions_url(self) -> str:
         return f"{_normalize_base_url(self.base_url)}/chat/completions"
 
+    def _get_client(self) -> _HTTPX.Client:
+        """Return a long-lived, reused httpx.Client (connection pool).
+
+        The backend is a process-wide singleton, so creating the client once and
+        reusing it across requests avoids per-request TCP/TLS handshakes under
+        concurrent load. httpx.Client is thread-safe for sync calls.
+        """
+        httpx = _import_httpx()
+        client = getattr(self, "_client", None)
+        if client is None:
+            client = httpx.Client(
+                timeout=self._request_timeout(),
+                headers=_auth_headers(self.api_key),
+            )
+            self._client = client
+        return client
+
     def generate(
         self,
         prompt: str,
@@ -143,7 +160,6 @@ class OpenAiLlmBackend:
         if cancel_event and cancel_event.is_set():
             return
 
-        httpx = _import_httpx()
         token_budget = max_new_tokens or self.max_new_tokens
         size = prompt_size_fields(prompt)
         logger.info(
@@ -166,49 +182,48 @@ class OpenAiLlmBackend:
         started = time.monotonic()
         timeout = self._request_timeout()
 
-        with httpx.Client(timeout=timeout) as client:
-            try:
-                with client.stream(
-                    "POST",
-                    self._chat_completions_url(),
-                    json=payload,
-                    headers=headers,
-                ) as response:
-                    if response.status_code >= 400:
-                        body = response.read().decode("utf-8", errors="replace")
-                        raise LlmLoadError(
-                            f"OpenAI HTTP chat completion failed "
-                            f"({response.status_code}): {body[:500]}"
-                        )
+        client = self._get_client()
+        try:
+            with client.stream(
+                "POST",
+                self._chat_completions_url(),
+                json=payload,
+                headers=headers,
+            ) as response:
+                if response.status_code >= 400:
+                    body = response.read().decode("utf-8", errors="replace")
+                    raise LlmLoadError(
+                        f"OpenAI HTTP chat completion failed "
+                        f"({response.status_code}): {body[:500]}"
+                    )
 
-                    for line in response.iter_lines():
-                        check_stream_timeout(
-                            started,
-                            timeout_seconds=self.timeout_seconds,
-                            label="OpenAI HTTP stream generation",
-                        )
-                        if cancel_event and cancel_event.is_set():
-                            logger.info("OpenAI HTTP stream generation cancelled")
-                            return
-                        if not line:
-                            continue
-                        data = _parse_sse_data_line(line)
-                        if data is None:
-                            continue
-                        fragment = _extract_delta_content(data)
-                        if fragment:
-                            yield fragment
-            except _HTTPX.TimeoutException as exc:
-                limit = f"{timeout:.0f}s" if timeout else "configured timeout"
-                raise LlmTimeoutError(
-                    f"OpenAI HTTP stream generation exceeded {limit}"
-                ) from exc
-            except _HTTPX.HTTPError as exc:
-                raise LlmLoadError(f"OpenAI HTTP request failed: {exc}") from exc
+                for line in response.iter_lines():
+                    check_stream_timeout(
+                        started,
+                        timeout_seconds=self.timeout_seconds,
+                        label="OpenAI HTTP stream generation",
+                    )
+                    if cancel_event and cancel_event.is_set():
+                        logger.info("OpenAI HTTP stream generation cancelled")
+                        return
+                    if not line:
+                        continue
+                    data = _parse_sse_data_line(line)
+                    if data is None:
+                        continue
+                    fragment = _extract_delta_content(data)
+                    if fragment:
+                        yield fragment
+        except _HTTPX.TimeoutException as exc:
+            limit = f"{timeout:.0f}s" if timeout else "configured timeout"
+            raise LlmTimeoutError(
+                f"OpenAI HTTP stream generation exceeded {limit}"
+            ) from exc
+        except _HTTPX.HTTPError as exc:
+            raise LlmLoadError(f"OpenAI HTTP request failed: {exc}") from exc
 
     def generate_blocking(self, prompt: str, *, max_new_tokens: int | None = None) -> str:
         """Non-streaming completion (used internally when streaming is disabled)."""
-        httpx = _import_httpx()
         token_budget = max_new_tokens or self.max_new_tokens
         payload = _build_payload(
             model=self.model,
@@ -222,21 +237,21 @@ class OpenAiLlmBackend:
         }
 
         def _post() -> str:
-            with httpx.Client(timeout=self._request_timeout()) as client:
-                response = client.post(
-                    self._chat_completions_url(),
-                    json=payload,
-                    headers=headers,
+            client = self._get_client()
+            response = client.post(
+                self._chat_completions_url(),
+                json=payload,
+                headers=headers,
+            )
+            if response.status_code >= 400:
+                raise LlmLoadError(
+                    f"OpenAI HTTP chat completion failed "
+                    f"({response.status_code}): {response.text[:500]}"
                 )
-                if response.status_code >= 400:
-                    raise LlmLoadError(
-                        f"OpenAI HTTP chat completion failed "
-                        f"({response.status_code}): {response.text[:500]}"
-                    )
-                data = response.json()
-                if not isinstance(data, dict):
-                    raise LlmLoadError("OpenAI HTTP response was not a JSON object")
-                return _extract_message_content(data).strip()
+            data = response.json()
+            if not isinstance(data, dict):
+                raise LlmLoadError("OpenAI HTTP response was not a JSON object")
+            return _extract_message_content(data).strip()
 
         return call_with_timeout(
             _post,

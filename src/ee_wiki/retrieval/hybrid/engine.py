@@ -197,7 +197,36 @@ class HybridRagEngine:
         self.bm25 = BM25Okapi(bm25_corpus) if bm25_corpus else None
         self._section_index = build_section_index(self.knowledge_base)
         self._scope_catalog = None
+        self._build_embedding_matrix(embeddings, chunks)
         logger.info("Hybrid index loaded with %d chunk(s)", len(self.knowledge_base))
+
+    def _build_embedding_matrix(
+        self, embeddings: np.ndarray, chunks: list[Chunk]
+    ) -> None:
+        """Precompute an L2-normalized embedding matrix for fast dense scoring.
+
+        Only chunks whose persisted embedding is a usable vector participate.
+        Rows align with ``self._embedding_chunk_ids`` so the dense path can map
+        a filtered chunk back to its matrix row in O(1) via ``self._embed_id_to_row``.
+        """
+        rows: list[np.ndarray] = []
+        ids: list[str] = []
+        for index, chunk in enumerate(chunks):
+            emb = embeddings[index] if embeddings is not None else None
+            if emb is None:
+                continue
+            arr = np.asarray(emb, dtype=np.float32)
+            norm = float(np.linalg.norm(arr))
+            if norm < 1e-12:
+                continue
+            rows.append(arr / norm)
+            ids.append(chunk.chunk_id)
+        if rows:
+            self._embedding_matrix = np.vstack(rows).astype(np.float32, copy=False)
+        else:
+            self._embedding_matrix = np.zeros((0, 0), dtype=np.float32)
+        self._embedding_chunk_ids = ids
+        self._embed_id_to_row = {cid: row for row, cid in enumerate(ids)}
 
     def load_index(self) -> None:
         """Load a persisted index or build one from processed documents."""
@@ -258,8 +287,14 @@ class HybridRagEngine:
         target_project: str | None,
         target_build: str | None,
         limit: int,
+        bm25_scores: Any | None = None,
     ) -> list[HybridChunk]:
-        """Add build-schematic candidates for board interface pin queries."""
+        """Add build-schematic candidates for board interface pin queries.
+
+        ``bm25_scores`` is the precomputed full-corpus BM25 vector from
+        ``retrieve()``; passing it avoids recomputing ``get_scores`` for the
+        same query. Equivalent results, less redundant work.
+        """
         if not is_board_interface_pin_query(search_query) or not target_project:
             return []
         layout = self.config.data_layout
@@ -274,17 +309,15 @@ class HybridRagEngine:
                 project_shared_build=layout.project_shared_build,
             )
         ]
-        if not candidates or self.bm25 is None:
+        if not candidates or bm25_scores is None:
             return []
 
-        query_tokens = tokenize_hw_text(search_query)
-        all_scores = self.bm25.get_scores(query_tokens)
         scored: list[tuple[float, HybridChunk]] = []
         for chunk in candidates:
             position = self._chunk_positions.get(chunk.chunk_id)
             if position is None:
                 continue
-            scored.append((float(all_scores[position]), chunk))
+            scored.append((float(bm25_scores[position]), chunk))
         return [
             item[1]
             for item in sorted(scored, key=lambda item: item[0], reverse=True)[:limit]
@@ -393,21 +426,46 @@ class HybridRagEngine:
         self._load_embed_model()
         with self._model_lock:
             query_emb = self._embed_model.encode(search_query, convert_to_numpy=True)
-        dense_scores: list[tuple[float, HybridChunk]] = []
-        for chunk in filtered:
-            if chunk.embedding is None:
-                continue
-            score = float(
-                np.dot(query_emb, chunk.embedding)
-                / (np.linalg.norm(query_emb) * np.linalg.norm(chunk.embedding) + 1e-12)
-            )
-            dense_scores.append((score, chunk))
-        dense_selected = [
-            item[1]
-            for item in sorted(dense_scores, key=lambda item: item[0], reverse=True)[:dense_k]
-        ]
+        # Vectorized cosine scoring against the pre-normalized embedding matrix.
+        dense_selected: list[HybridChunk] = []
+        matrix = getattr(self, "_embedding_matrix", None)
+        id_to_row = getattr(self, "_embed_id_to_row", None)
+        if matrix is not None and matrix.shape[0] > 0 and id_to_row:
+            q = np.asarray(query_emb, dtype=np.float32)
+            q = q / (np.linalg.norm(q) + 1e-12)
+            row_idx: list[int] = []
+            row_ids: list[int] = []
+            for i, chunk in enumerate(filtered):
+                r = id_to_row.get(chunk.chunk_id)
+                if r is not None:
+                    row_idx.append(i)
+                    row_ids.append(r)
+            if row_ids:
+                sims = matrix[row_ids] @ q  # (m,) cosine similarity
+                k = min(dense_k, sims.shape[0])
+                order = np.argsort(-sims)[:k]
+                dense_selected = [filtered[row_idx[j]] for j in order]
+        else:
+            # Fallback: per-chunk loop (e.g. index loaded without a matrix).
+            dense_scores: list[tuple[float, HybridChunk]] = []
+            for chunk in filtered:
+                if chunk.embedding is None:
+                    continue
+                score = float(
+                    np.dot(query_emb, chunk.embedding)
+                    / (np.linalg.norm(query_emb) * np.linalg.norm(chunk.embedding) + 1e-12)
+                )
+                dense_scores.append((score, chunk))
+            dense_selected = [
+                item[1]
+                for item in sorted(dense_scores, key=lambda item: item[0], reverse=True)[:dense_k]
+            ]
 
+        # BM25 sparse scoring — computed once here and reused by the
+        # build-schematic recall path below (avoids a second full-corpus
+        # get_scores for the same query).
         sparse_selected: list[HybridChunk] = []
+        all_scores: Any | None = None
         if self.bm25 is not None:
             query_tokens = tokenize_hw_text(search_query)
             all_scores = self.bm25.get_scores(query_tokens)
@@ -437,6 +495,7 @@ class HybridRagEngine:
                 target_project=target_project,
                 target_build=target_build,
                 limit=dense_k,
+                bm25_scores=all_scores,
             )
             for chunk in schematic_selected:
                 if chunk.chunk_id not in seen:
