@@ -105,7 +105,7 @@ python3 scripts/eval_rag.py [options]
 | `--negative-rerank-ceiling` | `-2.0` | Max rerank score for negative retrieval passes |
 | `--case` | (all) | Repeatable; e.g. `--case Q-001 --case Q-003` |
 | `--category` | (all) | Repeatable; `datasheet`, `schematic`, `scope`, `negative`, … |
-| `--mandatory-only` | off | Run only mandatory cases (14 of 24) |
+| `--mandatory-only` | off | Run only mandatory cases (14 of 26) |
 | `--json` | off | Print JSON report to stdout |
 | `--output PATH` | — | Write JSON report to file |
 | `--fail-on-threshold` | off | Exit 1 when mandatory/negative thresholds fail |

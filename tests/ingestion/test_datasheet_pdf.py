@@ -117,6 +117,22 @@ def test_merge_pages_without_ocr_fidelity() -> None:
     assert "content" in result
 
 
+def test_merge_pages_enriches_figure_label_from_ocr() -> None:
+    pages = [
+        PageResult(
+            page_num=133,
+            markdown="| Symbol | Parameter | Min | Max | Unit |",
+            ocr_text=(
+                "Figure 58.\n"
+                "Synchronous non-multiplexed NOR/PSRAM read timings\n"
+            ),
+        ),
+    ]
+    result = merge_pages("STM32F407ZGT6", pages, ocr_fidelity=True)
+    assert "### Figure 58. Synchronous non-multiplexed NOR/PSRAM read timings" in result
+    assert "## Page 134" in result
+
+
 # --- Dispatch test ---
 
 

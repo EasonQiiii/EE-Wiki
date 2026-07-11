@@ -23,6 +23,11 @@ from ee_wiki.knowledge.indexer.component_index import (
     load_component_index,
 )
 from ee_wiki.retrieval.component_lookup import COMPONENT_LOOKUP_BOOST, lookup_tokens
+from ee_wiki.retrieval.datasheet_query import (
+    DatasheetQueryHints,
+    datasheet_rank_adjustment,
+    parse_datasheet_query_hints,
+)
 from ee_wiki.retrieval.metadata_boost import metadata_keyword_boost
 from ee_wiki.retrieval.query_boost import query_boost_tokens
 from ee_wiki.retrieval.query_expand import expand_hw_query
@@ -504,6 +509,47 @@ class HybridRagEngine:
             for item in sorted(sparse_scores, key=lambda item: item[0], reverse=True)[:sparse_k]
         ]
 
+    def _recall_datasheet_label_chunks(
+        self,
+        filtered: list[HybridChunk],
+        hints: DatasheetQueryHints,
+        *,
+        limit: int,
+    ) -> list[HybridChunk]:
+        """Inject chunks that explicitly mention requested Figure/Table labels or phrases."""
+        if not any(
+            (
+                hints.figure_numbers,
+                hints.table_numbers,
+                hints.required_phrases,
+            )
+        ):
+            return []
+
+        selected: list[HybridChunk] = []
+        seen: set[str] = set()
+        for chunk in filtered:
+            upper = chunk.content.upper()
+            matched = False
+            for number in hints.figure_numbers:
+                if f"FIGURE {number}" in upper:
+                    matched = True
+                    break
+            if not matched:
+                for number in hints.table_numbers:
+                    if f"TABLE {number}" in upper:
+                        matched = True
+                        break
+            if not matched and hints.required_phrases:
+                if all(phrase.upper() in upper for phrase in hints.required_phrases):
+                    matched = True
+            if matched and chunk.chunk_id not in seen:
+                seen.add(chunk.chunk_id)
+                selected.append(chunk)
+            if len(selected) >= limit:
+                break
+        return selected
+
     def _recall_candidates(
         self,
         filtered: list[HybridChunk],
@@ -547,6 +593,22 @@ class HybridRagEngine:
                     "Added %d build-schematic chunk(s) for board interface pin query",
                     len(schematic_selected),
                 )
+
+        datasheet_hints = parse_datasheet_query_hints(query)
+        datasheet_selected = self._recall_datasheet_label_chunks(
+            filtered,
+            datasheet_hints,
+            limit=max(dense_k, sparse_k),
+        )
+        if datasheet_selected:
+            for chunk in datasheet_selected:
+                if chunk.chunk_id not in seen:
+                    seen.add(chunk.chunk_id)
+                    combined.append(chunk)
+            logger.info(
+                "Added %d datasheet label chunk(s) for Figure/Table/phrase query",
+                len(datasheet_selected),
+            )
         return combined
 
     def _rerank_logits(
@@ -596,6 +658,7 @@ class HybridRagEngine:
             return scope_ranks.get(pair, 0) if scope_ranks else 0
 
         boost_tokens = query_boost_tokens(query)
+        datasheet_hints = parse_datasheet_query_hints(query)
         layout = self.config.data_layout
         board_pin_query = is_board_interface_pin_query(search_query)
         component_chunk_ids = lookup_tokens(
@@ -616,7 +679,12 @@ class HybridRagEngine:
             component_hits = (
                 COMPONENT_LOOKUP_BOOST if chunk.chunk_id in component_chunk_ids else 0
             )
-            return content_hits + (meta_hits * 2) + component_hits
+            datasheet_hits = datasheet_rank_adjustment(
+                chunk.content,
+                chunk.chunk_id,
+                datasheet_hints,
+            )
+            return content_hits + (meta_hits * 2) + component_hits + datasheet_hits
 
         return sorted(
             zip(logits, combined),

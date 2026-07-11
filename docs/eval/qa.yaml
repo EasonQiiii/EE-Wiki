@@ -491,3 +491,37 @@ cases:
       - "3"
     required_sources:
       - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+
+  - id: Q-027
+    title: STM32 Figure 58 内容
+    category: datasheet
+    mandatory: false
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: STM32F407 中 Figure 58 描述的是什么内容？
+    expected_answer: |
+      Figure 58 为 FSMC 同步非复用（non-multiplexed）NOR/PSRAM 读时序图/参数（PDF page 134）。
+    expected_facts:
+      - Figure 58
+      - non-multiplexed
+    required_sources:
+      - data/processed/global/datasheet/STM32F407ZGT6.md
+
+  - id: Q-028
+    title: STM32 non-multiplexed read timings
+    category: datasheet
+    mandatory: false
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: Synchronous non-multiplexed NOR/PSRAM read timings 的关键时序参数有哪些？
+    expected_answer: |
+      含 FSMC_CLK 周期 t_w(CLK)、NEx/NOE/NADV 相对 CLK 的延迟，以及 D[15:0] 数据建立/保持时间等（Table 77 / page 134）。
+    expected_facts:
+      - non-multiplexed
+      - FSMC
+    required_sources:
+      - data/processed/global/datasheet/STM32F407ZGT6.md

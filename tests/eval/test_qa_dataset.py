@@ -10,7 +10,7 @@ def test_qa_dataset_loads_and_validates() -> None:
     dataset = load_qa_dataset(repo_root=find_repo_root())
 
     assert dataset.version == "1.0"
-    assert len(dataset.cases) == 24
+    assert len(dataset.cases) == 26
     assert len(dataset.mandatory_cases()) == 14
     assert len(dataset.negative_cases()) == 3
 

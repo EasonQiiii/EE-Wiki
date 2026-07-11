@@ -27,3 +27,4 @@ Status: proposed | accepted | deprecated
 - [0002-v1-runtime-stack.md](0002-v1-runtime-stack.md) — on-disk index, sentence-transformers, MLX/Transformers LLM
 - [0003-external-llm-openai-compatible.md](0003-external-llm-openai-compatible.md) — OpenAI-compatible HTTP LLM backend
 - [0004-iwork-macos-export.md](0004-iwork-macos-export.md) — Keynote/Numbers ingest via macOS AppleScript export
+- [0005-datasheet-figure-table-retrieval.md](0005-datasheet-figure-table-retrieval.md) — Figure/Table vs Page retrieval, negated modifier ranking, ingest label enrichment

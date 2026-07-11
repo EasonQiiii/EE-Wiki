@@ -6,7 +6,7 @@ import re
 from dataclasses import replace
 
 from ee_wiki.common.config import ChunkingConfig
-from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
+from ee_wiki.common.serialization import DATASHEET_DOCUMENT_TYPE, SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import Chunk, Citation, Metadata, PageMetadata
 from ee_wiki.knowledge.loader import ProcessedRecord
 
@@ -14,6 +14,8 @@ _HEADING_PATTERN = re.compile(r"^(#{1,2})\s+(.+)$", re.MULTILINE)
 _H3_HEADING_PATTERN = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 _SLUG_PATTERN = re.compile(r"[^\w\-]+")
 HEADING_PATH_SEP = " › "
+_FIGURE_TABLE_LABEL = re.compile(r"\b(Figure|Table)\s+(\d+)\b", re.IGNORECASE)
+_MAX_CHUNK_KEYWORDS = 50
 
 
 def _iter_lines_outside_fences(content: str):
@@ -447,6 +449,39 @@ def _page_fields(record: ProcessedRecord, page_num: int) -> PageMetadata | None:
     return None
 
 
+def _extract_datasheet_chunk_labels(content: str, heading_path: str) -> list[str]:
+    """Collect Figure/Table labels from chunk text for metadata keyword boost."""
+    labels: list[str] = []
+    seen: set[str] = set()
+    for source in (heading_path, content):
+        for match in _FIGURE_TABLE_LABEL.finditer(source):
+            label = f"{match.group(1).title()} {match.group(2)}"
+            key = label.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            labels.append(label)
+    return labels
+
+
+def _merge_chunk_keywords(existing: list[str] | None, extra: list[str]) -> list[str]:
+    """Merge document keywords with chunk-local labels, preserving order."""
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in list(existing or []) + extra:
+        text = str(value).strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(text)
+        if len(merged) >= _MAX_CHUNK_KEYWORDS:
+            break
+    return merged
+
+
 def _build_chunk(
     record: ProcessedRecord,
     suffix: str,
@@ -473,6 +508,13 @@ def _build_chunk(
             metadata = replace(metadata, page=page, pages=None)
     elif metadata.pages is not None:
         metadata = replace(metadata, pages=None)
+    if record.metadata.document_type == DATASHEET_DOCUMENT_TYPE:
+        chunk_labels = _extract_datasheet_chunk_labels(content, heading_path)
+        if chunk_labels:
+            metadata = replace(
+                metadata,
+                keywords=_merge_chunk_keywords(metadata.keywords, chunk_labels),
+            )
     excerpt = _excerpt(content, config.excerpt_chars)
     citation = Citation(
         source_file=metadata.source_file,

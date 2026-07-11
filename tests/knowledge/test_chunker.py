@@ -285,3 +285,17 @@ def test_chunk_index_text_prepends_heading_path() -> None:
     indexed = chunk_index_text(chunks[0])
     assert indexed.startswith("Power\n\n## Power")
     assert chunks[0].content.startswith("## Power")
+
+
+def test_datasheet_chunk_includes_figure_keywords() -> None:
+    content = (
+        "## Page 134\n\n"
+        "### Figure 58. Synchronous non-multiplexed NOR/PSRAM read timings\n\n"
+        "| Symbol | Parameter | Min | Max | Unit |\n"
+    )
+    config = ChunkingConfig()
+    record = _record(stem="STM32F407ZGT6", content=content, document_type="datasheet")
+    chunks = chunk_processed_record(record, config)
+
+    assert chunks
+    assert "Figure 58" in chunks[0].metadata.keywords

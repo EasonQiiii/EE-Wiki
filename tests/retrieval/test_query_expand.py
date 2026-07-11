@@ -8,8 +8,14 @@ from ee_wiki.retrieval.query_expand import expand_hw_query
 _PIN_QUERY = "proj_a build_b 的 module_x pin 有哪几组信号"
 
 
-def test_expand_hw_query_is_noop() -> None:
+def test_expand_hw_query_is_noop_for_generic_queries() -> None:
     assert expand_hw_query(_PIN_QUERY) == _PIN_QUERY
+
+
+def test_expand_hw_query_appends_figure_token() -> None:
+    expanded = expand_hw_query("STM32F407 Figure 58")
+    assert expanded.startswith("STM32F407 Figure 58")
+    assert "Figure 58" in expanded
 
 
 def test_query_boost_tokens_use_query_terms_only() -> None:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ee_wiki.ingestion.parsers.datasheet_pdf.labels import enrich_page_markdown_with_labels
+
 
 @dataclass(frozen=True)
 class PageResult:
@@ -29,8 +31,11 @@ def merge_pages(title: str, pages: list[PageResult], *, ocr_fidelity: bool = Tru
 
     for page in pages:
         sections.append(f"## Page {page.page_num + 1}\n")
-        if page.markdown.strip():
-            sections.append(page.markdown.strip())
+        body = page.markdown.strip()
+        if ocr_fidelity and page.ocr_text.strip():
+            body = enrich_page_markdown_with_labels(body, page.ocr_text)
+        if body:
+            sections.append(body)
         sections.append("")
 
     if ocr_fidelity:

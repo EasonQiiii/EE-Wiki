@@ -644,11 +644,53 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 
 ---
 
+### Q-027 · Datasheet · Figure 58（Figure/Page 消歧）
+
+| 字段 | 内容 |
+|------|------|
+| id | Q-027 |
+| category | datasheet |
+| mandatory | false |
+| filters | `project=global, build=global` |
+| scope_label | global |
+
+**问题**：STM32F407 中 Figure 58 描述的是什么内容？
+
+**期望答案**：Figure 58 = **Synchronous non-multiplexed NOR/PSRAM read timings**（PDF page 134 / Table 77）。
+
+**required_sources**：
+- `data/processed/global/datasheet/STM32F407ZGT6.md`
+
+**验证**：Figure N vs Page N 检索消歧（ADR 0005）
+
+---
+
+### Q-028 · Datasheet · non-multiplexed 读时序
+
+| 字段 | 内容 |
+|------|------|
+| id | Q-028 |
+| category | datasheet |
+| mandatory | false |
+| filters | `project=global, build=global` |
+| scope_label | global |
+
+**问题**：Synchronous non-multiplexed NOR/PSRAM read timings 的关键时序参数有哪些？
+
+**期望答案**：含 **FSMC_CLK** 周期、NEx/NOE/NADV 相对 CLK 延迟、**D[15:0]** 数据建立/保持等（page 134）。
+
+**required_sources**：
+- `data/processed/global/datasheet/STM32F407ZGT6.md`
+
+**验证**：`non-multiplexed` vs `multiplexed` 变体排序（ADR 0005）
+
+---
+
 ## 5. 分类汇总
 
 | 类别 | 题号 | 数量 | 测什么 |
 |------|------|------|--------|
-| datasheet | Q-001, Q-024 | 2 | 器件规格忠实度 + V2 结构化字段 |
+| datasheet | Q-001, Q-024, Q-027, Q-028 | 4 | 器件规格 + Figure/Table 精确定位 |
 | schematic | Q-003, Q-004, Q-005, Q-023, Q-026 | 5 | 原理图检索、页级元数据、component index |
 | scope / project common | Q-006–Q-009, Q-015, Q-016 | 6 | 范围继承、跨项目隔离 |
 | fa | Q-010, Q-022, Q-025 | 3 | 失效分析报告 + V2 FA keywords |
@@ -656,7 +698,7 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 | platform | Q-012, Q-013 | 2 | 工程手册与平台说明 |
 | negative | Q-017–Q-019 | 3 | 拒答与防幻觉 |
 | stability | Q-020–Q-022 | 3 | 表述鲁棒性 |
-| **合计** | | **24** | |
+| **合计** | | **26** | |
 
 **必答题（mandatory）**：Q-001, Q-003, Q-004, Q-006, Q-007, Q-010, Q-015, Q-016, Q-017, Q-018, Q-019, Q-020, Q-023, Q-024 — 共 **14** 题。
 
