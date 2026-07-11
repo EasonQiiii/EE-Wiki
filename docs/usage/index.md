@@ -43,6 +43,7 @@ This reads all processed documents under `data/processed/`, chunks them, embeds 
 - `chunks.jsonl` — chunk text and citation metadata
 - `embeddings.npz` — dense vectors aligned with chunks
 - `bm25_corpus.json` — tokenized corpus for sparse recall
+- `components.json` — **V2** inverted index of designators and part numbers → chunk references (for `GET /v1/components/search` and retrieval boost)
 
 ## Incremental index (default)
 
@@ -74,7 +75,7 @@ After deleting raw files, run `python scripts/sync.py` or ingest then index — 
 python scripts/index.py --force
 ```
 
-Use `--force` after chunker config changes (`config/default.yaml` → `chunking.*`) or when you want to refresh every embedding vector. Chunk boundaries are fixed at index time; retrieval does not re-chunk.
+Use `--force` after chunker config changes (`config/default.yaml` → `chunking.*`) or when you want to refresh every embedding vector. Also use `--force` after V2 metadata upgrades (schematic `pages` sidecar, datasheet structured fields, FA keywords) so all chunks and `components.json` are rebuilt.
 
 ## Device settings
 
@@ -108,4 +109,5 @@ On Apple Silicon, index embedding defaults to **CPU** (`indexing.embed_device: c
 
 - [ingest.md](ingest.md) — raw → processed pipeline
 - [query.md](query.md) — retrieval and RAG queries
+- [mcp.md](mcp.md) — component lookup and `components.json`
 - [data-flow.md](../architecture/data-flow.md) — chunking and index pipeline

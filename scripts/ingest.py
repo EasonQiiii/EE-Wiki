@@ -11,6 +11,7 @@ import logging
 import sys
 from pathlib import Path
 
+from ee_wiki.common.cli_summary import print_ingest_run_summary
 from ee_wiki.common.config import load_config
 from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
@@ -75,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
         f"removed (raw deleted): {len(run.removed)}",
         file=sys.stderr,
     )
+    if print_ingest_run_summary(run, raw_dir=config.raw_dir):
+        return 1
     return 0
 
 

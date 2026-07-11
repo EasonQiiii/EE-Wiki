@@ -17,6 +17,12 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import metadata_to_dict
 from ee_wiki.common.types import Chunk
 from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
+from ee_wiki.knowledge.indexer.component_index import (
+    ComponentHit,
+    ComponentIndex,
+    load_component_index,
+)
+from ee_wiki.retrieval.component_lookup import COMPONENT_LOOKUP_BOOST, lookup_tokens
 from ee_wiki.retrieval.metadata_boost import metadata_keyword_boost
 from ee_wiki.retrieval.query_boost import query_boost_tokens
 from ee_wiki.retrieval.query_expand import expand_hw_query
@@ -136,6 +142,7 @@ class HybridRagEngine:
     _model_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _section_index: dict[str, list[HybridChunk]] = field(default_factory=dict, repr=False)
     _scope_catalog: ScopeCatalog | None = field(default=None, repr=False)
+    _component_index: ComponentIndex | None = field(default=None, repr=False)
 
     def get_scope_catalog(self) -> ScopeCatalog:
         """Return cached product/revision catalog derived from the loaded index."""
@@ -205,6 +212,7 @@ class HybridRagEngine:
         self.bm25 = BM25Okapi(bm25_corpus) if bm25_corpus else None
         self._section_index = build_section_index(self.knowledge_base)
         self._scope_catalog = None
+        self._component_index = load_component_index(self.config.indexes_dir)
         self._build_embedding_matrix(embeddings, chunks)
         logger.info("Hybrid index loaded with %d chunk(s)", len(self.knowledge_base))
 
@@ -578,6 +586,8 @@ class HybridRagEngine:
         query: str,
         search_query: str,
         scope_ranks: dict[tuple[str, str], int],
+        target_project: str | None = None,
+        target_build: str | None = None,
     ) -> list[tuple[float, HybridChunk]]:
         """Sort reranked candidates; lower scope rank and higher logit win."""
 
@@ -588,6 +598,14 @@ class HybridRagEngine:
         boost_tokens = query_boost_tokens(query)
         layout = self.config.data_layout
         board_pin_query = is_board_interface_pin_query(search_query)
+        component_chunk_ids = lookup_tokens(
+            self._component_index,
+            boost_tokens,
+            layout=layout,
+            target_project=target_project,
+            target_build=target_build,
+            scope_inheritance=self.config.retrieval.scope_inheritance,
+        )
 
         def keyword_boost(chunk: HybridChunk) -> int:
             if not boost_tokens:
@@ -595,7 +613,10 @@ class HybridRagEngine:
             upper = chunk.content.upper()
             content_hits = sum(1 for token in boost_tokens if token.upper() in upper)
             meta_hits = metadata_keyword_boost(chunk.metadata, boost_tokens)
-            return content_hits + (meta_hits * 2)
+            component_hits = (
+                COMPONENT_LOOKUP_BOOST if chunk.chunk_id in component_chunk_ids else 0
+            )
+            return content_hits + (meta_hits * 2) + component_hits
 
         return sorted(
             zip(logits, combined),
@@ -650,6 +671,8 @@ class HybridRagEngine:
             query=query,
             search_query=search_query,
             scope_ranks=scope_ranks,
+            target_project=target_project,
+            target_build=target_build,
         )
         return [(float(score), chunk) for score, chunk in scored], top_rerank_score
 
@@ -828,6 +851,41 @@ class HybridRagEngine:
 
         hits = [chunk for _, chunk in scored[:final_k]]
         return RetrievalResult(chunks=hits, top_rerank_score=top_rerank_score)
+
+    def search_components(
+        self,
+        query: str,
+        *,
+        target_project: str | None = None,
+        target_build: str | None = None,
+        limit: int = 20,
+    ) -> list[ComponentHit]:
+        """Look up part numbers or designators in the component index.
+
+        Args:
+            query: Part number or schematic reference designator.
+            target_project: Optional project metadata filter.
+            target_build: Optional build metadata filter.
+            limit: Maximum number of hits to return.
+
+        Returns:
+            Matching component hits scoped to the requested project/build.
+        """
+        from ee_wiki.retrieval.component_lookup import search_components as lookup_components
+
+        if not self.knowledge_base:
+            self.load_index()
+        if self._component_index is None:
+            self._component_index = load_component_index(self.config.indexes_dir)
+        return lookup_components(
+            self._component_index,
+            query,
+            layout=self.config.data_layout,
+            target_project=target_project,
+            target_build=target_build,
+            scope_inheritance=self.config.retrieval.scope_inheritance,
+            limit=limit,
+        )
 
     def retrieve(
         self,

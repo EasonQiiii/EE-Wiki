@@ -88,3 +88,26 @@ def test_real_datasheet_content() -> None:
     assert "1A" in keywords
     has_sot = any("SOT" in k for k in keywords)
     assert has_sot
+
+
+def test_extracts_failure_analysis_keywords() -> None:
+    content = """
+    RMA RMA-2024-001 for batch LOT B2024-117.
+    Symptom: no boot after thermal runaway during over-voltage event.
+    Failure mode: ESD damage on input. Date code DC 2445.
+    """
+    keywords = extract_keywords(content, document_type="failure_analysis")
+    assert "LOT:B2024-117" in keywords
+    assert "RMA:RMA-2024-001" in keywords
+    assert "ESD" in keywords
+    assert "THERMAL_RUNAWAY" in keywords
+    assert "OVER_VOLTAGE" in keywords
+    assert "NO_BOOT" in keywords
+    assert "DATECODE:2445" in keywords
+
+
+def test_fa_keywords_skipped_for_other_document_types() -> None:
+    content = "LOT ABC123 no boot thermal runaway"
+    keywords = extract_keywords(content, document_type="sop")
+    assert not any(k.startswith("LOT:") for k in keywords)
+    assert "NO_BOOT" not in keywords

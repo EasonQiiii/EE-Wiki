@@ -13,7 +13,7 @@ Humans define architecture. AI implements details within these boundaries.
 | **Name** | EE-Wiki |
 | **Purpose** | Offline, AI-native electronic engineering knowledge platform |
 | **Role** | Backend knowledge engine; Open WebUI is the frontend |
-| **Current phase** | V1 — offline hybrid RAG (production hardening) |
+| **Current phase** | V2 — engineering metadata, component DB, datasheet parser, MCP tools |
 
 Read [README.md](README.md) for vision and principles — especially [Raw Data Layout](README.md#raw-data-layout) and [Retrieval Scope](README.md#retrieval-scope). Read [docs/architecture/repository-structure.md](docs/architecture/repository-structure.md) before creating or moving files.
 
@@ -60,7 +60,7 @@ src/ee_wiki/
 ├── retrieval/     → Metadata filter → embed + BM25 → merge → rerank
 ├── generation/    → Prompt assembly + local LLM
 ├── graph/         → Knowledge graph (V3+, stub OK until then)
-├── tools/         → MCP / function tools (V2+)
+├── tools/         → MCP / function tools (V2)
 ├── protocols/     → Interfaces all implementations must satisfy
 └── common/        → Types, config, logging, errors
 
@@ -203,7 +203,14 @@ When implementing, respect the roadmap in README.md:
 **V2 progress (implemented):**
 
 - **Datasheet Parser** — VLM page-level extraction with page classification (text/table/graph/mixed), auto-dispatch for `datasheet/` paths
-- **Engineering Metadata** — automatic keyword extraction (part numbers, voltages, protocols, packages) during ingestion; populates `keywords` field for metadata boost in retrieval
+- **Datasheet structured fields** — `supply_voltage`, `pin_count`, `package`, `interfaces` on datasheet metadata (regex heuristics post-VLM)
+- **Engineering Metadata** — automatic keyword extraction (part numbers, voltages, protocols, packages) during ingestion; populates `keywords` for metadata boost
+- **FA metadata** — `fa/` → `failure_analysis`; FA-specific keywords (failure modes, symptoms, RMA/LOT/DATECODE tokens)
+- **Chunk-level schematic metadata** — per-page `major_components` / `nets` / `interfaces` on indexed chunks via `pages` sidecar
+- **Component Database** — `data/indexes/components.json`, retrieval boost, `GET /v1/components/search`
+- **HTTP ingest admin** — `POST /v1/ingest` (orchestrates `sync.py` pipeline)
+- **MCP Tools** — read-only tools in `src/ee_wiki/tools/` via `scripts/mcp_serve.py`
+- **Protocols** — `protocols/parser.py`, `protocols/retriever.py`, `protocols/index_store.py` (stubs before second backends)
 
 If a task belongs to a future version, implement a **protocol + stub** or document the interface only — do not build the full feature unless explicitly requested.
 
@@ -257,7 +264,7 @@ When your change affects structure or behavior, update the minimal set:
 | RAG golden QA / eval CLI | `docs/eval/qa.md`, `docs/eval/qa.yaml`, `docs/usage/eval.md` |
 | New module or directory | `docs/architecture/repository-structure.md` |
 | Pipeline or data contract | `docs/architecture/data-flow.md` |
-| New HTTP endpoint | `docs/architecture/api-overview.md` |
+| New HTTP endpoint | `docs/architecture/api-overview.md`, `docs/usage/mcp.md` (V2 tools) |
 | Technology choice | New file under `docs/adr/` |
 | User-facing vision shift | `README.md` (only when asked) |
 
@@ -328,4 +335,4 @@ V1 baseline is decided — do not re-litigate without a new ADR:
 
 ---
 
-*Last updated: V1 phase, scope expansion paths, ADR-backed runtime stack.*
+*Last updated: V2 phase — metadata, component DB, MCP tools, ingest API.*

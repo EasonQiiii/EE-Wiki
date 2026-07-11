@@ -195,6 +195,20 @@ Run on real engineering documents before declaring V1 complete:
 - [ ] `serve.py` + Open WebUI: `[1]` markers link to processed documents
 - [ ] `pytest` and `ruff check src tests` pass
 
+## V2 acceptance checklist
+
+After V2 metadata and tooling upgrades, additionally verify:
+
+- [ ] Re-ingest `sch/` with `--force` → schematic sidecar includes `pages`; chunks have per-page `major_components`
+- [ ] Re-ingest `datasheet/` PDFs → sidecar has `supply_voltage` / `pin_count` / `package` where applicable
+- [ ] FA reports under `fa/` → `document_type=failure_analysis` and FA keywords in sidecar
+- [ ] `data/indexes/components.json` exists after index; `GET /v1/components/search?q=U101` returns hits
+- [ ] `python scripts/mcp_serve.py` starts; Cursor can call `search_component_tool` / `query_schematic_tool`
+- [ ] `POST /v1/ingest` with `{"force":true}` completes (admin network only)
+- [ ] Mandatory eval: `python scripts/eval_rag.py --mandatory-only --fail-on-threshold`
+
+See [mcp.md](mcp.md) for re-sync commands.
+
 ## Related docs
 
 - [knowledge-authoring.md](knowledge-authoring.md) — write & place documents (spec for AI reformatting)
@@ -202,4 +216,5 @@ Run on real engineering documents before declaring V1 complete:
 - [index.md](index.md) — processed → indexes
 - [query.md](query.md) — CLI retrieval and RAG
 - [open-webui.md](open-webui.md) — frontend connection
+- [mcp.md](mcp.md) — V2 tools (component lookup, MCP, HTTP ingest)
 - [api-overview.md](../architecture/api-overview.md) — HTTP contracts

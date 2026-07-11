@@ -61,6 +61,8 @@ Supported formats (V1):
 |--------|---------|
 | `note/`, `sop/`, `datasheet/`, etc. | `.md`, `.markdown`, `.txt`, `.pdf` (text + OCR), `.xlsx`, `.doc`, `.docx`, `.key`, `.numbers` (macOS) |
 | `sch/` | `.pdf` (schematic vision pipeline) |
+| `datasheet/` | `.pdf` (datasheet VLM pipeline when under `datasheet/`; prose PDF + OCR otherwise) |
+| `fa/` | `.md`, `.txt`, `.pdf`, `.doc`, `.docx` (failure analysis reports) |
 
 Prose PDFs (`note/`, `sop/`, `datasheet/`, …) extract embedded text per page. Pages with little selectable text fall back to **Tesseract OCR** via PyMuPDF. Install Tesseract locally for scanned documents:
 
@@ -310,7 +312,40 @@ Prose PDFs (`note/`, `sop/`, `datasheet/`, …) emit per-page `## Page N` sectio
 2. **Qwen3-VL** — reconstruct Markdown from OCR text + crop image (system FA expert prompt)
 3. **Fallback** — rule-based report if VLM fails
 
-Output merges per-page reports under one `# 电子图纸分析报告：{title}` document. Metadata includes `major_components`, `nets`, and `interfaces`.
+Output merges per-page reports under one `# 电子图纸分析报告：{title}` document. Metadata includes document-level `major_components`, `nets`, and `interfaces`.
+
+**V2 — per-page sidecar:** schematic ingest also writes a `pages` array in `.meta.json` (one entry per PDF page with that page's components/nets/interfaces). At index time the chunker attaches page-scoped metadata to each schematic chunk. Re-ingest existing `sch/` PDFs with `--force` to populate `pages`; then re-index.
+
+### Datasheet PDFs (`datasheet/`)
+
+PDFs under `.../datasheet/` use the **datasheet VLM pipeline** (page classification: text / table / graph / mixed, then Qwen3-VL extraction). Config: `config/default.yaml` → `ingestion.datasheet_pdf`.
+
+**V2 — structured metadata** (regex heuristics on merged VLM Markdown, no extra model calls):
+
+| Field | Example |
+|-------|---------|
+| `supply_voltage` | `["3.3V", "2.0V-3.6V"]` |
+| `pin_count` | `144` |
+| `package` | `LQFP144` |
+| `interfaces` | `["I2C", "SPI"]` |
+
+These fields improve retrieval boost for spec and pinout questions. Re-ingest `datasheet/` PDFs with `--force` after upgrading to V2.
+
+### Failure analysis (`fa/`)
+
+Documents under `.../fa/` map to `document_type: failure_analysis` (see `data_layout.document_type_folders` in config). During ingest, FA-specific **keywords** are extracted: failure modes (`ESD`, `THERMAL_RUNAWAY`, …), symptoms (`NO_BOOT`, `INTERMITTENT`, …), and traceability tokens (`RMA:…`, `LOT:…`, `DATECODE:…`). Place RMA reports, 8D summaries, and FA write-ups under `data/raw/{project}/{build}/fa/` or `{project}/common/fa/`.
+
+### HTTP ingest (admin)
+
+When the API server is running, you can trigger ingest + index over HTTP instead of CLI:
+
+```bash
+curl -X POST http://localhost:8080/v1/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"logan/p1/sch","force":true}'
+```
+
+See [mcp.md](mcp.md) and [api-overview.md](../architecture/api-overview.md).
 
 ## CLI summary
 
@@ -341,4 +376,5 @@ Output merges per-page reports under one `# 电子图纸分析报告：{title}` 
 
 - [README — Raw Data Layout](../../README.md#raw-data-layout)
 - [README — Metadata Standard](../../README.md#metadata-standard)
+- [mcp.md](mcp.md) — component lookup, MCP tools, HTTP ingest
 - [data-flow.md](../architecture/data-flow.md) — pipeline overview

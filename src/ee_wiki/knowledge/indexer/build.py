@@ -21,6 +21,7 @@ from ee_wiki.knowledge.chunker import (
     chunk_processed_record,
     chunk_processed_records,
 )
+from ee_wiki.knowledge.indexer.component_index import save_component_index
 from ee_wiki.knowledge.indexer.store import (
     IndexManifest,
     PersistedIndex,
@@ -171,6 +172,7 @@ def _full_build(
         bm25_corpus=bm25_corpus,
         source_fingerprints=_record_fingerprints(records),
     )
+    save_component_index(chunks, config.indexes_dir)
     return IndexBuildResult(
         manifest=manifest,
         chunk_count=len(chunks),
@@ -341,6 +343,7 @@ def build_index_from_processed(
         bm25_corpus=bm25_corpus,
         source_fingerprints=_record_fingerprints(records),
     )
+    save_component_index(chunks, config.indexes_dir)
     return IndexBuildResult(
         manifest=manifest,
         chunk_count=len(chunks),

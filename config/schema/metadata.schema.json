@@ -27,11 +27,49 @@
     "interfaces": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Schematic documents only (sch/)"
+      "description": "Schematic (sch/) module/interface names; datasheet protocol names (I2C, SPI, …)"
+    },
+    "supply_voltage": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Datasheet documents only — supply voltage rails or ranges (e.g. 3.3V, 2.0V-3.6V)"
+    },
+    "pin_count": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Datasheet documents only — package pin count when detected"
+    },
+    "package": {
+      "type": "string",
+      "description": "Datasheet documents only — primary package designator (e.g. LQFP144, QFN-48)"
     },
     "keywords": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "pages": {
+      "type": "array",
+      "description": "Schematic documents only (sch/) — per-page metadata for chunk indexing",
+      "items": {
+        "type": "object",
+        "required": ["page"],
+        "properties": {
+          "page": { "type": "integer", "minimum": 1 },
+          "major_components": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "nets": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "interfaces": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "version": { "type": "string" }
   },

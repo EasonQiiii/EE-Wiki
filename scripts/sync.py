@@ -8,6 +8,7 @@ import logging
 import sys
 from pathlib import Path
 
+from ee_wiki.common.cli_summary import print_ingest_run_summary
 from ee_wiki.common.config import load_config
 from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
@@ -71,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_config()
         target = args.path or config.raw_dir
+        exit_code = 0
 
         if not args.index_only:
             ingest_run = ingest_path(target, config, force=args.force)
@@ -85,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"removed (raw deleted): {len(ingest_run.removed)}",
                 file=sys.stderr,
             )
+            if print_ingest_run_summary(ingest_run, raw_dir=config.raw_dir):
+                exit_code = 1
 
         if not args.ingest_only:
             index_result = build_index_from_processed(config, force=args.force)
@@ -101,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("%s", exc)
         return 1
 
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -41,7 +41,8 @@ Is it shared by ALL projects (tools, industry terms, generic datasheets)?
 | `note/` | `engineering_note` | Notes, glossaries, background, debug write-ups, architecture prose |
 | `sop/` | `sop` | Procedures, checklists, bring-up flows |
 | `sch/` | `schematic` | Schematic PDFs (VLM ingest) |
-| `datasheet/` | `datasheet` | Component datasheet PDFs |
+| `datasheet/` | `datasheet` | Component datasheet PDFs (VLM ingest under `datasheet/`) |
+| `fa/` | `failure_analysis` | RMA reports, 8D, FA summaries, defect analysis write-ups |
 
 **Authoring tip:** industry acronyms, product lifecycle (EVT/DVT/PVT), and general EE background → prefer `global/note/` (split into focused files, see below).
 
@@ -211,13 +212,14 @@ When asking an AI to clean up a messy source file, provide:
 - [ ] Filenames are descriptive
 - [ ] Large glossaries split into multiple files
 - [ ] Sensitive or customer-specific paths are acceptable for your repo policy
-- [ ] Run `python scripts/sync.py data/raw/<path>/`
+- [ ] Run `python scripts/sync.py data/raw/<path>/` (or `POST /v1/ingest` — see [mcp.md](mcp.md))
 
 ---
 
 ## Related docs
 
 - [ingest.md](ingest.md) — ingest CLI and formats
+- [mcp.md](mcp.md) — V2 re-sync, HTTP ingest, component lookup
 - [README — Raw Data Layout](../../README.md#raw-data-layout)
 - [README — Retrieval Scope & answer presentation](../../README.md#retrieval-scope)
 - [query.md](query.md) — testing retrieval with `--project` / `--build`

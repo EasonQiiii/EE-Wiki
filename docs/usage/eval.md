@@ -171,8 +171,9 @@ Q-001    Y     Y    Y     Y     Y    STM32F407 核心参数
 
 1. After a large ingest / reindex, update the corpus snapshot at the top of [qa.md](../eval/qa.md) and in [qa.yaml](../eval/qa.yaml) (`corpus.chunk_count`, `corpus.built_at`).
 2. Add 2–3 cases per new project or document type; keep the same fields as existing entries in `qa.yaml`.
-3. Run `pytest tests/eval/` to validate YAML schema and scoring helpers.
-4. Re-run `python3 scripts/eval_rag.py --mandatory-only` and compare against your last saved JSON report.
+3. After V2 metadata upgrades (schematic `pages`, datasheet structured fields, FA keywords, `components.json`), re-ingest + re-index before eval — see [mcp.md](mcp.md).
+4. Run `pytest tests/eval/` to validate YAML schema and scoring helpers.
+5. Re-run `python3 scripts/eval_rag.py --mandatory-only` and compare against your last saved JSON report.
 
 Programmatic access:
 

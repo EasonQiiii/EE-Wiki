@@ -147,4 +147,5 @@ The index stores chunk embeddings only. Query-time embedding and reranking are r
 ## Related docs
 
 - [query.md](query.md) — CLI retrieval and RAG usage
+- [mcp.md](mcp.md) — V2 component lookup and MCP tools
 - [api-overview.md](../architecture/api-overview.md) — endpoint contracts

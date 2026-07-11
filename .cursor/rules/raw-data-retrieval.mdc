@@ -13,7 +13,9 @@ Raw path layout: `data/raw/{project}/{build}/{type}/<file>`
 | `common` | `data/raw/{project}/common/` | All builds in that project | Project-wide knowledge: architecture, naming, cross-build SOPs |
 | `{build}` | e.g. `p1` | Specific hardware build | Build truth: schematics and docs for that revision |
 
-Folders `note`, `sch`, `sop`, `datasheet` → `document_type` via `config/default.yaml` → `data_layout.document_type_folders`.
+Folders `note`, `sch`, `sop`, `datasheet`, `fa` → `document_type` via `config/default.yaml` → `data_layout.document_type_folders`.
+
+V2 ingest metadata: schematic `pages` sidecar (per-page components/nets); datasheet `supply_voltage`/`pin_count`/`package`; FA keywords on `failure_analysis`; `components.json` built at index time.
 
 ## Ingestion
 

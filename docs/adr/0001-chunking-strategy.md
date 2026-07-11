@@ -114,5 +114,5 @@ Implementation: `src/ee_wiki/knowledge/chunker.py` (`chunk_index_text`), `knowle
 - Procedure sections in engineering notes (commands under a `##` heading) stay intact when code uses `#` comments.
 - Long sections still split for embedding quality; retrieval reassembles them for generation.
 - Re-index after changing chunk settings without touching `data/raw/`.
-- Future V2 may attach page-filtered `major_components` / `nets` per chunk; V1 inherits document-level lists.
+- V2 attaches page-filtered `major_components` / `nets` / `interfaces` per schematic chunk via the `pages` sidecar (see [ingest.md](../usage/ingest.md)); older processed files without `pages` fall back to document-level lists only.
 - Chunking and retrieval context rules are documented in [data-flow.md](../architecture/data-flow.md).

@@ -94,6 +94,24 @@ curl -X POST http://localhost:8080/v1/query \
   -d '{"query":"iPad manual","project":"logan","build":"p1","task":"wiki"}'
 ```
 
+### V2 endpoints
+
+**Component lookup** (exact designator / part number):
+
+```bash
+curl "http://localhost:8080/v1/components/search?q=U101&project=logan&build=p1"
+```
+
+**Ingest + index (admin):**
+
+```bash
+curl -X POST http://localhost:8080/v1/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"force":true}'
+```
+
+See [mcp.md](mcp.md) for MCP tools and when to re-sync after V2 metadata changes.
+
 See [open-webui.md](open-webui.md) for Open WebUI integration.
 
 ## Related docs
@@ -102,4 +120,5 @@ See [open-webui.md](open-webui.md) for Open WebUI integration.
 - [ingest.md](ingest.md) — raw → processed pipeline
 - [eval.md](eval.md) — golden QA regression testing (`eval_rag.py`)
 - [data-flow.md](../architecture/data-flow.md) — ingestion and query pipelines
+- [mcp.md](mcp.md) — V2 component lookup, MCP, HTTP ingest
 - [api-overview.md](../architecture/api-overview.md) — REST endpoint contracts

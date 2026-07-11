@@ -76,7 +76,10 @@ EE-Wiki/
 │       │   └── llm/            # MLX and Transformers backends
 │       │
 │       ├── protocols/          # Abstract interfaces (typing.Protocol)
-│       │   └── llm.py          # LlmBackend (V2+: parser, retriever, …)
+│       │   ├── llm.py          # LlmBackend
+│       │   ├── parser.py       # DocumentParser
+│       │   ├── retriever.py    # RetrieverBackend
+│       │   └── index_store.py  # IndexStoreBackend
 │       │
 │       └── common/             # Shared types, config loader, logging, errors
 │           ├── types.py        # StandardDocument, Chunk, Metadata, Citation
@@ -101,18 +104,15 @@ EE-Wiki/
 | `retrieval/` | Filter, search, merge, rerank | Parse files, call LLM for final answer |
 | `generation/` | Format context + question, invoke LLM | Access database directly, parse files |
 | `api/` | Validate requests, orchestrate modules | Embed business logic duplicated from core |
+| `tools/` | MCP / function tools for Open WebUI and Cursor | Duplicate retrieval logic from `retrieval/` |
 
 **Not yet in repo (future versions):**
 
 | Path | Version | Role |
 |------|---------|------|
 | `graph/` | V3+ | Knowledge graph store and queries |
-| `tools/` | V2+ | MCP / function tools for Open WebUI |
-| `protocols/parser.py`, `retriever.py`, … | V2+ | Abstractions before second backends |
 
 ## Standard Data Contracts
-
-All parsers output the same shape:
 
 ```
 StandardDocument
@@ -122,6 +122,19 @@ StandardDocument
 ```
 
 Chunks and citations are defined in `common/types.py` and must include provenance (`source_file`, `page`, `chunk_id`) for every retrieved context passed to the generator.
+
+### Datasheet structured metadata (V2)
+
+Datasheet ingestion (`ingestion/parsers/datasheet_pdf/fields.py`) post-processes VLM Markdown to populate optional document metadata:
+
+| Field | Type | Example |
+|-------|------|---------|
+| `supply_voltage` | `list[str]` | `["3.3V", "2.0V-3.6V"]` |
+| `pin_count` | `int \| null` | `144` |
+| `package` | `str \| null` | `LQFP144` |
+| `interfaces` | `list[str]` | `["I2C", "SPI", "RMII"]` (protocol names) |
+
+These fields serialize in `.meta.json` for `document_type=datasheet` only and propagate to indexed chunks for metadata-aware retrieval boosts.
 
 ## Runtime Data (Not in Git)
 
@@ -173,6 +186,7 @@ When `retrieval.scope_inheritance` is true (default), a query for `{project}/{bu
 |------|----------------|
 | `src/ee_wiki/ingestion`, `knowledge`, `retrieval`, `generation`, `api` | V1 |
 | `prompts/`, `config/schema/metadata.schema.json` | V1 |
+| `src/ee_wiki/protocols/` | V2 (parser, retriever, index_store protocols) |
 | `src/ee_wiki/tools/` | V2 (MCP / tool calling) |
 | `src/ee_wiki/graph/` | V3 |
 | Multi-agent orchestration (future `src/ee_wiki/agents/`) | V4 |
@@ -187,7 +201,8 @@ When `retrieval.scope_inheritance` is true (default), a query for `{project}/{bu
 
 ## Related Documents
 
-- [docs/usage/local-setup.md](../usage/local-setup.md) — local machine setup and V1 acceptance checklist
+- [docs/usage/local-setup.md](../usage/local-setup.md) — local machine setup and V1/V2 acceptance checklists
+- [docs/usage/mcp.md](../usage/mcp.md) — V2 component lookup, MCP, HTTP ingest
 - [docs/usage/ingest.md](../usage/ingest.md) — operator guide for `scripts/ingest.py`
 - [docs/usage/eval.md](../usage/eval.md) — golden QA regression eval (`scripts/eval_rag.py`)
 - [AGENTS.md](../../AGENTS.md) — rules for AI assistants working in this repo

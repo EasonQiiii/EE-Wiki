@@ -14,6 +14,7 @@ from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import chunk_from_dict, chunk_to_dict
 from ee_wiki.common.types import Chunk
+from ee_wiki.knowledge.indexer.component_index import clear_component_index
 
 logger = get_logger(__name__)
 
@@ -109,6 +110,7 @@ def clear_index(indexes_dir: Path) -> int:
             path.unlink(missing_ok=True)
         except OSError as exc:
             raise IndexStoreError(f"Failed to remove index file {path}") from exc
+    clear_component_index(indexes_dir)
 
     logger.info(
         "Cleared index at %s (%d source document(s) removed)",

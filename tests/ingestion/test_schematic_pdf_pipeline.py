@@ -105,3 +105,8 @@ def test_schematic_pdf_ingest_with_mock_engine(ingest_config: AppConfig, monkeyp
     assert meta["target_file"].endswith("logan/p1/sch/board.md")
     assert meta["major_components"] == ["U0902"]
     assert meta["nets"] == ["VBAT"]
+    assert len(meta["pages"]) == 1
+    assert meta["pages"][0]["page"] == 1
+    assert meta["pages"][0]["major_components"] == ["U0902"]
+    assert meta["pages"][0]["nets"] == ["VBAT"]
+    assert "I2C1" in meta["pages"][0]["interfaces"]

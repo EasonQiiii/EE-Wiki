@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from ee_wiki.common.config import ChunkingConfig
 from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
-from ee_wiki.common.types import Chunk, Citation, Metadata
+from ee_wiki.common.types import Chunk, Citation, Metadata, PageMetadata
 from ee_wiki.knowledge.loader import ProcessedRecord
 
 _HEADING_PATTERN = re.compile(r"^(#{1,2})\s+(.+)$", re.MULTILINE)
@@ -436,6 +436,17 @@ def _merge_small_sections(
     return merged
 
 
+def _page_fields(record: ProcessedRecord, page_num: int) -> PageMetadata | None:
+    """Return per-page schematic metadata when the sidecar includes ``pages``."""
+    pages = record.metadata.pages
+    if not pages or page_num <= 0:
+        return None
+    for page_meta in pages:
+        if page_meta.page == page_num:
+            return page_meta
+    return None
+
+
 def _build_chunk(
     record: ProcessedRecord,
     suffix: str,
@@ -446,7 +457,22 @@ def _build_chunk(
     heading_path: str = "",
 ) -> Chunk:
     chunk_id = f"{record.chunk_id}__{suffix}"
-    metadata: Metadata = replace(record.metadata, page=page) if page else record.metadata
+    metadata: Metadata = record.metadata
+    if page:
+        page_meta = _page_fields(record, page)
+        if page_meta is not None:
+            metadata = replace(
+                metadata,
+                page=page,
+                major_components=list(page_meta.major_components),
+                nets=list(page_meta.nets),
+                interfaces=list(page_meta.interfaces),
+                pages=None,
+            )
+        else:
+            metadata = replace(metadata, page=page, pages=None)
+    elif metadata.pages is not None:
+        metadata = replace(metadata, pages=None)
     excerpt = _excerpt(content, config.excerpt_chars)
     citation = Citation(
         source_file=metadata.source_file,

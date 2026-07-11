@@ -3,7 +3,7 @@
 > AI-Native Electronic Engineering Knowledge Platform  
 > Enterprise-grade Offline Engineering Wiki for Hardware Engineers
 
-**Status:** V1 — offline hybrid RAG (see [Long-term Roadmap](#long-term-roadmap))
+**Status:** V2 — offline hybrid RAG with engineering metadata, component lookup, and MCP tools (see [Long-term Roadmap](#long-term-roadmap))
 
 | Document | Purpose |
 |----------|---------|
@@ -13,6 +13,7 @@
 | [docs/usage/knowledge-authoring.md](docs/usage/knowledge-authoring.md) | **How to write & place documents** (authoring spec for humans + AI) |
 | [docs/usage/index.md](docs/usage/index.md) | **How to run `scripts/index.py`** (processed → indexes) |
 | [docs/usage/query.md](docs/usage/query.md) | **CLI retrieval and RAG** (`query.py`, `ask.py`) |
+| [docs/usage/mcp.md](docs/usage/mcp.md) | **V2 tools** — component lookup, MCP, HTTP ingest API |
 | [docs/usage/eval.md](docs/usage/eval.md) | **RAG regression eval** (`eval_rag.py`, golden QA) |
 | [docs/usage/open-webui.md](docs/usage/open-webui.md) | **Open WebUI integration** |
 | [docs/architecture/repository-structure.md](docs/architecture/repository-structure.md) | Canonical directory layout and module boundaries |
@@ -347,12 +348,12 @@ Raw documents live under `data/raw/` (gitignored). Paths encode metadata — no 
 ```
 data/raw/
 ├── global/                         # enterprise-wide shared (all projects)
-│   ├── note/ sch/ sop/ datasheet/
+│   ├── note/ sch/ sop/ datasheet/ fa/
 ├── {project}/                      # e.g. logan, elias, ruby
 │   ├── common/                     # shared across all builds in this project
-│   │   └── note/ sch/ sop/
+│   │   └── note/ sch/ sop/ fa/
 │   └── {build}/                    # e.g. p1, p2
-│       └── note/ sch/ sop/
+│       └── note/ sch/ sop/ fa/
 └── ...
 ```
 
@@ -362,7 +363,7 @@ data/raw/
 | `{project}` | A product line or program (e.g. `logan`) | — |
 | `common` | Project-wide shared (`build=common`) | **This project's** cross-build knowledge: product architecture, naming rules, shared IP, project-level bring-up — not board-specific wiring |
 | `{build}` | A specific hardware revision (e.g. `p1`, `p2`) | **Build truth**: schematics, build SOPs, debug notes for that revision |
-| `note` / `sch` / `sop` / `datasheet` | Document category folder | — |
+| `note` / `sch` / `sop` / `datasheet` / `fa` | Document category folder | — |
 
 Example:
 
@@ -402,6 +403,9 @@ Folder → `document_type` mapping:
 | `sch` | `schematic` |
 | `sop` | `sop` |
 | `datasheet` | `datasheet` |
+| `fa` | `failure_analysis` |
+
+New folders can be added in `config/default.yaml` → `data_layout.document_type_folders` without code changes.
 
 ---
 
@@ -409,7 +413,7 @@ Folder → `document_type` mapping:
 
 Every document should include standardized metadata.
 
-Example (schematic — `sch/` folder):
+Example (schematic — `sch/` folder; V2 adds optional per-page sidecar `pages`):
 
 ```json
 {
@@ -418,13 +422,49 @@ Example (schematic — `sch/` folder):
   "document_type": "schematic",
   "page": 0,
   "title": "power-tree",
-  "major_components": [],
-  "nets": [],
-  "interfaces": [],
+  "major_components": ["U101", "U102"],
+  "nets": ["VBAT", "GND"],
+  "interfaces": ["RMII"],
+  "pages": [
+    {"page": 1, "major_components": ["U101"], "nets": ["VBAT"], "interfaces": ["RMII"]},
+    {"page": 2, "major_components": ["U102"], "nets": ["GND"], "interfaces": []}
+  ],
   "keywords": [],
   "version": "",
   "source_file": "data/raw/logan/p1/sch/power-tree.pdf",
   "target_file": "data/processed/logan/p1/sch/power-tree.md"
+}
+```
+
+Example (datasheet — `datasheet/` folder; V2 structured fields):
+
+```json
+{
+  "project": "global",
+  "build": "global",
+  "document_type": "datasheet",
+  "title": "STM32F407ZGT6",
+  "supply_voltage": ["3.3V", "2.0V-3.6V"],
+  "pin_count": 144,
+  "package": "LQFP144",
+  "interfaces": ["I2C", "SPI"],
+  "keywords": ["STM32F407VGT6", "168MHZ"],
+  "source_file": "data/raw/global/datasheet/STM32F407ZGT6.pdf",
+  "target_file": "data/processed/global/datasheet/STM32F407ZGT6.md"
+}
+```
+
+Example (failure analysis — `fa/` folder):
+
+```json
+{
+  "project": "logan",
+  "build": "p1",
+  "document_type": "failure_analysis",
+  "title": "RMA-2024-001",
+  "keywords": ["ESD", "RMA:RMA-2024-001", "LOT:B2024-117"],
+  "source_file": "data/raw/logan/p1/fa/rma-report.pdf",
+  "target_file": "data/processed/logan/p1/fa/rma-report.md"
 }
 ```
 
@@ -443,7 +483,9 @@ Example (engineering note — `note/` folder; no schematic fields):
 
 - **`source_file`** — original raw asset (citation / re-ingest)
 - **`target_file`** — normalized content path used for chunking and retrieval
-- **`major_components` / `nets` / `interfaces`** — schematic documents only
+- **`major_components` / `nets` / `interfaces`** — schematic documents (`sch/`); at index time per-page values from `pages` are attached to each chunk
+- **`supply_voltage` / `pin_count` / `package`** — datasheet documents (`datasheet/`), extracted during VLM ingest
+- **`keywords`** — all document types; engineering terms, part numbers; FA reports also get failure-mode and traceability tokens (`RMA:`, `LOT:`, …)
 
 Metadata is the foundation of enterprise retrieval.
 
@@ -641,12 +683,14 @@ Version 1
 - Markdown Knowledge Base
 - Open WebUI Integration
 
-Version 2
+Version 2 (current)
 
-- Engineering Metadata
-- Component Database
-- Datasheet Parser
-- Better Retrieval
+- Engineering Metadata (keywords, FA tokens, datasheet structured fields)
+- Component Database (`components.json`, retrieval boost, HTTP + MCP lookup)
+- Datasheet VLM Parser (page-classified extraction)
+- Chunk-level schematic metadata (`pages` sidecar)
+- MCP read-only tools + `POST /v1/ingest` admin API
+- Better Retrieval (metadata boost, component boost, scope cascade)
 
 Version 3
 

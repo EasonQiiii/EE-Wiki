@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
-from ee_wiki.common.types import DataLayoutConfig, StandardDocument
+from ee_wiki.common.types import DataLayoutConfig, PageMetadata, StandardDocument
 from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
 from ee_wiki.ingestion.parsers.schematic_pdf.engine import (
     SchematicVisionEngine,
@@ -172,12 +172,23 @@ def parse_schematic_pdf(
         title=base_metadata.title,
     )
 
+    page_metadata = [
+        PageMetadata(
+            page=extraction.page,
+            major_components=list(extraction.major_components),
+            nets=list(extraction.nets),
+            interfaces=list(extraction.interfaces),
+        )
+        for extraction in sorted(extractions, key=lambda item: item.page)
+    ]
+
     metadata = replace(
         base_metadata,
         page=limit,
         major_components=components,
         nets=nets,
         interfaces=interfaces,
+        pages=page_metadata,
     )
     document_out = StandardDocument(
         content=markdown,

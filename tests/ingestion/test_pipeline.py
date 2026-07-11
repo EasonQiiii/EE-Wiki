@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from ee_wiki.common.config import AppConfig
-from ee_wiki.ingestion.pipeline import IngestionError, ingest_file, ingest_path
+from ee_wiki.ingestion.pipeline import IngestionError, IngestResult, ingest_file, ingest_path
 
 
 @pytest.fixture
@@ -86,3 +86,32 @@ def test_ingest_path_skips_unchanged(ingest_config: AppConfig) -> None:
     assert len(second.ingested) == 0
     assert len(second.skipped) == 1
     assert len(second.removed) == 0
+
+
+def test_ingest_path_continues_after_file_failure(
+    ingest_config: AppConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    note_dir = ingest_config.raw_dir / "logan/p1/note"
+    note_dir.mkdir(parents=True)
+    (note_dir / "good.md").write_text("# good\n", encoding="utf-8")
+    (note_dir / "bad.md").write_text("# bad\n", encoding="utf-8")
+
+    original_ingest_file = ingest_file
+
+    def _patched_ingest_file(raw_path: Path, config: AppConfig) -> IngestResult:
+        if raw_path.name == "bad.md":
+            raise IngestionError("boom")
+        return original_ingest_file(raw_path, config)
+
+    monkeypatch.setattr(
+        "ee_wiki.ingestion.pipeline.ingest_file",
+        _patched_ingest_file,
+    )
+
+    run = ingest_path(note_dir, ingest_config)
+    assert len(run.ingested) == 1
+    assert run.ingested[0].raw_path.name == "good.md"
+    assert len(run.failed) == 1
+    assert run.failed[0].raw_path.name == "bad.md"
+    assert run.failed[0].message == "boom"

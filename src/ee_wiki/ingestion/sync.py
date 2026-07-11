@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from ee_wiki.common.fingerprint import raw_fingerprint
@@ -20,6 +21,14 @@ from ee_wiki.ingestion.processed_paths import resolve_processed_paths
 logger = get_logger(__name__)
 
 TEXT_SUFFIXES = {".txt"}
+
+
+@dataclass(frozen=True)
+class RawFileWarning:
+    """A raw file under scope that was not ingested (unsupported or deferred)."""
+
+    raw_path: Path
+    message: str
 
 
 def _relative_raw_path(raw_path: Path, raw_dir: Path) -> Path | str:
@@ -86,13 +95,16 @@ def log_skipped_raw_files(
     layout: DataLayoutConfig,
     *,
     iwork_enabled: bool = False,
-) -> None:
+) -> list[RawFileWarning]:
     """Log deferred and unsupported raw files discovered under ``raw_scope``.
 
     Args:
         raw_scope: File or directory under ``layout.raw_dir`` to scan.
         layout: Data layout with ``raw_dir`` for relative log labels.
         iwork_enabled: When ``False``, ``.key`` / ``.numbers`` are logged as deferred.
+
+    Returns:
+        Warning entries for files that were not ingested.
     """
     resolved = raw_scope.resolve()
     if resolved.is_file():
@@ -100,8 +112,9 @@ def log_skipped_raw_files(
     elif resolved.is_dir():
         candidates = sorted(resolved.rglob("*"))
     else:
-        return
+        return []
 
+    warnings: list[RawFileWarning] = []
     for candidate in candidates:
         if not candidate.is_file() or candidate.name.startswith("."):
             continue
@@ -111,19 +124,21 @@ def log_skipped_raw_files(
         rel = _relative_raw_path(candidate, layout.raw_dir)
         if suffix in IWORK_SUFFIXES and not iwork_enabled:
             if sys.platform != "darwin":
-                logger.warning(
-                    "Skipping iWork format %s (%s): requires macOS with Keynote/Numbers",
-                    suffix,
-                    rel,
+                message = (
+                    f"requires macOS with Keynote/Numbers ({suffix})"
                 )
             else:
-                logger.warning(
-                    "Skipping iWork format %s (%s): set ingestion.iwork.enabled: true",
-                    suffix,
-                    rel,
+                message = (
+                    "set ingestion.iwork.enabled: true "
+                    f"to ingest {suffix} files"
                 )
+            logger.warning("Skipping iWork format %s (%s): %s", suffix, rel, message)
+            warnings.append(RawFileWarning(raw_path=candidate, message=message))
         elif not is_supported_raw_file(candidate, iwork_enabled=iwork_enabled):
+            message = "unsupported raw file format"
             logger.warning("Skipping unsupported raw file: %s", rel)
+            warnings.append(RawFileWarning(raw_path=candidate, message=message))
+    return warnings
 
 
 def needs_ingest(

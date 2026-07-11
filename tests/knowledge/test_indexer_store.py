@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from ee_wiki.common.types import Chunk, Citation, Metadata
+from ee_wiki.knowledge.indexer.component_index import COMPONENTS_NAME, save_component_index
 from ee_wiki.knowledge.indexer.store import (
     IndexStoreError,
     clear_index,
@@ -96,10 +97,12 @@ def test_clear_index_removes_all_artifacts(tmp_path) -> None:
             }
         },
     )
+    save_component_index(chunks, tmp_path)
 
     removed = clear_index(tmp_path)
     assert removed == 1
     assert not index_exists(tmp_path)
+    assert not (tmp_path / COMPONENTS_NAME).is_file()
 
 
 def test_clear_index_on_missing_index_returns_zero(tmp_path) -> None:

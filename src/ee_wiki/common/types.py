@@ -7,6 +7,16 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
+class PageMetadata:
+    """Per-page schematic metadata for chunk-level retrieval."""
+
+    page: int
+    major_components: list[str] = field(default_factory=list)
+    nets: list[str] = field(default_factory=list)
+    interfaces: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Metadata:
     """Document metadata derived from path and ingestion."""
 
@@ -22,7 +32,11 @@ class Metadata:
     major_components: list[str] | None = None
     nets: list[str] | None = None
     interfaces: list[str] | None = None
+    pages: list[PageMetadata] | None = None
     keywords: list[str] = field(default_factory=list)
+    supply_voltage: list[str] | None = None
+    pin_count: int | None = None
+    package: str | None = None
     version: str = ""
 
 

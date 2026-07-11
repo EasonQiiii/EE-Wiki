@@ -2,7 +2,7 @@
 
 EE-Wiki serves as the backend for Open WebUI. This document tracks the HTTP surface area.
 
-**Status:** V1 — core query endpoints implemented.
+**Status:** V2 — core query + component lookup + ingest admin + MCP tools.
 
 ## Scope filters (`project` / `build`)
 
@@ -26,11 +26,69 @@ When both are set with `retrieval.scope_inheritance: true` (default), search exp
 | `POST` | `/v1/query` | Explicit RAG query with citation payload |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat (retrieval + generation); set `"stream": true` for SSE |
 
+## Implemented endpoints (V2)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/v1/components/search` | Part number / designator lookup against `data/indexes/components.json` |
+| `POST` | `/v1/ingest` | Trigger document ingestion and optional index build (admin) |
+
+Query params for `GET /v1/components/search`: `q` (required), optional `project`, `build`, `limit` (default 20).
+
+### `POST /v1/ingest`
+
+Admin endpoint to run the same pipeline as `scripts/sync.py` (ingest raw → processed, then build/update indexes). Orchestrates existing `ingest_path` and `build_index_from_processed` — no parsing logic in the route.
+
+Request (all fields optional):
+
+```json
+{
+  "path": "logan/p1/fa/rma-report.md",
+  "paths": null,
+  "project": "logan",
+  "build": "p1",
+  "force": false,
+  "ingest_only": false,
+  "index_only": false
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `path` | Single file or directory under `data/raw/` (relative, `data/raw/...`, or absolute under raw dir) |
+| `paths` | List of paths (mutually exclusive with `path`) |
+| `project` / `build` | When no path given, scope to `data/raw/{project}/` or `data/raw/{project}/{build}/` |
+| `force` | Re-ingest and rebuild even when fingerprints match |
+| `ingest_only` | Skip index build (like `scripts/sync.py --ingest-only`) |
+| `index_only` | Skip ingest (like `scripts/sync.py --index-only`) |
+
+When all path filters are omitted, the entire `data/raw/` tree is processed.
+
+Response:
+
+```json
+{
+  "ingested": 2,
+  "skipped": 5,
+  "removed": 0,
+  "ingested_files": ["data/processed/logan/p1/fa/rma-report.md"],
+  "removed_files": [],
+  "indexed_documents": 2,
+  "skipped_documents": 5,
+  "removed_documents": 0,
+  "chunk_count": 42
+}
+```
+
+Index fields (`indexed_documents`, `skipped_documents`, `removed_documents`, `chunk_count`) are `null` when `ingest_only: true`. Ingest counts are zero when `index_only: true`.
+
+Errors: `400` for invalid paths or conflicting flags; `404` when the target path does not exist; `500` when index build fails (e.g. no processed documents on first run).
+
 ## Planned endpoints (V2+)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/v1/ingest` | Trigger document ingestion (admin); V1 uses `scripts/ingest.py` / `scripts/sync.py` |
+| — | — | — |
 
 ## Start the server
 
@@ -211,4 +269,40 @@ Response shape:
 
 See [open-webui.md](../usage/open-webui.md) for frontend connection steps.
 
-Future: MCP tools documented in README.md (`search_component`, `query_schematic`, etc.) will map to `src/ee_wiki/tools/` in V2+.
+## MCP tools (V2)
+
+Read-only engineering tools are exposed via stdio MCP for Cursor, Claude Desktop, and other MCP clients.
+
+Install:
+
+```bash
+pip install -e ".[dev,ml,tools]"
+```
+
+Start:
+
+```bash
+python scripts/mcp_serve.py
+```
+
+| Tool | Purpose |
+|------|---------|
+| `search_component_tool` | Part number / designator lookup (`components.json`) |
+| `query_schematic_tool` | Hybrid retrieval scoped to `document_type=schematic` |
+| `search_datasheet_tool` | Hybrid retrieval scoped to `document_type=datasheet` |
+| `engineering_search_tool` | General hybrid retrieval with optional `document_type` |
+
+All tools accept optional `project` and `build` filters and honor `retrieval.scope_inheritance`. Results are JSON with `scope` labels (`build`, `common`, `global`).
+
+Example Cursor MCP config:
+
+```json
+{
+  "mcpServers": {
+    "ee-wiki": {
+      "command": "python",
+      "args": ["/path/to/EE-Wiki/scripts/mcp_serve.py"]
+    }
+  }
+}
+```

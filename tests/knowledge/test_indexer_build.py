@@ -10,6 +10,7 @@ import numpy as np
 
 from ee_wiki.common.config import AppConfig
 from ee_wiki.knowledge.indexer.build import build_index_from_processed
+from ee_wiki.knowledge.indexer.component_index import component_index_path, load_component_index
 from ee_wiki.knowledge.indexer.store import index_exists, load_index
 
 
@@ -35,6 +36,56 @@ def _write_processed(
         "target_file": target,
         "source_mtime": mtime,
         "source_size": size,
+    }
+    path.with_suffix(".md.meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _write_schematic_processed(
+    processed_dir: Path,
+    *,
+    mtime: float = 1.0,
+    size: int = 10,
+) -> None:
+    rel = Path("logan/p1/sch/board.md")
+    path = processed_dir / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = (
+        "# 电子图纸分析报告：board\n\n"
+        "U101 on page one\n\n"
+        "---\n\n"
+        "U102 on page two"
+    )
+    path.write_text(content, encoding="utf-8")
+    target = f"data/processed/{rel.as_posix()}"
+    meta = {
+        "project": "logan",
+        "build": "p1",
+        "document_type": "schematic",
+        "title": "board",
+        "source_file": "data/raw/logan/p1/sch/board.pdf",
+        "target_file": target,
+        "source_mtime": mtime,
+        "source_size": size,
+        "major_components": ["U101", "U102"],
+        "nets": ["VBAT", "GND"],
+        "interfaces": ["RMII"],
+        "pages": [
+            {
+                "page": 1,
+                "major_components": ["U101"],
+                "nets": ["VBAT"],
+                "interfaces": ["RMII"],
+            },
+            {
+                "page": 2,
+                "major_components": ["U102"],
+                "nets": ["GND"],
+                "interfaces": [],
+            },
+        ],
     }
     path.with_suffix(".md.meta.json").write_text(
         json.dumps(meta, ensure_ascii=False),
@@ -189,3 +240,25 @@ def test_force_rebuild_reindexes_everything(app_config: AppConfig, tmp_path: Pat
     result = build_index_from_processed(config, force=True, embedder=_mock_embedder)
     assert result.indexed_documents == 1
     assert result.skipped_documents == 0
+
+
+def test_build_index_writes_component_index_with_page_scoped_designators(
+    app_config: AppConfig,
+    tmp_path: Path,
+) -> None:
+    config = _test_config(app_config, tmp_path)
+    _write_schematic_processed(config.processed_dir)
+
+    result = build_index_from_processed(config, embedder=_mock_embedder)
+    assert result.chunk_count == 2
+    assert component_index_path(config.indexes_dir).is_file()
+
+    loaded = load_index(config.indexes_dir)
+    assert loaded.chunks[0].metadata.major_components == ["U101"]
+    assert loaded.chunks[1].metadata.major_components == ["U102"]
+    assert loaded.chunks[0].metadata.pages is None
+
+    component_index = load_component_index(config.indexes_dir)
+    assert component_index is not None
+    assert component_index.entries["U101"][0].chunk_id == loaded.chunks[0].chunk_id
+    assert component_index.entries["U102"][0].chunk_id == loaded.chunks[1].chunk_id

@@ -25,7 +25,7 @@ generation:
   llm_timeout_seconds: 180  # allow ~2048 tokens on 9B MLX; null or 0 disables
   # Multi-user LAN (llm_backend: openai) — start mlx-openai-server first, then serve.py
   openai_base_url: http://127.0.0.1:8000/v1
-  openai_model: Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED-MLX-mxfp8
+  openai_model: Qwen3-30B-A3B-Instruct-2507-MLX-4bit
   # openai_api_key: null
   assistant_fallback: true   # when retrieval is weak, answer from the assistant role prompt instead of weak chunks
   assistant_task: assistant  # prompts/{task}/ for the weak-retrieval fallback (identity/usage or "no relevant content")

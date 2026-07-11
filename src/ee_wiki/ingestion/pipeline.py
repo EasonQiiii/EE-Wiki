@@ -30,6 +30,7 @@ from ee_wiki.ingestion.parsers.schematic_pdf import parse_schematic_pdf
 from ee_wiki.ingestion.parsers.word import WORD_SUFFIXES, parse_word
 from ee_wiki.ingestion.path_metadata import parse_path_metadata
 from ee_wiki.ingestion.sync import (
+    RawFileWarning,
     collect_raw_files,
     expected_content_extension,
     is_ingestible_raw_file,
@@ -58,18 +59,31 @@ class IngestResult:
 
 
 @dataclass(frozen=True)
+class IngestFailure:
+    """A raw file that ingest attempted but could not process."""
+
+    raw_path: Path
+    message: str
+
+
+@dataclass(frozen=True)
 class IngestRunResult:
     """Batch ingest outcome."""
 
     ingested: list[IngestResult] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
     removed: list[RemovedProcessed] = field(default_factory=list)
+    failed: list[IngestFailure] = field(default_factory=list)
+    warnings: list[RawFileWarning] = field(default_factory=list)
 
 
 def _enrich_keywords(document: StandardDocument) -> StandardDocument:
     """Extract engineering keywords from content and merge into metadata."""
     existing = document.metadata.keywords or []
-    extracted = extract_keywords(document.content)
+    extracted = extract_keywords(
+        document.content,
+        document_type=document.metadata.document_type,
+    )
     merged = sorted(set(existing) | set(extracted))
     if merged == existing:
         return document
@@ -218,19 +232,20 @@ def ingest_path(
     if path.is_file():
         suffix = path.suffix.lower()
         if suffix in IWORK_SUFFIXES and not iwork_enabled:
-            log_skipped_raw_files(path, layout, iwork_enabled=iwork_enabled)
-            return IngestRunResult()
+            warnings = log_skipped_raw_files(path, layout, iwork_enabled=iwork_enabled)
+            return IngestRunResult(warnings=warnings)
         if not is_supported_raw_file(path, iwork_enabled=iwork_enabled):
-            log_skipped_raw_files(path, layout, iwork_enabled=iwork_enabled)
-            return IngestRunResult()
+            warnings = log_skipped_raw_files(path, layout, iwork_enabled=iwork_enabled)
+            return IngestRunResult(warnings=warnings)
         if not is_ingestible_raw_file(path, layout, iwork_enabled=iwork_enabled):
             raise IngestionError(
                 f"Raw path does not match expected layout under {layout.raw_dir}: {path.name}"
             )
         files = [path]
         run_cleanup = False
+        warnings: list[RawFileWarning] = []
     else:
-        log_skipped_raw_files(path, layout, iwork_enabled=iwork_enabled)
+        warnings = log_skipped_raw_files(path, layout, iwork_enabled=iwork_enabled)
         files = collect_raw_files(path, layout, iwork_enabled=iwork_enabled)
         run_cleanup = True
 
@@ -242,23 +257,38 @@ def ingest_path(
 
     if not files:
         logger.info("No ingestible files found under: %s", path)
-        return IngestRunResult(removed=removed)
+        return IngestRunResult(removed=removed, warnings=warnings)
 
     ingested: list[IngestResult] = []
     skipped: list[Path] = []
+    failed: list[IngestFailure] = []
 
     for file_path in files:
         if not needs_ingest(file_path, layout, force=force):
             skipped.append(file_path)
             logger.info("Skipped unchanged: %s", file_path.relative_to(layout.raw_dir))
             continue
-        ingested.append(ingest_file(file_path, app_config))
+        try:
+            ingested.append(ingest_file(file_path, app_config))
+        except IngestionError as exc:
+            logger.error("Ingest failed: %s", exc)
+            failed.append(IngestFailure(raw_path=file_path, message=str(exc)))
+        except Exception as exc:
+            logger.exception("Unexpected ingest error for %s", file_path)
+            failed.append(IngestFailure(raw_path=file_path, message=str(exc)))
 
     logger.info(
-        "Ingest complete: %d ingested, %d skipped, %d removed under %s",
+        "Ingest complete: %d ingested, %d skipped, %d failed, %d removed under %s",
         len(ingested),
         len(skipped),
+        len(failed),
         len(removed),
         path,
     )
-    return IngestRunResult(ingested=ingested, skipped=skipped, removed=removed)
+    return IngestRunResult(
+        ingested=ingested,
+        skipped=skipped,
+        removed=removed,
+        failed=failed,
+        warnings=warnings,
+    )

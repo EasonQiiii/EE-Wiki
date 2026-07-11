@@ -1,6 +1,6 @@
 # Data Flow
 
-High-level pipeline for EE-Wiki V1. Core types: `src/ee_wiki/common/types.py`.
+High-level pipeline for EE-Wiki. Core types: `src/ee_wiki/common/types.py`.
 
 ## Ingestion (write path)
 
@@ -11,9 +11,18 @@ Raw file under data/raw/{project}/{build}/{type}/…
     → StandardDocument (Markdown + Metadata)
     → knowledge/store → data/processed/  (mirrors raw tree)
     → chunker (structure-aware; see below)
-    → knowledge/indexer (embeddings + BM25)
+    → knowledge/indexer (embeddings + BM25 + components.json)
     → indexes on disk under data/indexes/
 ```
+
+**V2 metadata on ingest:**
+
+| Document type | Extra metadata |
+|---------------|----------------|
+| `schematic` | Document-level + per-page `pages` sidecar → page-scoped chunk metadata |
+| `datasheet` | VLM parse + `supply_voltage`, `pin_count`, `package`, `interfaces` |
+| `failure_analysis` | FA keywords (failure modes, RMA/LOT tokens) |
+| All | `keywords` (part numbers, voltages, protocols, packages) |
 
 **Incremental ingest** (default): `scripts/ingest.py` compares each raw file’s `mtime` and size to its processed sidecar (`.meta.json`). New or changed files are parsed and written to `data/processed/`; unchanged files are skipped. When raw files are removed, the matching processed `.md` and sidecar are deleted (orphan cleanup). Single-file ingest skips cleanup; directory or full-tree runs enable it. See [ingest.md](../usage/ingest.md#orphan-cleanup-raw-deleted).
 
@@ -144,6 +153,15 @@ After generation, citations are enriched with public URLs (config: `api.public_b
 
 Inline ``[N]`` markers stay in the LLM answer as plain text. Chat completions also return an Open WebUI-compatible ``sources`` array so the UI can render clickable citation chips.
 
+### V2 retrieval boosts
+
+After hybrid recall and before final rerank ordering:
+
+- **Metadata keyword boost** — query tokens match chunk `keywords`, schematic `major_components`/`nets`/`interfaces`, datasheet `supply_voltage`/`pin_count`/`package`
+- **Component index boost** — exact designator/part-number hits from `data/indexes/components.json` (+3 rank weight)
+
+Component lookup is also exposed as `GET /v1/components/search` and MCP `search_component_tool`. See [mcp.md](../usage/mcp.md).
+
 ## Rules
 
 - Generators receive **question + retrieved context only** — no direct DB reads.
@@ -155,4 +173,4 @@ Inline ``[N]`` markers stay in the LLM answer as plain text. Chat completions al
 
 - [0001-chunking-strategy.md](../adr/0001-chunking-strategy.md) — ADR with defaults and amendment history
 - [api-overview.md](api-overview.md) — HTTP endpoints and queue limits
-- [ingest.md](../usage/ingest.md) — ingest CLI and processed mirror layout
+- [mcp.md](../usage/mcp.md) — V2 component lookup, MCP, HTTP ingest

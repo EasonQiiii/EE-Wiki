@@ -6,6 +6,7 @@ Extracts structured keywords from document content during ingestion:
 - Communication protocols (I2C, SPI, UART, USB, PCIE)
 - Package types (SOT-223, QFP-100, BGA-256)
 - Connector/interface names (HDMI, DisplayPort, Ethernet)
+- Failure-analysis terms (failure modes, symptoms, batch/lot IDs)
 
 These keywords power the metadata_keyword_boost in retrieval.
 """
@@ -13,6 +14,8 @@ These keywords power the metadata_keyword_boost in retrieval.
 from __future__ import annotations
 
 import re
+
+from ee_wiki.common.serialization import FAILURE_ANALYSIS_DOCUMENT_TYPE
 
 _PART_NUMBER_RE = re.compile(
     r"\b("
@@ -84,12 +87,158 @@ _NOISE_PARTS = frozenset({
 _MIN_PART_LEN = 4
 _MAX_KEYWORDS = 50
 
+_DESIGNATOR_RE = re.compile(r"^[URCLQD]\d{1,5}[A-Z]?$", re.ASCII)
 
-def extract_keywords(content: str) -> list[str]:
+_FAILURE_MODES = frozenset({
+    "SHORT_CIRCUIT", "OPEN_CIRCUIT", "ESD", "EOS", "LATCHUP", "LATCH_UP", "BURNOUT", "BURN_OUT",
+    "THERMAL_RUNAWAY", "OVERVOLTAGE", "OVER_VOLTAGE", "UNDERVOLTAGE", "UNDER_VOLTAGE",
+    "OVERCURRENT", "OVER_CURRENT",
+    "SOLDER_JOINT", "TOMBSTONE", "BRIDGE", "SOLDER_BRIDGE", "VOID", "CRACK",
+    "CORROSION", "CONTAMINATION", "MICROCRACK", "MICRO_CRACK", "DELAMINATION",
+    "WHISKER", "CREEP", "FATIGUE", "FRACTURE",
+})
+
+_SYMPTOM_TERMS = frozenset({
+    "NO_BOOT", "NO_POWER", "INTERMITTENT", "OVERHEATING", "RESET",
+    "HANG", "CRASH", "GLITCH", "NO_DISPLAY", "ARTIFACT",
+    "DATA_CORRUPTION", "LINK_DOWN", "TIMEOUT", "BROWNOUT",
+    "HARD_FAULT", "WATCHDOG", "FAIL_SAFE", "FALSE_TRIGGER",
+})
+
+_FAILURE_MODE_RE = re.compile(
+    r"\b("
+    r"short[\s\-]?circuit|open[\s\-]?circuit|esd|eos|latch[\s\-]?up|"
+    r"thermal[\s\-]?runaway|over[\s\-]?voltage|under[\s\-]?voltage|"
+    r"over[\s\-]?current|solder[\s\-]?joint|tombstone|solder[\s\-]?bridge|"
+    r"void|micro[\s\-]?crack|delamination|whisker|creep|fatigue|fracture|"
+    r"burn[\s\-]?out|contamination|corrosion"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_SYMPTOM_RE = re.compile(
+    r"\b("
+    r"no[\s\-]?boot|no[\s\-]?power|intermittent|over[\s\-]?heat(?:ing)?|"
+    r"reset|hang|crash|glitch|no[\s\-]?display|artifact|"
+    r"data[\s\-]?corruption|link[\s\-]?down|timeout|brown[\s\-]?out|"
+    r"hard[\s\-]?fault|watchdog|fail[\s\-]?safe|false[\s\-]?trigger"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_BATCH_LOT_RE = re.compile(
+    r"\bbatch\s+lot\s+([A-Z0-9][A-Z0-9\-_/]{2,})\b"
+    r"|\b(?:LOT|BATCH|lot|batch)[\s\-#:]+([A-Z0-9][A-Z0-9\-_/]{3,})\b",
+    re.ASCII,
+)
+
+_DATE_CODE_RE = re.compile(
+    r"\b(?:DATE[\s\-]?CODE|date[\s\-]?code|DC)[\s\-#:]*([0-9]{4,6}[A-Z]?)\b",
+    re.IGNORECASE,
+)
+
+_RMA_RE = re.compile(
+    r"\b(RMA|NCR|CAR)[\s\-#:]*([A-Z0-9][A-Z0-9\-_/]{2,})\b",
+    re.ASCII,
+)
+
+
+def _normalize_fa_token(raw: str) -> str:
+    """Normalize a failure-analysis phrase to an uppercase underscore token."""
+    cleaned = re.sub(r"[\s\-]+", "_", raw.strip().upper())
+    return cleaned.strip("_")
+
+
+def _extract_fa_keywords(content: str) -> set[str]:
+    """Extract failure-analysis keywords from document content."""
+    keywords: set[str] = set()
+
+    for match in _FAILURE_MODE_RE.finditer(content):
+        token = _normalize_fa_token(match.group(1))
+        if token in _FAILURE_MODES:
+            keywords.add(token)
+
+    for match in _SYMPTOM_RE.finditer(content):
+        token = _normalize_fa_token(match.group(1))
+        if token in _SYMPTOM_TERMS:
+            keywords.add(token)
+
+    for match in _BATCH_LOT_RE.finditer(content):
+        lot_id = match.group(1) or match.group(2)
+        if lot_id:
+            keywords.add(f"LOT:{lot_id.upper()}")
+
+    for match in _DATE_CODE_RE.finditer(content):
+        keywords.add(f"DATECODE:{match.group(1).upper()}")
+
+    for match in _RMA_RE.finditer(content):
+        keywords.add(f"{match.group(1).upper()}:{match.group(2).upper()}")
+
+    return keywords
+
+
+def is_designator(token: str) -> bool:
+    """Return whether ``token`` looks like a schematic reference designator."""
+    cleaned = token.strip()
+    if not cleaned:
+        return False
+    return bool(_DESIGNATOR_RE.match(cleaned))
+
+
+def is_part_number_keyword(token: str) -> bool:
+    """Return whether ``token`` looks like an IC/part number (not a designator)."""
+    cleaned = token.strip()
+    if len(cleaned) < _MIN_PART_LEN or cleaned in _NOISE_PARTS:
+        return False
+    if is_designator(cleaned):
+        return False
+    return bool(_PART_NUMBER_RE.fullmatch(cleaned))
+
+
+def extract_protocol_names(content: str) -> list[str]:
+    """Return deduplicated protocol/interface names found in content.
+
+    Args:
+        content: Document Markdown text.
+
+    Returns:
+        Sorted list of uppercase protocol tokens (e.g. ``I2C``, ``SPI``).
+    """
+    if not content:
+        return []
+    names = {match.group(1).upper() for match in _PROTOCOL_RE.finditer(content)}
+    return sorted(names)
+
+
+def extract_package_tokens(content: str) -> list[str]:
+    """Return package designators found in content.
+
+    Args:
+        content: Document Markdown text.
+
+    Returns:
+        Sorted list of normalized package strings (e.g. ``LQFP144``, ``SOT-223``).
+    """
+    if not content:
+        return []
+    packages = {
+        match.group(1).upper().replace(" ", "")
+        for match in _PACKAGE_RE.finditer(content)
+    }
+    return sorted(packages)
+
+
+def extract_keywords(
+    content: str,
+    *,
+    document_type: str | None = None,
+) -> list[str]:
     """Extract engineering keywords from document content.
 
     Args:
         content: Full Markdown text of the processed document.
+        document_type: Optional document type for type-specific rules
+            (e.g. ``failure_analysis``).
 
     Returns:
         Deduplicated, sorted list of keywords (max 50).
@@ -113,11 +262,11 @@ def extract_keywords(content: str) -> list[str]:
         normalized_unit = unit.replace("µ", "u")
         keywords.add(f"{value}{normalized_unit}")
 
-    for match in _PROTOCOL_RE.finditer(content):
-        keywords.add(match.group(1).upper())
+    keywords.update(extract_protocol_names(content))
+    keywords.update(extract_package_tokens(content))
 
-    for match in _PACKAGE_RE.finditer(content):
-        keywords.add(match.group(1).upper().replace(" ", ""))
+    if document_type == FAILURE_ANALYSIS_DOCUMENT_TYPE:
+        keywords.update(_extract_fa_keywords(content))
 
     keywords -= _NOISE_PARTS
 

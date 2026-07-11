@@ -36,6 +36,15 @@ class TestParsePathMetadata:
         assert meta.document_type == "schematic"
         assert meta.title == "power-tree"
 
+    def test_project_build_failure_analysis(self, data_layout) -> None:
+        path = data_layout.raw_dir / "acme" / "p1" / "fa" / "rma-report.md"
+        meta = parse_path_metadata(path, data_layout, repo_root=data_layout.raw_dir.parent.parent)
+        assert meta.project == "acme"
+        assert meta.build == "p1"
+        assert meta.document_type == "failure_analysis"
+        assert meta.title == "rma-report"
+        assert meta.source_file == "data/raw/acme/p1/fa/rma-report.md"
+
     def test_nested_subfolder(self, data_layout) -> None:
         path = data_layout.raw_dir / "logan" / "p1" / "sch" / "rev2" / "main.pdf"
         meta = parse_path_metadata(path, data_layout)

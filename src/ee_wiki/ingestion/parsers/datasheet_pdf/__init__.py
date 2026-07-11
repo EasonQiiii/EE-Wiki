@@ -23,6 +23,7 @@ from ee_wiki.ingestion.parsers.datasheet_pdf.engine import (
     DatasheetVisionEngine,
     build_datasheet_engine,
 )
+from ee_wiki.ingestion.parsers.datasheet_pdf.fields import extract_datasheet_fields
 from ee_wiki.ingestion.parsers.datasheet_pdf.merge import PageResult, merge_pages
 from ee_wiki.ingestion.path_metadata import parse_path_metadata
 
@@ -182,6 +183,8 @@ def parse_datasheet_pdf(
         ocr_fidelity=ds_cfg.ocr_fidelity,
     )
 
+    ds_fields = extract_datasheet_fields(content)
+
     stat = raw_path.stat()
     final_metadata = Metadata(
         project=metadata.project,
@@ -192,6 +195,10 @@ def parse_datasheet_pdf(
         target_file=str(layout.processed_dir / target_rel.with_suffix(".md")),
         source_mtime=stat.st_mtime,
         source_size=stat.st_size,
+        supply_voltage=ds_fields.supply_voltage or None,
+        pin_count=ds_fields.pin_count,
+        package=ds_fields.package,
+        interfaces=ds_fields.interfaces or None,
     )
 
     return StandardDocument(

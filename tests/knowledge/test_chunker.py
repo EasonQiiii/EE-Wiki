@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ee_wiki.common.config import ChunkingConfig
-from ee_wiki.common.types import Metadata
+from ee_wiki.common.types import Metadata, PageMetadata
 from ee_wiki.knowledge.chunker import chunk_index_text, chunk_processed_record
 from ee_wiki.knowledge.loader import ProcessedRecord
 
@@ -68,6 +68,46 @@ def test_schematic_splits_by_page_separator() -> None:
     assert "U0902" in chunks[0].content
     assert chunks[1].chunk_id == "board__p002"
     assert "PMIC" in chunks[1].content
+
+
+def test_schematic_page_metadata_applied_per_chunk() -> None:
+    content = (
+        "# 电子图纸分析报告：board\n\n"
+        "U101 on page one\n\n"
+        "---\n\n"
+        "U102 on page two"
+    )
+    metadata = Metadata(
+        project="logan",
+        build="p1",
+        document_type="schematic",
+        title="board",
+        source_file="data/raw/logan/p1/sch/board.pdf",
+        target_file="data/processed/logan/p1/sch/board.md",
+        major_components=["U101", "U102"],
+        nets=["VBAT", "GND"],
+        interfaces=["RMII"],
+        pages=[
+            PageMetadata(page=1, major_components=["U101"], nets=["VBAT"], interfaces=["RMII"]),
+            PageMetadata(page=2, major_components=["U102"], nets=["GND"], interfaces=[]),
+        ],
+    )
+    record = ProcessedRecord(
+        chunk_id="board",
+        content=content,
+        metadata=metadata,
+        target_file=metadata.target_file,
+    )
+    chunks = chunk_processed_record(record, ChunkingConfig())
+
+    assert chunks[0].metadata.major_components == ["U101"]
+    assert chunks[0].metadata.nets == ["VBAT"]
+    assert chunks[0].metadata.interfaces == ["RMII"]
+    assert chunks[1].metadata.major_components == ["U102"]
+    assert chunks[1].metadata.nets == ["GND"]
+    assert chunks[1].metadata.interfaces == []
+    assert chunks[0].metadata.pages is None
+    assert chunks[1].metadata.pages is None
 
 
 def test_long_section_splits_with_overlap() -> None:
