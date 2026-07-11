@@ -173,6 +173,7 @@ class GenerationConfig:
     max_inline_images: int = 4
     scope_inference: bool = True
     scope_inference_mode: str = "merged"  # rules | llm | merged
+    show_elapsed_time: bool = False
 
 
 @dataclass(frozen=True)
@@ -484,6 +485,7 @@ def load_config(
             max_inline_images=int(generation.get("max_inline_images", 4)),
             scope_inference=bool(generation.get("scope_inference", True)),
             scope_inference_mode=str(generation.get("scope_inference_mode", "merged")),
+            show_elapsed_time=bool(generation.get("show_elapsed_time", False)),
         ),
         api=ApiConfig(
             host=str(api.get("host", "0.0.0.0")),

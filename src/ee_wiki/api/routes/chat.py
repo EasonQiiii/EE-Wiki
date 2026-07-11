@@ -23,6 +23,10 @@ from ee_wiki.api.models import (
     ChatCompletionResponse,
     CitationModel,
 )
+from ee_wiki.api.open_webui_auxiliary import (
+    AUXILIARY_MAX_NEW_TOKENS,
+    is_open_webui_auxiliary_task,
+)
 from ee_wiki.api.open_webui_sources import citations_to_open_webui_sources
 from ee_wiki.api.rag_handler import raise_queue_full_http_error
 from ee_wiki.api.stream_cancel import iter_sync_text_chunks
@@ -39,9 +43,10 @@ from ee_wiki.api.timeout import (
     run_sync_with_request_timeout,
 )
 from ee_wiki.common.logging import get_logger
+from ee_wiki.generation.elapsed import RagPhaseTiming, format_phase_timing_footer
 from ee_wiki.generation.inline_images import build_image_block
 from ee_wiki.generation.llm.errors import LlmLoadError, LlmTimeoutError
-from ee_wiki.generation.service import INSUFFICIENT_ANSWER, RagService
+from ee_wiki.generation.service import INSUFFICIENT_ANSWER, AnswerStreamResult, RagService
 from ee_wiki.retrieval.rewrite import ConversationTurn
 
 router = APIRouter(prefix="/v1", tags=["chat"])
@@ -76,6 +81,82 @@ def _extract_history(messages: list) -> list[ConversationTurn]:
         if msg.role in ("user", "assistant") and msg.content.strip():
             turns.append(ConversationTurn(role=msg.role, content=msg.content.strip()))
     return turns
+
+
+def _should_bypass_rag(question: str) -> bool:
+    """Return whether to skip hybrid retrieval for this chat request."""
+    return is_open_webui_auxiliary_task(question)
+
+
+def _fetch_stream_result(
+    service: RagService,
+    question: str,
+    *,
+    bypass_rag: bool,
+    target_project: str | None,
+    target_build: str | None,
+    document_type: str | None,
+    top_k: int | None,
+    cancel_event: threading.Event | None,
+    task: str | None,
+    history: list[ConversationTurn] | None,
+) -> AnswerStreamResult:
+    """Run RAG or direct LLM streaming depending on request type."""
+    if bypass_rag:
+        logger.info(
+            "Open WebUI auxiliary task — bypassing RAG (%d prompt chars)",
+            len(question),
+        )
+        return service.stream_direct(
+            question,
+            cancel_event=cancel_event,
+            max_new_tokens=AUXILIARY_MAX_NEW_TOKENS,
+        )
+    return service.stream_answer(
+        question,
+        target_project=target_project,
+        target_build=target_build,
+        document_type=document_type,
+        top_k_final=top_k,
+        cancel_event=cancel_event,
+        task=task,
+        history=history,
+    )
+
+
+def _elapsed_footer(
+    *,
+    timing: RagPhaseTiming | None,
+    show_elapsed_time: bool,
+    bypass_rag: bool,
+) -> str | None:
+    """Return phase timing footer text when enabled for RAG answers."""
+    if not show_elapsed_time or bypass_rag or timing is None:
+        return None
+    return format_phase_timing_footer(timing)
+
+
+def _build_phase_timing(
+    *,
+    started: float,
+    retrieval_done_at: float | None,
+    first_char_at: float | None,
+) -> RagPhaseTiming | None:
+    """Build phase timings from monotonic checkpoints."""
+    if retrieval_done_at is None:
+        return None
+    retrieval_seconds = retrieval_done_at - started
+    if first_char_at is None:
+        return RagPhaseTiming(
+            retrieval_seconds=retrieval_seconds,
+            generation_seconds=0.0,
+            first_char_seconds=retrieval_seconds,
+        )
+    return RagPhaseTiming(
+        retrieval_seconds=retrieval_seconds,
+        generation_seconds=first_char_at - retrieval_done_at,
+        first_char_seconds=first_char_at - started,
+    )
 
 
 def _build_response(
@@ -160,9 +241,12 @@ async def chat_completions(
     """Run RAG using the last user message as the query."""
     question = _extract_user_question(body.messages)
     history = _extract_history(body.messages)
+    bypass_rag = _should_bypass_rag(question)
     chat_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
+    request_started = time.monotonic()
     request_timeout = config.api.request_timeout_seconds
+    show_elapsed_time = config.generation.show_elapsed_time
 
     if body.stream:
         slot_ctx = gate.slot()
@@ -187,6 +271,9 @@ async def chat_completions(
                     task=body.task,
                     request_timeout_seconds=request_timeout,
                     history=history,
+                    bypass_rag=bypass_rag,
+                    request_started=request_started,
+                    show_elapsed_time=show_elapsed_time,
                 ):
                     yield chunk
             finally:
@@ -214,16 +301,18 @@ async def chat_completions(
             response.headers.update(queue_response_headers(snapshot))
             try:
                 stream_result = await run_sync_with_request_timeout(
-                    service.stream_answer,
+                    _fetch_stream_result,
+                    service,
                     question,
-                    timeout_seconds=request_timeout,
+                    bypass_rag=bypass_rag,
                     target_project=body.project,
                     target_build=body.build,
                     document_type=body.document_type,
-                    top_k_final=body.top_k,
+                    top_k=body.top_k,
                     cancel_event=cancel,
                     task=body.task,
                     history=history,
+                    timeout_seconds=request_timeout,
                 )
             except (RequestTimeoutError, LlmTimeoutError) as exc:
                 logger.error("Chat completion %s timed out: %s", chat_id, exc)
@@ -236,7 +325,9 @@ async def chat_completions(
                 logger.info("Chat completion %s cancelled after retrieval", chat_id)
                 return Response(status_code=204)
 
+            retrieval_done_at = time.monotonic()
             fragments: list[str] = []
+            first_char_at: float | None = None
             try:
                 async for fragment in iter_sync_text_chunks(
                     stream_result.text_chunks,
@@ -249,6 +340,8 @@ async def chat_completions(
                             chat_id,
                         )
                         return Response(status_code=204)
+                    if first_char_at is None:
+                        first_char_at = time.monotonic()
                     fragments.append(fragment)
             except LlmTimeoutError as exc:
                 logger.error("Chat completion %s timed out: %s", chat_id, exc)
@@ -272,11 +365,31 @@ async def chat_completions(
                         content = content.rstrip() + image_block
             except (AttributeError, TypeError):
                 pass
+            footer = _elapsed_footer(
+                timing=_build_phase_timing(
+                    started=request_started,
+                    retrieval_done_at=retrieval_done_at,
+                    first_char_at=first_char_at,
+                ),
+                show_elapsed_time=show_elapsed_time,
+                bypass_rag=bypass_rag,
+            )
+            if footer:
+                content = content.rstrip() + footer
+            phase_timing = _build_phase_timing(
+                started=request_started,
+                retrieval_done_at=retrieval_done_at,
+                first_char_at=first_char_at,
+            )
             logger.info(
-                "Chat completion %s finished (%d chars, insufficient=%s)",
+                "Chat completion %s finished (%d chars, insufficient=%s, "
+                "retrieval=%.1fs, generation=%.1fs, first_char=%.1fs)",
                 chat_id,
                 len(content),
                 not fragments,
+                phase_timing.retrieval_seconds if phase_timing else 0.0,
+                phase_timing.generation_seconds if phase_timing else 0.0,
+                phase_timing.first_char_seconds if phase_timing else 0.0,
             )
             return _build_response(
                 chat_id=chat_id,
@@ -307,11 +420,15 @@ async def _stream_answer(
     task: str | None,
     request_timeout_seconds: float | None,
     history: list[ConversationTurn] | None = None,
+    bypass_rag: bool = False,
+    request_started: float | None = None,
+    show_elapsed_time: bool = False,
 ) -> AsyncIterator[str]:
     """Yield OpenAI-compatible SSE chunks for a streamed RAG answer."""
     cancel = threading.Event()
     watcher = start_disconnect_watcher(request, cancel, label=f"Chat stream {chat_id}")
     fragments: list[str] = []
+    started = request_started if request_started is not None else time.monotonic()
     deadline = (
         time.monotonic() + request_timeout_seconds
         if request_timeout_seconds and request_timeout_seconds > 0
@@ -332,7 +449,7 @@ async def _stream_answer(
             chat_id=chat_id,
             model=model,
             created=created,
-            description=RETRIEVAL_STATUS,
+            description=RETRIEVAL_STATUS if not bypass_rag else GENERATION_STATUS,
         )
 
         if _timed_out():
@@ -345,17 +462,21 @@ async def _stream_answer(
                 raise RequestTimeoutError("Request timed out before retrieval")
 
         stream_result = await run_sync_with_request_timeout(
-            service.stream_answer,
+            _fetch_stream_result,
+            service,
             question,
-            timeout_seconds=remaining_timeout,
+            bypass_rag=bypass_rag,
             target_project=project,
             target_build=build,
             document_type=document_type,
-            top_k_final=top_k,
+            top_k=top_k,
             cancel_event=cancel,
             task=task,
             history=history,
+            timeout_seconds=remaining_timeout,
         )
+        retrieval_done_at = time.monotonic()
+        first_char_at: float | None = None
         if cancel.is_set():
             logger.info("Chat stream %s cancelled before generation", chat_id)
             yield clear_status_chunk(
@@ -364,12 +485,13 @@ async def _stream_answer(
             )
             return
 
-        yield format_status_chunk(
-            chat_id=chat_id,
-            model=model,
-            created=created,
-            description=GENERATION_STATUS,
-        )
+        if not bypass_rag:
+            yield format_status_chunk(
+                chat_id=chat_id,
+                model=model,
+                created=created,
+                description=GENERATION_STATUS,
+            )
 
         sources = citations_to_open_webui_sources(stream_result.citations)
         if sources:
@@ -395,6 +517,8 @@ async def _stream_answer(
                     description=GENERATION_STATUS,
                 )
                 generation_status_active = False
+            if first_char_at is None:
+                first_char_at = time.monotonic()
             fragments.append(fragment)
             yield _sse_chunk(
                 chat_id=chat_id,
@@ -439,7 +563,37 @@ async def _stream_answer(
             except (AttributeError, TypeError):
                 pass
 
-        logger.info("Chat stream %s finished (%d chars)", chat_id, len(content))
+        footer = _elapsed_footer(
+            timing=_build_phase_timing(
+                started=started,
+                retrieval_done_at=retrieval_done_at,
+                first_char_at=first_char_at,
+            ),
+            show_elapsed_time=show_elapsed_time,
+            bypass_rag=bypass_rag,
+        )
+        if footer:
+            yield _sse_chunk(
+                chat_id=chat_id,
+                model=model,
+                created=created,
+                delta={"content": footer},
+            )
+
+        phase_timing = _build_phase_timing(
+            started=started,
+            retrieval_done_at=retrieval_done_at,
+            first_char_at=first_char_at,
+        )
+        logger.info(
+            "Chat stream %s finished (%d chars, retrieval=%.1fs, "
+            "generation=%.1fs, first_char=%.1fs)",
+            chat_id,
+            len(content),
+            phase_timing.retrieval_seconds if phase_timing else 0.0,
+            phase_timing.generation_seconds if phase_timing else 0.0,
+            phase_timing.first_char_seconds if phase_timing else 0.0,
+        )
         yield _sse_chunk(
             chat_id=chat_id,
             model=model,

@@ -814,6 +814,42 @@ class RagService:
 
         return AnswerStreamResult(citations=citations, text_chunks=_text_stream())
 
+    def stream_direct(
+        self,
+        prompt: str,
+        *,
+        cancel_event: threading.Event | None = None,
+        max_new_tokens: int | None = None,
+    ) -> AnswerStreamResult:
+        """Stream an LLM reply without retrieval (Open WebUI auxiliary tasks).
+
+        Args:
+            prompt: Fully rendered user prompt to send to the LLM.
+            cancel_event: When set, stop LLM streaming as soon as possible.
+            max_new_tokens: Optional token budget override for short JSON tasks.
+
+        Returns:
+            Empty citations plus text fragments from the LLM.
+        """
+
+        def _text_stream() -> Iterator[str]:
+            if cancel_event and cancel_event.is_set():
+                return
+            if callable(getattr(self.llm, "generate_stream", None)):
+                yield from self.llm.generate_stream(
+                    prompt,
+                    max_new_tokens=max_new_tokens,
+                    cancel_event=cancel_event,
+                )
+                return
+            text = self.llm.generate(
+                prompt, max_new_tokens=max_new_tokens
+            ).strip()
+            if text:
+                yield text
+
+        return AnswerStreamResult(citations=[], text_chunks=_text_stream())
+
     def _generate_answer_text_stream(
         self,
         prompt: str,

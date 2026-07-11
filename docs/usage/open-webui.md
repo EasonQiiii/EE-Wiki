@@ -69,6 +69,7 @@ python scripts/index.py
 | `ingestion.schematic_pdf.save_page_images` | `true` | Save full-page schematic renders as PNG during ingest |
 | `generation.inline_citation_images` | `true` | Append referenced images after the answer |
 | `generation.max_inline_images` | `4` | Cap on appended images per answer |
+| `generation.show_elapsed_time` | `false` | When `true`, append phase timings: 检索 / 生成 (LLM prefill) / 首字 |
 
 Images are served via `GET /v1/assets/{path}` from `data/processed/`.
 
@@ -124,6 +125,7 @@ When scope cannot be inferred, retrieval searches the **entire index**; answers 
 | `models.llm_mlx_model is not configured` | Set `llm_mlx_model` (or `llm_transformers_model` if using transformers backend) in `config/default.yaml` |
 | Slow first response | Enable `api.warmup_on_startup: true`; first load of embedding, reranker, and LLM can take minutes |
 | Request hangs with no reply | Check server logs; tune `api.request_timeout_seconds` and `generation.llm_timeout_seconds` |
+| Open WebUI stuck after first answer | Open WebUI sends **title/tag** background tasks to the same backend; EE-Wiki bypasses RAG for those prompts (``### Task:`` + ``<chat_history>``). Restart `serve.py` after upgrading if an old build ran full RAG on title generation (137k+ token prompts). Optionally disable **Settings → Interface → Chat title generation** in Open WebUI |
 | Cancel in Open WebUI but server keeps running | Restart `serve.py`; chat uses cancellable streaming |
 | Assistant questions cite datasheets | Ensure `generation.assistant_fallback: true`; tune `generation.weak_rerank_threshold` if weak retrieval still reaches the wiki prompt |
 | Open WebUI shows no output | Wait for server warmup; first LLM load can take 1–3 min on Mac. Check `curl http://localhost:8080/health` first |

@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
 from ee_wiki.api.app import create_app
-from ee_wiki.api.deps import get_rag_service
+from ee_wiki.api.deps import get_config, get_rag_service
 from ee_wiki.api.stream_status import GENERATION_STATUS, RETRIEVAL_STATUS
 from ee_wiki.common.types import Citation
 from ee_wiki.generation.service import AnswerStreamResult
+
+_TITLE_PROMPT = """### Task:
+Generate a concise, 3-5 word title with an emoji summarizing the chat history.
+### Chat History:
+<chat_history>
+USER: 怎么配置邮箱
+ASSISTANT: 打开邮件应用...
+</chat_history>"""
 
 
 def _stream_result(
@@ -24,12 +33,20 @@ def _stream_result(
     return AnswerStreamResult(citations=citations or [], text_chunks=_chunks())
 
 
-def test_chat_completions_uses_last_user_message() -> None:
+def _config_without_elapsed(app_config):
+    return replace(
+        app_config,
+        generation=replace(app_config.generation, show_elapsed_time=False),
+    )
+
+
+def test_chat_completions_uses_last_user_message(app_config) -> None:
     service = MagicMock()
     service.stream_answer.return_value = _stream_result("RMII uses ETH_MDIO.")
 
     app = create_app()
     app.dependency_overrides[get_rag_service] = lambda: service
+    app.dependency_overrides[get_config] = lambda: _config_without_elapsed(app_config)
     client = TestClient(app)
     response = client.post(
         "/v1/chat/completions",
@@ -57,7 +74,7 @@ def test_chat_completions_uses_last_user_message() -> None:
     assert "cancel_event" in call_kwargs
 
 
-def test_chat_completions_returns_open_webui_sources() -> None:
+def test_chat_completions_returns_open_webui_sources(app_config) -> None:
     citations = [
         Citation(
             source_file="data/raw/logan/p1/note/manual.md",
@@ -75,6 +92,7 @@ def test_chat_completions_returns_open_webui_sources() -> None:
 
     app = create_app()
     app.dependency_overrides[get_rag_service] = lambda: service
+    app.dependency_overrides[get_config] = lambda: _config_without_elapsed(app_config)
     client = TestClient(app)
     response = client.post(
         "/v1/chat/completions",
@@ -180,3 +198,82 @@ def test_chat_completions_meta_question_uses_service_fast_path() -> None:
     assert response.status_code == 200
     assert "EE-Wiki" in response.json()["choices"][0]["message"]["content"]
     service.stream_answer.assert_called_once()
+
+
+def test_chat_completions_bypasses_rag_for_open_webui_title_task() -> None:
+    service = MagicMock()
+    service.stream_direct.return_value = _stream_result(
+        '{"title": "📧 邮箱配置"}',
+    )
+
+    app = create_app()
+    app.dependency_overrides[get_rag_service] = lambda: service
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "ee-wiki",
+            "messages": [{"role": "user", "content": _TITLE_PROMPT}],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["choices"][0]["message"]["content"] == '{"title": "📧 邮箱配置"}'
+    service.stream_direct.assert_called_once()
+    service.stream_answer.assert_not_called()
+
+
+def test_chat_completions_appends_elapsed_footer_when_enabled(app_config) -> None:
+    service = MagicMock()
+    service.stream_answer.return_value = _stream_result("Answer text.")
+    config = replace(
+        app_config,
+        generation=replace(app_config.generation, show_elapsed_time=True),
+    )
+
+    app = create_app()
+    app.dependency_overrides[get_rag_service] = lambda: service
+    app.dependency_overrides[get_config] = lambda: config
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "ee-wiki",
+            "messages": [{"role": "user", "content": "Test question"}],
+        },
+    )
+
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert content.startswith("Answer text.")
+    assert "检索" in content
+    assert "生成" in content
+    assert "首字" in content
+
+
+def test_chat_completions_stream_appends_elapsed_footer_when_enabled(app_config) -> None:
+    service = MagicMock()
+    service.stream_answer.return_value = _stream_result("Stream answer.")
+    config = replace(
+        app_config,
+        generation=replace(app_config.generation, show_elapsed_time=True),
+    )
+
+    app = create_app()
+    app.dependency_overrides[get_rag_service] = lambda: service
+    app.dependency_overrides[get_config] = lambda: config
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "ee-wiki",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Test question"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Stream answer." in response.text
+    assert "检索" in response.text
+    assert "首字" in response.text
