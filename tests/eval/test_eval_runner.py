@@ -123,9 +123,9 @@ def test_negative_case_fails_on_forbidden_scope() -> None:
 
 def test_evaluate_query_reports_fact_recall() -> None:
     dataset = load_qa_dataset(repo_root=find_repo_root())
-    case = next(item for item in dataset.cases if item.id == "Q-002")
+    case = next(item for item in dataset.cases if item.id == "Q-024")
     chunk = _chunk(
-        content="MP2359 buck step-down regulator 1.2 A 1.4 MHz 24 V",
+        content="STM32F407ZGT6 supply voltage 3.3V VDD operating conditions",
         target_file=case.required_sources[0],
     )
     scored = evaluate_query(

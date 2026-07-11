@@ -6,8 +6,8 @@ version: "1.0"
 
 corpus:
   manifest: data/indexes/manifest.json
-  chunk_count: 12554
-  built_at: "2026-07-10T03:10:47Z"
+  chunk_count: 4676
+  built_at: "2026-07-11T08:37:00Z"
   coverage:
     - global
     - kingboo/common
@@ -57,26 +57,6 @@ cases:
     must_not_contain:
       - "200 MHz"
       - "2 Mbyte"
-
-  - id: Q-002
-    title: MP2359 关键规格
-    category: datasheet
-    mandatory: true
-    filters:
-      project: global
-      build: global
-    scope_label: global
-    question: MP2359 是什么类型的电源芯片？峰值输出电流和开关频率是多少？
-    expected_answer: |
-      电流模式降压（step-down / buck）开关稳压器；峰值输出电流 1.2 A；开关频率 1.4 MHz；输入电压最高 24 V。
-    expected_facts:
-      - buck
-      - 1.2A
-      - 1.4MHz
-      - 24V
-    required_sources:
-      - data/processed/global/datasheet/MP2359.md
-      - data/processed/global/datasheet/MP2359 AN.md
 
   - id: Q-003
     title: Logan P1 以太网 PHY
@@ -290,23 +270,6 @@ cases:
     required_sources:
       - data/processed/global/note/ipadmanal.md
 
-  - id: Q-014
-    title: EE-Wiki 架构要点
-    category: platform
-    mandatory: false
-    filters: null
-    scope_label: global
-    question: EE-Wiki 研发汇报材料中，检索层的三层知识范围是什么？优先级顺序如何？
-    expected_answer: |
-      三层范围 build（版本专属）→ common（项目共享）→ global（企业通用）；
-      优先级 build 最高，其次 common，再次 global；混合检索为向量 + BM25 + Cross-Encoder 重排。
-    expected_facts:
-      - build
-      - common
-      - global
-    required_sources:
-      - data/processed/global/note/EE-Wiki-研发汇报.md
-
   - id: Q-015
     title: build 检索应优先原理图
     category: scope
@@ -460,3 +423,71 @@ cases:
       - EOS
     required_sources:
       - data/processed/global/fa/QEM-CCR-2311-00781_XTPS612994YBHR.md
+
+  - id: Q-023
+    title: Explorer U14 页码
+    category: schematic
+    mandatory: true
+    filters:
+      project: logan
+      build: p1
+    scope_label: build
+    question: Explorer STM32F4 V2.2 原理图中，位号 U14 出现在第几页？
+    expected_answer: |
+      U14 出现在 Page 3（第 3 页）；与以太网/音频模块相关页面。
+    expected_facts:
+      - U14
+      - "3"
+    required_sources:
+      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+
+  - id: Q-024
+    title: STM32 3.3V 供电
+    category: datasheet
+    mandatory: true
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: STM32F407ZGT6 datasheet 是否列出 3.3V 供电电压？
+    expected_answer: |
+      是；datasheet 及 metadata 中包含 3.3V 供电相关规格。
+    expected_facts:
+      - "3.3V"
+    required_sources:
+      - data/processed/global/datasheet/STM32F407ZGT6.md
+
+  - id: Q-025
+    title: FA EOS/ESD 关键词
+    category: fa
+    mandatory: false
+    filters:
+      project: global
+      build: global
+    scope_label: global
+    question: QEM-CCR-2311-00781 报告是否涉及 EOS 或 ESD 类失效？
+    expected_answer: |
+      是；报告判定 EIPD，最可能由 EOS 导致；keywords 含 EOS、ESD 等失效相关术语。
+    expected_facts:
+      - EOS
+      - ESD
+    required_sources:
+      - data/processed/global/fa/QEM-CCR-2311-00781_XTPS612994YBHR.md
+
+  - id: Q-026
+    title: Explorer U13 U14 同页
+    category: schematic
+    mandatory: false
+    filters:
+      project: logan
+      build: p1
+    scope_label: build
+    question: Explorer STM32F4 V2.2 原理图中，U13 与 U14 是否在同一页？
+    expected_answer: |
+      是；U13 与 U14 均出现在 Page 3（第 3 页）。
+    expected_facts:
+      - U13
+      - U14
+      - "3"
+    required_sources:
+      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md

@@ -4,8 +4,8 @@
 >
 > **版本**：v1.0  
 > **机器可读源**：[`qa.yaml`](qa.yaml)（`config/schema/qa_eval.schema.json` 校验；`ee_wiki.common.eval_qa.load_qa_dataset()` 加载）  
-> **语料快照**：`data/indexes/manifest.json` — 12,554 chunks，built_at `2026-07-10T03:10:47Z`  
-> **覆盖范围**：global（datasheet / sop / note / fa）+ `kingboo/common` + `logan/p1`
+> **语料快照**：`data/indexes/manifest.json` — **4,676** chunks，built_at `2026-07-11T08:37:00Z`（Phase A force sync 后；此前 12,554 chunks）  
+> **覆盖范围**：global（datasheet 现仅 STM32F407ZGT6 / sop / note / fa）+ `kingboo/common` + `logan/p1`（Explorer schematic）
 
 ---
 
@@ -126,29 +126,6 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 - `data/processed/global/datasheet/STM32F407ZGT6.md`
 
 **must_not_contain**：`200 MHz`、`2 Mbyte`（库中无此规格）
-
----
-
-### Q-002 · Datasheet · MP2359 关键规格
-
-| 字段 | 内容 |
-|------|------|
-| id | Q-002 |
-| category | datasheet |
-| mandatory | true |
-| filters | `project=global` |
-| scope_label | global |
-
-**问题**：MP2359 是什么类型的电源芯片？峰值输出电流和开关频率是多少？
-
-**期望答案**：
-- 类型：**降压（step-down / buck）** 开关稳压器，电流模式
-- 峰值输出电流：**1.2A**
-- 开关频率：**1.4MHz**
-- 输入电压范围：最高 **24V**（可一并提及）
-
-**required_sources**：
-- `data/processed/global/datasheet/MP2359.md`（或同系列 `MP2359 AN.md`）
 
 ---
 
@@ -400,28 +377,6 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 
 ---
 
-### Q-014 · Platform · EE-Wiki 架构要点
-
-| 字段 | 内容 |
-|------|------|
-| id | Q-014 |
-| category | platform |
-| mandatory | false |
-| filters | （无，或 global） |
-| scope_label | global |
-
-**问题**：EE-Wiki 研发汇报材料中，检索层的三层知识范围是什么？优先级顺序如何？
-
-**期望答案**：
-- 三层范围：**build（版本专属）→ common（项目共享）→ global（企业通用）**
-- 优先级：**build 最高**，其次 common，再次 global
-- 可补充：混合检索 = 向量 + BM25 + Cross-Encoder 重排；完全离线
-
-**required_sources**：
-- `data/processed/global/note/EE-Wiki-研发汇报.md`
-
----
-
 ### Q-015 · Scope · build 检索应命中原理图而非仅 datasheet
 
 | 字段 | 内容 |
@@ -605,21 +560,105 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 
 ---
 
+### Q-023 · Schematic · Explorer U14 页码（V2）
+
+| 字段 | 内容 |
+|------|------|
+| id | Q-023 |
+| category | schematic |
+| mandatory | true |
+| filters | `project=logan, build=p1` |
+| scope_label | build |
+
+**问题**：Explorer STM32F4 V2.2 原理图中，位号 U14 出现在第几页？
+
+**期望答案**：**Page 3**（第 3 页）；U14 与以太网/音频模块同页。
+
+**required_sources**：
+- `data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
+
+**验证 V2**：chunk 级 `pages` 侧车 + component index（U14 → page 3 chunk）
+
+---
+
+### Q-024 · Datasheet · STM32 3.3V 供电（V2）
+
+| 字段 | 内容 |
+|------|------|
+| id | Q-024 |
+| category | datasheet |
+| mandatory | true |
+| filters | `project=global, build=global` |
+| scope_label | global |
+
+**问题**：STM32F407ZGT6 datasheet 是否列出 3.3V 供电电压？
+
+**期望答案**：是；文档/metadata 含 **3.3V** 供电规格。
+
+**required_sources**：
+- `data/processed/global/datasheet/STM32F407ZGT6.md`
+
+**验证 V2**：datasheet 结构化字段 `supply_voltage` + metadata boost
+
+---
+
+### Q-025 · FA · EOS/ESD 关键词（V2）
+
+| 字段 | 内容 |
+|------|------|
+| id | Q-025 |
+| category | fa |
+| mandatory | false |
+| filters | `project=global, build=global` |
+| scope_label | global |
+
+**问题**：QEM-CCR-2311-00781 报告是否涉及 EOS 或 ESD 类失效？
+
+**期望答案**：是；判定 **EIPD/EOS**；keywords 含 **EOS**、**ESD**。
+
+**required_sources**：
+- `data/processed/global/fa/QEM-CCR-2311-00781_XTPS612994YBHR.md`
+
+**验证 V2**：FA ingest keyword 提取
+
+---
+
+### Q-026 · Schematic · U13/U14 同页（V2）
+
+| 字段 | 内容 |
+|------|------|
+| id | Q-026 |
+| category | schematic |
+| mandatory | false |
+| filters | `project=logan, build=p1` |
+| scope_label | build |
+
+**问题**：Explorer STM32F4 V2.2 原理图中，U13 与 U14 是否在同一页？
+
+**期望答案**：是；均在 **Page 3**。
+
+**required_sources**：
+- `data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
+
+**验证 V2**：component index 多 designator 命中同一 page chunk
+
+---
+
 ## 5. 分类汇总
 
 | 类别 | 题号 | 数量 | 测什么 |
 |------|------|------|--------|
-| datasheet | Q-001, Q-002 | 2 | 器件规格忠实度 |
-| schematic | Q-003, Q-004, Q-005 | 3 | 原理图检索与网络/器件 |
+| datasheet | Q-001, Q-024 | 2 | 器件规格忠实度 + V2 结构化字段 |
+| schematic | Q-003, Q-004, Q-005, Q-023, Q-026 | 5 | 原理图检索、页级元数据、component index |
 | scope / project common | Q-006–Q-009, Q-015, Q-016 | 6 | 范围继承、跨项目隔离 |
-| fa | Q-010, Q-022 | 2 | 失效分析报告 |
+| fa | Q-010, Q-022, Q-025 | 3 | 失效分析报告 + V2 FA keywords |
 | sop | Q-011 | 1 | 仪器操作 SOP |
-| platform | Q-012–Q-014 | 3 | 工程手册与平台说明 |
+| platform | Q-012, Q-013 | 2 | 工程手册与平台说明 |
 | negative | Q-017–Q-019 | 3 | 拒答与防幻觉 |
 | stability | Q-020–Q-022 | 3 | 表述鲁棒性 |
-| **合计** | | **22** | |
+| **合计** | | **24** | |
 
-**必答题（mandatory）**：Q-001, Q-002, Q-003, Q-004, Q-006, Q-007, Q-010, Q-015, Q-016, Q-017, Q-018, Q-019, Q-020 — 共 **13** 题。
+**必答题（mandatory）**：Q-001, Q-003, Q-004, Q-006, Q-007, Q-010, Q-015, Q-016, Q-017, Q-018, Q-019, Q-020, Q-023, Q-024 — 共 **14** 题。
 
 ---
 
@@ -629,12 +668,14 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 
 | 日期 | commit | 操作者 | 题号 | R | A | C | S | 备注 |
 |------|--------|--------|------|---|---|---|---|------|
+| 2026-07-11 | — | — | Q-023–Q-026 | 2 | — | — | — | Phase B retrieval baseline: 4/4 pass |
+| 2026-07-11 | — | — | mandatory | — | — | — | — | Phase B retrieval baseline: 14/14 pass |
 | 2026-07-10 | `abc1234` | — | Q-001 | 2 | 2 | 2 | — | |
 | … | | | | | | | | |
 
 **汇总行**：
 
-- 必答题得分：__ / 26（13 题 × 2 分）
+- 必答题得分：__ / 28（14 题 × 2 分）
 - 负向题拒答：__ / 3
 - 加权总分：__ / 2.0
 

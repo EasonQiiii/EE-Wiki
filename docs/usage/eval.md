@@ -105,7 +105,7 @@ python3 scripts/eval_rag.py [options]
 | `--negative-rerank-ceiling` | `-2.0` | Max rerank score for negative retrieval passes |
 | `--case` | (all) | Repeatable; e.g. `--case Q-001 --case Q-003` |
 | `--category` | (all) | Repeatable; `datasheet`, `schematic`, `scope`, `negative`, … |
-| `--mandatory-only` | off | Run only mandatory cases (13 of 22) |
+| `--mandatory-only` | off | Run only mandatory cases (14 of 24) |
 | `--json` | off | Print JSON report to stdout |
 | `--output PATH` | — | Write JSON report to file |
 | `--fail-on-threshold` | off | Exit 1 when mandatory/negative thresholds fail |
@@ -169,7 +169,7 @@ Q-001    Y     Y    Y     Y     Y    STM32F407 核心参数
 
 ## Maintaining the benchmark
 
-1. After a large ingest / reindex, update the corpus snapshot at the top of [qa.md](../eval/qa.md) and in [qa.yaml](../eval/qa.yaml) (`corpus.chunk_count`, `corpus.built_at`).
+1. After a large ingest / reindex, update the corpus snapshot at the top of [qa.md](../eval/qa.md) and in [qa.yaml](../eval/qa.yaml) (`corpus.chunk_count`, `corpus.built_at`). Phase A (2026-07-11): 4,676 chunks; removed Q-002/Q-014; added Q-023–Q-026.
 2. Add 2–3 cases per new project or document type; keep the same fields as existing entries in `qa.yaml`.
 3. After V2 metadata upgrades (schematic `pages`, datasheet structured fields, FA keywords, `components.json`), re-ingest + re-index before eval — see [mcp.md](mcp.md).
 4. Run `pytest tests/eval/` to validate YAML schema and scoring helpers.
