@@ -88,8 +88,17 @@ python scripts/mcp_serve.py
 | `query_schematic_tool` | Hybrid retrieval, `document_type=schematic` |
 | `search_datasheet_tool` | Hybrid retrieval, `document_type=datasheet` |
 | `engineering_search_tool` | General hybrid retrieval |
+| `list_projects_tool` | Indexed project/build inventory and chunk counts |
 
-All tools accept optional `project`, `build`, and return JSON with `scope` labels.
+All retrieval tools accept optional `project`, `build`, and return JSON with `scope` labels.
+
+### HTTP project inventory
+
+```bash
+curl "http://localhost:8080/v1/projects"
+```
+
+Chat questions like “当前知识库有多少 project / 有哪些项目” are answered from the same inventory (no document RAG).
 
 ### Cursor configuration
 

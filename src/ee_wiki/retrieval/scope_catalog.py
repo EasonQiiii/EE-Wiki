@@ -46,9 +46,12 @@ class ScopeCatalog:
                 continue
             if project == enterprise:
                 continue
+            # Register the product even when only ``common`` docs exist; ``common``
+            # is never a hardware revision.
+            revisions_by_product.setdefault(project, set())
             if build == common:
                 continue
-            revisions_by_product.setdefault(project, set()).add(build)
+            revisions_by_product[project].add(build)
 
         products = {
             product: frozenset(revisions)
@@ -85,8 +88,13 @@ class ScopeCatalog:
             return "(none)"
         lines: list[str] = []
         for product, revisions in sorted(self.products.items()):
-            rev_list = ", ".join(sorted(revisions))
-            lines.append(f"- {product}: {rev_list}")
+            if revisions:
+                rev_list = ", ".join(sorted(revisions))
+                lines.append(f"- {product}: {rev_list}")
+            else:
+                lines.append(
+                    f"- {product}: ({self.project_shared_segment} only; no hardware revision)"
+                )
         return "\n".join(lines)
 
     def is_valid_product(self, product: str | None) -> bool:

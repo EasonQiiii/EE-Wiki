@@ -54,7 +54,7 @@ EE-Wiki/
 │       ├── __init__.py
 │       │
 │       ├── api/                # HTTP layer — Open WebUI / OpenAI-compatible REST
-│       │   └── routes/         # health, query, chat, sources
+│       │   └── routes/         # health, query, chat, sources, components, projects, ingest
 │       │
 │       ├── ingestion/          # Parse raw files → StandardDocument (Markdown + metadata)
 │       │   ├── parsers/        # markdown, prose_pdf, schematic_pdf, word, excel

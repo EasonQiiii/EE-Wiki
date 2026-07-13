@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
 from ee_wiki.common.serialization import DATASHEET_DOCUMENT_TYPE, SCHEMATIC_DOCUMENT_TYPE
+from ee_wiki.retrieval.index_inventory import inventory_to_dict
 from ee_wiki.tools.context import ToolContext
 from ee_wiki.tools.format import format_component_search, format_retrieval_result
 
@@ -141,3 +144,16 @@ def engineering_search(
         layout=ctx.config.data_layout,
         document_type=document_type,
     )
+
+
+def list_projects(ctx: ToolContext) -> str:
+    """Return indexed project/build inventory as JSON text.
+
+    Args:
+        ctx: Initialized tool context.
+
+    Returns:
+        JSON text with project paths, builds, and chunk counts.
+    """
+    inventory = ctx.engine.get_index_inventory()
+    return json.dumps(inventory_to_dict(inventory), ensure_ascii=False, indent=2)

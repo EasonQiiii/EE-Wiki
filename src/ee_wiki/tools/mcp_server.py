@@ -6,6 +6,7 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.tools.context import ToolContext
 from ee_wiki.tools.handlers import (
     engineering_search,
+    list_projects,
     query_schematic,
     search_component,
     search_datasheet,
@@ -82,6 +83,12 @@ def search_datasheet_tool(
         build=build,
         top_k=top_k,
     )
+
+
+@mcp.tool()
+def list_projects_tool() -> str:
+    """List indexed project/build paths and chunk counts in the knowledge base."""
+    return list_projects(_get_context())
 
 
 @mcp.tool()

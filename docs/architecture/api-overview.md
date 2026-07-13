@@ -31,9 +31,12 @@ When both are set with `retrieval.scope_inheritance: true` (default), search exp
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/v1/components/search` | Part number / designator lookup against `data/indexes/components.json` |
+| `GET` | `/v1/projects` | Indexed project/build inventory (chunk counts; `global` flagged as enterprise) |
 | `POST` | `/v1/ingest` | Trigger document ingestion and optional index build (admin) |
 
 Query params for `GET /v1/components/search`: `q` (required), optional `project`, `build`, `limit` (default 20).
+
+Chat inventory questions such as “当前知识库有多少 project” are answered from the same index metadata (deterministic text; no document RAG).
 
 ### `POST /v1/ingest`
 

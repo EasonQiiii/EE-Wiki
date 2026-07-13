@@ -30,6 +30,10 @@ from ee_wiki.generation.translate import (
 )
 from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.retrieval.hybrid.engine import HybridChunk, HybridRagEngine, RetrievalResult
+from ee_wiki.retrieval.index_inventory import (
+    format_inventory_answer,
+    parse_inventory_request,
+)
 from ee_wiki.retrieval.rewrite import ConversationTurn, rewrite_query
 from ee_wiki.retrieval.scope_extract import InferredScope, extract_scope_rules
 from ee_wiki.retrieval.scope_resolve import merge_inferred_scope, resolve_retrieval_targets
@@ -84,6 +88,13 @@ class _RagInsufficient:
 
 
 @dataclass
+class _RagInventory:
+    """Deterministic index inventory answer (no retrieval / LLM)."""
+
+    answer: str
+
+
+@dataclass
 class _RagCancelled:
     """A cancel event fired mid-pipeline; caller returns an empty result."""
 
@@ -93,6 +104,7 @@ _RagStep = (
     | _RagTranslation
     | _RagAssistant
     | _RagInsufficient
+    | _RagInventory
     | _RagCancelled
 )
 
@@ -542,6 +554,25 @@ class RagService:
         if cancel_event and cancel_event.is_set():
             return _RagCancelled()
 
+        inventory_request = parse_inventory_request(question)
+        if inventory_request is not None:
+            inventory = self.engine.get_index_inventory()
+            inventory_request = parse_inventory_request(
+                question,
+                known_projects=[entry.project for entry in inventory.projects],
+            )
+            assert inventory_request is not None
+            answer = format_inventory_answer(inventory, inventory_request)
+            logger.info(
+                "Inventory question answered from index metadata "
+                "(kind=%s, project=%s, %d project path(s), %d chunk(s))",
+                inventory_request.kind,
+                inventory_request.project,
+                len(inventory.projects),
+                inventory.chunk_count,
+            )
+            return _RagInventory(answer=answer)
+
         if is_translation_task(task):
             return _RagTranslation(
                 question=question, history=history, cancel_event=cancel_event
@@ -685,6 +716,10 @@ class RagService:
             return RagAnswer(
                 answer=INSUFFICIENT_ANSWER, citations=[], insufficient_context=True
             )
+        if isinstance(step, _RagInventory):
+            return RagAnswer(
+                answer=step.answer, citations=[], insufficient_context=False
+            )
 
         size = prompt_size_fields(step.prompt)
         logger.info(
@@ -787,6 +822,12 @@ class RagService:
                 yield INSUFFICIENT_ANSWER
 
             return AnswerStreamResult(citations=[], text_chunks=_insufficient())
+        if isinstance(step, _RagInventory):
+
+            def _inventory() -> Iterator[str]:
+                yield step.answer
+
+            return AnswerStreamResult(citations=[], text_chunks=_inventory())
 
         size = prompt_size_fields(step.prompt)
         logger.info(

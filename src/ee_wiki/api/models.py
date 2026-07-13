@@ -57,6 +57,25 @@ class ComponentSearchResponse(BaseModel):
     hits: list[ComponentHitModel] = Field(default_factory=list)
 
 
+class ProjectInventoryEntryModel(BaseModel):
+    """One indexed project path with builds and chunk count."""
+
+    project: str
+    builds: list[str] = Field(default_factory=list)
+    chunk_count: int = 0
+    is_enterprise: bool = False
+
+
+class ProjectInventoryResponse(BaseModel):
+    """Index project/build inventory."""
+
+    chunk_count: int = 0
+    product_count: int = 0
+    enterprise_project: str = "global"
+    project_shared_build: str = "common"
+    projects: list[ProjectInventoryEntryModel] = Field(default_factory=list)
+
+
 class IngestRequest(BaseModel):
     """Admin request to trigger document ingest and optional index build."""
 

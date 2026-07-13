@@ -11,6 +11,7 @@ from ee_wiki.api.routes.chat import router as chat_router
 from ee_wiki.api.routes.components import router as components_router
 from ee_wiki.api.routes.health import router as health_router
 from ee_wiki.api.routes.ingest import router as ingest_router
+from ee_wiki.api.routes.projects import router as projects_router
 from ee_wiki.api.routes.query import router as query_router
 from ee_wiki.api.routes.sources import router as sources_router
 from ee_wiki.common.logging import get_logger
@@ -37,6 +38,7 @@ def create_app() -> FastAPI:
     app.include_router(sources_router)
     app.include_router(query_router)
     app.include_router(components_router)
+    app.include_router(projects_router)
     app.include_router(ingest_router)
     app.include_router(chat_router)
     logger.info("EE-Wiki API application created")

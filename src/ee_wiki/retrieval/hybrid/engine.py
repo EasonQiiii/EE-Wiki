@@ -28,6 +28,10 @@ from ee_wiki.retrieval.datasheet_query import (
     datasheet_rank_adjustment,
     parse_datasheet_query_hints,
 )
+from ee_wiki.retrieval.index_inventory import (
+    IndexInventory,
+    build_index_inventory,
+)
 from ee_wiki.retrieval.metadata_boost import metadata_keyword_boost
 from ee_wiki.retrieval.query_boost import query_boost_tokens
 from ee_wiki.retrieval.query_expand import expand_hw_query
@@ -160,6 +164,12 @@ class HybridRagEngine:
             self.config.data_layout,
         )
         return self._scope_catalog
+
+    def get_index_inventory(self) -> IndexInventory:
+        """Return project/build inventory aggregated from the loaded index."""
+        if not self.knowledge_base:
+            self.load_index()
+        return build_index_inventory(self.knowledge_base, self.config.data_layout)
 
     def __post_init__(self) -> None:
         self._device = self._detect_device()

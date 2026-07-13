@@ -45,6 +45,105 @@ def test_answer_returns_insufficient_when_no_chunks(rag_service) -> None:
     rag_service.llm.generate.assert_not_called()
 
 
+def test_answer_inventory_question_uses_index_metadata(rag_service) -> None:
+    from ee_wiki.retrieval.index_inventory import IndexInventory, ProjectInventoryEntry
+
+    rag_service.engine.get_index_inventory.return_value = IndexInventory(
+        chunk_count=83,
+        projects=(
+            ProjectInventoryEntry(
+                project="global",
+                builds=("global",),
+                chunk_count=10,
+                is_enterprise=True,
+            ),
+            ProjectInventoryEntry(
+                project="kingboo",
+                builds=("common",),
+                chunk_count=3,
+                is_enterprise=False,
+            ),
+            ProjectInventoryEntry(
+                project="logan",
+                builds=("p1",),
+                chunk_count=70,
+                is_enterprise=False,
+            ),
+        ),
+        product_count=2,
+        enterprise_project="global",
+        project_shared_build="common",
+    )
+    result = rag_service.answer("当前知识库有多少project")
+    assert result.insufficient_context is False
+    assert "kingboo" in result.answer
+    assert "logan" in result.answer
+    assert "3** 个 project" in result.answer or "3 个 project" in result.answer
+    rag_service.engine.retrieve.assert_not_called()
+    rag_service.llm.generate.assert_not_called()
+
+
+def test_answer_named_project_build_question(rag_service) -> None:
+    from ee_wiki.retrieval.index_inventory import IndexInventory, ProjectInventoryEntry
+
+    rag_service.engine.get_index_inventory.return_value = IndexInventory(
+        chunk_count=83,
+        projects=(
+            ProjectInventoryEntry(
+                project="logan",
+                builds=("p1",),
+                chunk_count=70,
+                is_enterprise=False,
+            ),
+            ProjectInventoryEntry(
+                project="kingboo",
+                builds=("common",),
+                chunk_count=13,
+                is_enterprise=False,
+            ),
+        ),
+        product_count=2,
+        enterprise_project="global",
+        project_shared_build="common",
+    )
+    result = rag_service.answer("logan有几个build")
+    assert "logan" in result.answer
+    assert "p1" in result.answer
+    assert "kingboo" not in result.answer
+    rag_service.engine.retrieve.assert_not_called()
+    rag_service.llm.generate.assert_not_called()
+
+
+def test_answer_named_project_build_with_中(rag_service) -> None:
+    from ee_wiki.retrieval.index_inventory import IndexInventory, ProjectInventoryEntry
+
+    rag_service.engine.get_index_inventory.return_value = IndexInventory(
+        chunk_count=70,
+        projects=(
+            ProjectInventoryEntry(
+                project="logan",
+                builds=("p1",),
+                chunk_count=70,
+                is_enterprise=False,
+            ),
+            ProjectInventoryEntry(
+                project="kingboo",
+                builds=("common",),
+                chunk_count=13,
+                is_enterprise=False,
+            ),
+        ),
+        product_count=2,
+        enterprise_project="global",
+        project_shared_build="common",
+    )
+    result = rag_service.answer("logan中有几个build")
+    assert "logan" in result.answer
+    assert "p1" in result.answer
+    assert "kingboo" not in result.answer
+    rag_service.engine.retrieve.assert_not_called()
+
+
 def test_answer_generates_from_retrieved_chunks(rag_service, repo_root) -> None:
     chunk = HybridChunk(
         chunk_id="note__power",

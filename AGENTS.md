@@ -208,6 +208,7 @@ When implementing, respect the roadmap in README.md:
 - **FA metadata** — `fa/` → `failure_analysis`; FA-specific keywords (failure modes, symptoms, RMA/LOT/DATECODE tokens)
 - **Chunk-level schematic metadata** — per-page `major_components` / `nets` / `interfaces` on indexed chunks via `pages` sidecar
 - **Component Database** — `data/indexes/components.json`, retrieval boost, `GET /v1/components/search`
+- **Index inventory** — `GET /v1/projects`, chat inventory questions, MCP `list_projects_tool`; ScopeCatalog includes common-only products
 - **HTTP ingest admin** — `POST /v1/ingest` (orchestrates `sync.py` pipeline)
 - **MCP Tools** — read-only tools in `src/ee_wiki/tools/` via `scripts/mcp_serve.py`
 - **Protocols** — `protocols/parser.py`, `protocols/retriever.py`, `protocols/index_store.py` (stubs before second backends)
