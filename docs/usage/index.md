@@ -45,6 +45,49 @@ This reads all processed documents under `data/processed/`, chunks them, embeds 
 - `bm25_corpus.json` — tokenized corpus for sparse recall
 - `components.json` — **V2** inverted index of designators and part numbers → chunk references (for `GET /v1/components/search` and retrieval boost)
 
+## Knowledge graph (V3)
+
+After indexing, build the offline knowledge-graph bundle from `chunks.jsonl` + `components.json` + `cases.json`:
+
+```bash
+python scripts/build_graph.py
+```
+
+Writes to `data/graph/` (configured via `data.graph_dir`):
+
+- `manifest.json` — schema version (**3** with power tree), build time, source fingerprints
+- `nodes.jsonl` — Component / Net / Document / Project / Build / Case / **Rail** nodes
+- `edges.jsonl` — `connects_to`, `appears_in`, `same_as`, Case edges, plus **`supplies`** / **`derived_from`** when `graph.power_tree: true` (default)
+
+Power-tree extraction is heuristic (rail-like net names, regulator designators, page co-occurrence, datasheet `supply_voltage`) — **not** a CAD netlist. Query via `GET /v1/power/tree` or MCP `query_power_tree_tool` (`direction`: `feeds` | `powers` | `tree` | `flags`).
+
+### Engineering rules (V3 P4)
+
+After the graph exists, evaluate the YAML rule pack under `config/rules/` (config: `rules.enabled`, `rules.pack_dir`):
+
+```bash
+python scripts/evaluate_rules.py --list
+python scripts/evaluate_rules.py --project demo --build p1
+python scripts/evaluate_rules.py --rule rail_presence --rule power_tree_flags
+```
+
+Or via HTTP / MCP: `GET /v1/rules`, `GET /v1/rules/evaluate`, `list_rules_tool`, `evaluate_rules_tool`. Results are pass / fail / insufficient with graph/case/chunk citations — heuristic checks, not a full PCB DRC.
+
+### Graph queries (V3 P5)
+
+Core graph APIs (after `build_graph.py`):
+
+| HTTP | MCP | Purpose |
+|------|-----|---------|
+| `GET /v1/graph/node` | `open_graph_node_tool` | Resolve/open one node |
+| `GET /v1/graph/neighbors` | `graph_neighbors_tool` | Neighbors within N hops |
+| `GET /v1/graph/path` | `graph_path_tool` | Shortest path |
+| `GET /v1/graph/nodes` | `graph_filter_tool` | Filter by scope / node type |
+
+Optional RAG enrichment: `retrieval.graph_enrichment: true` (default **false**) appends a compact `[graph]` neighborhood to chat/query context. Prompts: `prompts/_shared/graph_rules.md`, `prompts/power/`, `prompts/rules/`.
+
+Graph queries honor `graph.scope_inheritance` (defaults like retrieval: build → `common` → `global`). See [ADR 0006](../adr/0006-knowledge-graph-store.md).
+
 ## Incremental index (default)
 
 By default, `index.py` compares each processed document's `source_mtime` and `source_size` (from the `.meta.json` sidecar) to the last build's `manifest.json` fingerprints:
@@ -111,3 +154,4 @@ On Apple Silicon, index embedding defaults to **CPU** (`indexing.embed_device: c
 - [query.md](query.md) — retrieval and RAG queries
 - [mcp.md](mcp.md) — component lookup and `components.json`
 - [data-flow.md](../architecture/data-flow.md) — chunking and index pipeline
+- [ADR 0006](../adr/0006-knowledge-graph-store.md) — knowledge graph store / `scripts/build_graph.py`

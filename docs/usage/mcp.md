@@ -107,12 +107,20 @@ python scripts/mcp_serve.py
 | Tool | Purpose |
 |------|---------|
 | `search_component_tool` | Part number / designator lookup |
+| `search_debug_case_tool` | Debug / FA case lookup (symptom, part, net, case id) |
+| `query_power_tree_tool` | Heuristic power tree (`feeds` / `powers` / `tree` / `flags`) |
+| `list_rules_tool` | List engineering rules from `config/rules/` |
+| `evaluate_rules_tool` | Evaluate rules (pass/fail/insufficient + citations) |
+| `open_graph_node_tool` | Resolve/open one graph node |
+| `graph_neighbors_tool` | Graph neighbors within N hops |
+| `graph_path_tool` | Shortest path between two nodes |
+| `graph_filter_tool` | Filter nodes by project/build scope |
 | `query_schematic_tool` | Hybrid retrieval, `document_type=schematic` |
 | `search_datasheet_tool` | Hybrid retrieval, `document_type=datasheet` |
 | `engineering_search_tool` | General hybrid retrieval |
 | `list_projects_tool` | Indexed project/build inventory and chunk counts |
 
-All retrieval tools accept optional `project`, `build`, and return JSON with `scope` labels (`build`, `common`, `global`). Scope follows `retrieval.scope_inheritance`.
+All retrieval tools accept optional `project`, `build`, and return JSON with `scope` labels (`build`, `common`, `global`). Scope follows `retrieval.scope_inheritance`. Power-tree, rules, and graph queries require `python scripts/build_graph.py` and honor `graph.scope_inheritance` / `graph.power_tree` / `rules.enabled`. Optional RAG graph enrichment is separate (`retrieval.graph_enrichment`, default off).
 
 The MCP process loads indexes from the same config paths as `serve.py` (`data/indexes/` by default). Run it from the EE-Wiki checkout (or with the same `EE_WIKI_*` / config overrides) so it sees the indexes you built.
 

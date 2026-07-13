@@ -108,6 +108,16 @@ indexing:
   embed_device: cpu        # cpu | mps | cuda | auto — CPU avoids MPS embedding bugs on Apple Silicon
   embed_batch_size: 8
 
+# Knowledge graph (V3) — built from indexes into data/graph/
+graph:
+  scope_inheritance: true   # neighbor/path/filter expand like retrieval (build → common → global)
+  power_tree: true          # V3 P3 — extract Rail nodes + supplies/derived_from at graph build
+
+# Engineering rules (V3 P4) — YAML pack evaluated against graph + cases
+rules:
+  enabled: true
+  pack_dir: config/rules    # relative to repo root; *.yaml rule definitions
+
 retrieval:
   top_k_embed: 20
   top_k_bm25: 20
@@ -122,6 +132,11 @@ retrieval:
   top_k_sparse: 4
   expand_sections: true   # merge sibling chunks from the same heading section
   min_rerank_score: null  # drop retrieval when top rerank logit is below this; null disables
+  case_lookup: true       # V3 P2 — boost FA chunks matching debug cases; enable case search
+  case_lookup_boost: 3    # extra ranking weight when a chunk belongs to a matched case
+  graph_enrichment: false # V3 P5 — attach compact graph neighborhood to RAG context (off by default)
+  graph_enrichment_max_hops: 1
+  graph_enrichment_max_nodes: 12
 
 # Path segment names for shared libraries (must match data/raw/ folders)
 data_layout:

@@ -2,7 +2,7 @@
 
 EE-Wiki serves as the backend for Open WebUI. This document tracks the HTTP surface area.
 
-**Status:** V2 — core query + component lookup + ingest admin + MCP tools.
+**Status:** V3 — knowledge graph, debug cases, power tree, engineering rules, graph HTTP/MCP suite (see [Long-term Roadmap](#long-term-roadmap) in README).
 
 ## Scope filters (`project` / `build`)
 
@@ -35,7 +35,38 @@ When both are set with `retrieval.scope_inheritance: true` (default), search exp
 | `POST` | `/v1/ingest` | Trigger document ingestion and optional index build (admin; sync by default, or `async: true` → 202) |
 | `GET` | `/v1/ingest/jobs/{job_id}` | Poll async ingest job status (`queued` / `running` / `succeeded` / `failed`) |
 
+## Implemented endpoints (V3)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/v1/cases/search` | Debug / FA case lookup against `data/indexes/cases.json` (P2) |
+| `GET` | `/v1/power/tree` | Heuristic power-tree query against `data/graph/` (P3) |
+| `GET` | `/v1/rules` | List engineering rules from `config/rules/` (P4) |
+| `GET` | `/v1/rules/evaluate` | Evaluate engineering rules against graph + cases (P4) |
+| `GET` | `/v1/graph/node` | Resolve and open one graph node (P5) |
+| `GET` | `/v1/graph/neighbors` | Neighbor nodes within N hops (P5) |
+| `GET` | `/v1/graph/path` | Shortest path between two nodes (P5) |
+| `GET` | `/v1/graph/nodes` | Filter nodes by project/build scope (P5) |
+
 Query params for `GET /v1/components/search`: `q` (required), optional `project`, `build`, `limit` (default 20).
+
+Query params for `GET /v1/cases/search`: `q` (required — symptom, part, net, or case id), optional `project`, `build`, `limit` (default 20). Hits include `case_id`, `symptom`, `suspected_*`, `root_cause`, `source_file`, and `chunk_ids` for citation.
+
+Query params for `GET /v1/power/tree`: optional `q` (rail / designator / part; required unless `direction=flags`), `direction` (`feeds` | `powers` | `tree` | `flags`, default `tree`), optional `project`, `build`, `max_depth` (default 4). Returns heuristic `supplies` / `derived_from` neighbors, optional indented `tree` text, and/or diagnostic `flags`. Requires a built graph (`python scripts/build_graph.py`); 503 if missing.
+
+Query params for `GET /v1/rules`: optional `include_disabled` (default false). Returns rule ids, check types, severity, and params from `config/rules/`.
+
+Query params for `GET /v1/rules/evaluate`: optional `project`, `build`, repeatable `rule_id`, optional `include_disabled`. Returns pass/fail/insufficient results with citations (graph node / case / chunk refs). Requires a built graph; 503 if rules disabled or graph/pack missing. CLI: `python scripts/evaluate_rules.py [--project X] [--build Y] [--rule id]`.
+
+Query params for `GET /v1/graph/node`: `q` (required — node id or designator/net/rail/case/part), optional `project`, `build`.
+
+Query params for `GET /v1/graph/neighbors`: `q` (required), optional `project`, `build`, `max_hops` (default 1), `edge_types` (comma-separated allowlist).
+
+Query params for `GET /v1/graph/path`: `source` and `target` (required), optional `project`, `build`, `max_depth` (default 8), `edge_types`. Returns `found` plus alternating node/edge steps when a path exists.
+
+Query params for `GET /v1/graph/nodes`: optional `project`, `build`, `node_types` (comma-separated), `limit` (default 200). Scope inheritance follows `graph.scope_inheritance`.
+
+Optional RAG enrichment: set `retrieval.graph_enrichment: true` to attach a compact `[graph]` neighborhood block to chat/query context (default **false**; generation still never opens the store).
 
 Chat inventory questions such as “当前知识库有多少 project” are answered from the same index metadata (deterministic text; no document RAG).
 
@@ -335,12 +366,20 @@ python scripts/mcp_serve.py
 | Tool | Purpose | REST equivalent |
 |------|---------|-----------------|
 | `search_component_tool` | Part number / designator lookup (`components.json`) | `GET /v1/components/search` |
+| `search_debug_case_tool` | Debug / FA case lookup (`cases.json`) | `GET /v1/cases/search` |
+| `query_power_tree_tool` | Heuristic power tree (`data/graph/` rails / supplies) | `GET /v1/power/tree` |
+| `list_rules_tool` | List engineering rules (`config/rules/`) | `GET /v1/rules` |
+| `evaluate_rules_tool` | Evaluate engineering rules (graph + cases) | `GET /v1/rules/evaluate` |
+| `open_graph_node_tool` | Resolve/open one graph node | `GET /v1/graph/node` |
+| `graph_neighbors_tool` | Graph neighbors within N hops | `GET /v1/graph/neighbors` |
+| `graph_path_tool` | Shortest path between two nodes | `GET /v1/graph/path` |
+| `graph_filter_tool` | Filter nodes by project/build scope | `GET /v1/graph/nodes` |
 | `query_schematic_tool` | Hybrid retrieval scoped to `document_type=schematic` | `POST /v1/query` (filter schematic) |
 | `search_datasheet_tool` | Hybrid retrieval scoped to `document_type=datasheet` | `POST /v1/query` (filter datasheet) |
 | `engineering_search_tool` | General hybrid retrieval with optional `document_type` | `POST /v1/query` |
 | `list_projects_tool` | Indexed project/build inventory | `GET /v1/projects` |
 
-All tools accept optional `project` and `build` filters and honor `retrieval.scope_inheritance`. Results are JSON with `scope` labels (`build`, `common`, `global`).
+All tools accept optional `project` and `build` filters and honor `retrieval.scope_inheritance` (graph tools honor `graph.scope_inheritance`). Results are JSON with `scope` labels (`build`, `common`, `global`). Graph tools require `python scripts/build_graph.py`.
 
 Example Cursor MCP config:
 

@@ -30,14 +30,21 @@ def knowledge_scope_tier(project: str, build: str) -> str:
     return "build"
 
 
-def format_context_blocks(chunks: list[HybridChunk]) -> str:
+def format_context_blocks(
+    chunks: list[HybridChunk],
+    *,
+    graph_enrichment: str | None = None,
+) -> str:
     """Render chunks as numbered context blocks for prompt injection.
 
     Each block header includes scope tier, project, build, source, page, and chunk_id
     so the LLM can distinguish build facts from project-common and global knowledge.
+    When ``graph_enrichment`` is provided (retrieval config-gated), it is appended
+    after document blocks as a non-cited neighborhood summary.
 
     Args:
         chunks: Retrieved chunks with citation metadata.
+        graph_enrichment: Optional compact graph neighborhood text from retrieval.
 
     Returns:
         Multi-block context string with ``[N]`` prefixes.
@@ -56,7 +63,13 @@ def format_context_blocks(chunks: list[HybridChunk]) -> str:
         if chunk.heading_path:
             header = f"{header} section={chunk.heading_path}"
         blocks.append(f"{header}\n{chunk.content.strip()}")
-    return "\n\n".join(blocks)
+    text = "\n\n".join(blocks)
+    if graph_enrichment and graph_enrichment.strip():
+        if text:
+            text = f"{text}\n\n{graph_enrichment.strip()}"
+        else:
+            text = graph_enrichment.strip()
+    return text
 
 
 def resolve_history_for_prompt(

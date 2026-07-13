@@ -43,6 +43,22 @@ class IndexingConfig:
 
 
 @dataclass(frozen=True)
+class GraphConfig:
+    """Knowledge graph build/query settings (V3)."""
+
+    scope_inheritance: bool = True
+    power_tree: bool = True
+
+
+@dataclass(frozen=True)
+class RulesConfig:
+    """Engineering rules engine settings (V3 P4)."""
+
+    enabled: bool = True
+    pack_dir: str = "config/rules"
+
+
+@dataclass(frozen=True)
 class ProsePdfConfig:
     """Settings for prose PDF text extraction and OCR fallback."""
 
@@ -128,6 +144,11 @@ class RetrievalConfig:
     scope_quota_build: int = 6
     scope_quota_common: int = 2
     scope_quota_global: int = 2
+    case_lookup: bool = True
+    case_lookup_boost: int = 3
+    graph_enrichment: bool = False
+    graph_enrichment_max_hops: int = 1
+    graph_enrichment_max_nodes: int = 12
 
 
 @dataclass(frozen=True)
@@ -223,6 +244,8 @@ class AppConfig:
     iwork: IworkConfig
     chunking: ChunkingConfig
     indexing: IndexingConfig
+    graph: GraphConfig
+    rules: RulesConfig
     retrieval: RetrievalConfig
     data_layout: DataLayoutConfig
     generation: GenerationConfig
@@ -231,6 +254,11 @@ class AppConfig:
     @property
     def models_dir(self) -> Path:
         return self.models.base_dir
+
+    @property
+    def rules_pack_dir(self) -> Path:
+        """Absolute path to the engineering rules YAML pack."""
+        return _resolve_path(self.repo_root, self.rules.pack_dir)
 
 
 def _optional_positive_int(value: object) -> int | None:
@@ -343,6 +371,8 @@ def load_config(
     chunking = raw.get("chunking", {})
     indexing = raw.get("indexing", {})
     models = raw.get("models", {})
+    graph_cfg = raw.get("graph", {}) or {}
+    rules_cfg = raw.get("rules", {}) or {}
     prose = ingestion.get("prose_pdf", {})
     schematic = ingestion.get("schematic_pdf", {})
     datasheet = ingestion.get("datasheet_pdf", {})
@@ -474,6 +504,19 @@ def load_config(
             embed_device=str(embed_device),
             embed_batch_size=int(indexing.get("embed_batch_size", 8)),
         ),
+        graph=GraphConfig(
+            scope_inheritance=bool(
+                graph_cfg.get(
+                    "scope_inheritance",
+                    retrieval.get("scope_inheritance", True),
+                )
+            ),
+            power_tree=bool(graph_cfg.get("power_tree", True)),
+        ),
+        rules=RulesConfig(
+            enabled=bool(rules_cfg.get("enabled", True)),
+            pack_dir=str(rules_cfg.get("pack_dir", "config/rules")),
+        ),
         retrieval=RetrievalConfig(
             top_k_embed=int(retrieval.get("top_k_embed", 20)),
             top_k_bm25=int(retrieval.get("top_k_bm25", 20)),
@@ -488,6 +531,13 @@ def load_config(
             scope_quota_build=int(retrieval.get("scope_quota_build", 6)),
             scope_quota_common=int(retrieval.get("scope_quota_common", 2)),
             scope_quota_global=int(retrieval.get("scope_quota_global", 2)),
+            case_lookup=bool(retrieval.get("case_lookup", True)),
+            case_lookup_boost=int(retrieval.get("case_lookup_boost", 3)),
+            graph_enrichment=bool(retrieval.get("graph_enrichment", False)),
+            graph_enrichment_max_hops=int(retrieval.get("graph_enrichment_max_hops", 1)),
+            graph_enrichment_max_nodes=int(
+                retrieval.get("graph_enrichment_max_nodes", 12)
+            ),
         ),
         data_layout=layout,
         generation=GenerationConfig(

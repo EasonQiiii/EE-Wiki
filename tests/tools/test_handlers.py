@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from ee_wiki.common.config import AppConfig
 from ee_wiki.knowledge.indexer.component_index import ComponentHit
 from ee_wiki.retrieval.hybrid.engine import HybridChunk, RetrievalResult
 from ee_wiki.tools.context import ToolContext
 from ee_wiki.tools.handlers import (
     engineering_search,
+    graph_neighbors,
     query_schematic,
     search_component,
     search_datasheet,
@@ -144,3 +147,17 @@ def test_engineering_search_allows_optional_document_type(app_config: AppConfig)
         document_type="sop",
         top_k_final=3,
     )
+
+
+def test_graph_neighbors_reports_missing_graph(
+    app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MCP graph tools return a JSON error when the graph bundle is absent."""
+    monkeypatch.setattr(
+        "ee_wiki.tools.handlers.graph_exists",
+        lambda _path: False,
+    )
+    ctx = _ctx(app_config)
+    payload = json.loads(graph_neighbors(ctx, "U101", project="logan", build="p1"))
+    assert "error" in payload
+    assert "Knowledge graph not found" in payload["error"]

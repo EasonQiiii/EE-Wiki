@@ -17,6 +17,7 @@ from ee_wiki.generation.llm.factory import build_llm_backend
 from ee_wiki.generation.prepare import PreparedQuery, prepare_query, should_prepare_query
 from ee_wiki.generation.prompt_stats import prompt_size_fields
 from ee_wiki.generation.templates.loader import (
+    load_graph_rules,
     load_scope_rules,
     load_template,
     render_assistant_template,
@@ -637,13 +638,18 @@ class RagService:
             return _RagCancelled()
 
         template = self._load_prompt_template(resolved_task)
-        context = format_context_blocks(chunks)
+        context = format_context_blocks(
+            chunks,
+            graph_enrichment=retrieval.graph_enrichment,
+        )
         scope_rules = load_scope_rules(self.config.repo_root)
+        graph_rules = load_graph_rules(self.config.repo_root)
         prompt = render_template(
             template,
             context=context,
             question=question,
             scope_rules=scope_rules,
+            graph_rules=graph_rules,
             history=resolve_history_for_prompt(
                 question,
                 history,

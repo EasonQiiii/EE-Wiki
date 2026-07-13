@@ -12,6 +12,15 @@ DATASHEET_DOCUMENT_TYPE = "datasheet"
 FAILURE_ANALYSIS_DOCUMENT_TYPE = "failure_analysis"
 SCHEMATIC_ONLY_FIELDS = ("major_components", "nets", "pages")
 DATASHEET_ONLY_FIELDS = ("supply_voltage", "pin_count", "package")
+CASE_ONLY_FIELDS = (
+    "case_id",
+    "symptom",
+    "suspected_nets",
+    "suspected_parts",
+    "steps",
+    "root_cause",
+    "case_citations",
+)
 
 
 def _page_metadata_from_dict(data: dict[str, Any]) -> PageMetadata:
@@ -74,6 +83,13 @@ def metadata_from_dict(data: dict[str, Any]) -> Metadata:
         supply_voltage=_optional_string_list(data.get("supply_voltage")),
         pin_count=_optional_int(data.get("pin_count")),
         package=_optional_string(data.get("package")),
+        case_id=_optional_string(data.get("case_id")),
+        symptom=_optional_string(data.get("symptom")),
+        suspected_nets=_optional_string_list(data.get("suspected_nets")),
+        suspected_parts=_optional_string_list(data.get("suspected_parts")),
+        steps=_optional_string_list(data.get("steps")),
+        root_cause=_optional_string(data.get("root_cause")),
+        case_citations=_optional_string_list(data.get("case_citations")),
         version=str(data.get("version", "")),
     )
 
@@ -134,6 +150,25 @@ def metadata_to_dict(metadata: Metadata) -> dict[str, Any]:
             data.pop("pin_count", None)
         if not metadata.package:
             data.pop("package", None)
+
+    if metadata.document_type != FAILURE_ANALYSIS_DOCUMENT_TYPE:
+        for key in CASE_ONLY_FIELDS:
+            data.pop(key, None)
+    else:
+        if not metadata.case_id:
+            data.pop("case_id", None)
+        if not metadata.symptom:
+            data.pop("symptom", None)
+        if not metadata.suspected_nets:
+            data.pop("suspected_nets", None)
+        if not metadata.suspected_parts:
+            data.pop("suspected_parts", None)
+        if not metadata.steps:
+            data.pop("steps", None)
+        if not metadata.root_cause:
+            data.pop("root_cause", None)
+        if not metadata.case_citations:
+            data.pop("case_citations", None)
 
     if metadata.document_type not in (SCHEMATIC_DOCUMENT_TYPE, DATASHEET_DOCUMENT_TYPE):
         data.pop("interfaces", None)

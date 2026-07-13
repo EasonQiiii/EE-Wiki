@@ -27,6 +27,7 @@
 - 每次大规模 ingest / reindex 后，更新文首「语料快照」日期与 chunk 数。
 - 新增项目文档时，按同样模板追加条目（每类 2–3 题即可）。
 - 机器可读数据见 [`qa.yaml`](qa.yaml)；自动跑分见 [docs/usage/eval.md](../usage/eval.md)。
+- **V3 graph / cases / power / rules**（P5）：默认 CI 用 `tests/graph/`、`tests/rules/`、`tests/api/test_graph.py`、`tests/retrieval/test_graph_enrichment.py` 做无回归，不依赖 live LLM。Golden QA（`qa.yaml`）仍以文档 RAG 为主；图查询 / 规则评估的人工抽检可在构建 `data/graph/` 后用 `GET /v1/graph/*`、`GET /v1/power/tree`、`GET /v1/rules/evaluate` 或 MCP 对应工具核对。
 
 ---
 

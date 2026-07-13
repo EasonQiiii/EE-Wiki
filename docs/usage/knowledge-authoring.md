@@ -42,9 +42,34 @@ Is it shared by ALL projects (tools, industry terms, generic datasheets)?
 | `sop/` | `sop` | Procedures, checklists, bring-up flows |
 | `sch/` | `schematic` | Schematic PDFs (VLM ingest) |
 | `datasheet/` | `datasheet` | Component datasheet PDFs (VLM ingest under `datasheet/`) |
-| `fa/` | `failure_analysis` | RMA reports, 8D, FA summaries, defect analysis write-ups |
+| `fa/` | `failure_analysis` | RMA reports, 8D, FA summaries, defect analysis write-ups — prefer structured debug-case fields (below) |
 
 **Authoring tip:** industry acronyms, product lifecycle (EVT/DVT/PVT), and general EE background → prefer `global/note/` (split into focused files, see below).
+
+### Debug cases (`fa/`) — V3 P2
+
+Structured fields improve case lookup and graph links. Prefer YAML frontmatter **or** clear Markdown headings:
+
+```markdown
+---
+case_id: RMA-2024-001
+symptom: No boot after power cycle
+suspected_nets: [NET_VCC, PWR_EN]
+suspected_parts: [U101, TPS61299]
+steps:
+  - Measure VCC at U101 pin 3
+  - Check EN assertion timing
+root_cause: Open solder joint on U101 pin 3
+citations:
+  - logan/p1/sch/power.md
+---
+
+# RMA-2024-001 No-boot FA
+
+Narrative and evidence…
+```
+
+Heading aliases also work (`## Symptom`, `## Suspected Nets`, `## Suspected Parts`, `## Steps`, `## Root Cause`). After ingest + index, cases appear in `data/indexes/cases.json` and as Case nodes when you run `python scripts/build_graph.py`.
 
 ---
 

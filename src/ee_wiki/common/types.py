@@ -37,6 +37,14 @@ class Metadata:
     supply_voltage: list[str] | None = None
     pin_count: int | None = None
     package: str | None = None
+    # Failure-analysis / debug-case fields (fa/ → failure_analysis)
+    case_id: str | None = None
+    symptom: str | None = None
+    suspected_nets: list[str] | None = None
+    suspected_parts: list[str] | None = None
+    steps: list[str] | None = None
+    root_cause: str | None = None
+    case_citations: list[str] | None = None
     version: str = ""
 
 

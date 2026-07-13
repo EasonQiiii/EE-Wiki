@@ -14,6 +14,7 @@ DEFAULT_TEMPLATE_NAME = "default"
 
 SCOPE_RULES_TASK = "_shared"
 SCOPE_RULES_NAME = "scope_rules"
+GRAPH_RULES_NAME = "graph_rules"
 
 
 class TemplateLoadError(EEWikiError):
@@ -68,21 +69,38 @@ def load_scope_rules(repo_root: Path) -> str:
     return load_template(repo_root, SCOPE_RULES_TASK, SCOPE_RULES_NAME)
 
 
+def load_graph_rules(repo_root: Path) -> str:
+    """Load shared graph-evidence instructions from ``prompts/_shared/graph_rules.md``.
+
+    Args:
+        repo_root: Repository root path.
+
+    Returns:
+        Raw graph-rules markdown for ``{{graph_rules}}`` substitution.
+
+    Raises:
+        TemplateLoadError: If the graph rules file is missing.
+    """
+    return load_template(repo_root, SCOPE_RULES_TASK, GRAPH_RULES_NAME)
+
+
 def render_template(
     template: str,
     *,
     context: str,
     question: str,
     scope_rules: str = "",
+    graph_rules: str = "",
     history: str = "",
 ) -> str:
-    """Substitute ``{{context}}``, ``{{question}}``, ``{{scope_rules}}``, and ``{{history}}``.
+    """Substitute prompt placeholders for engineering RAG templates.
 
     Args:
         template: Raw template text.
         context: Retrieved context blocks.
         question: User question.
         scope_rules: Shared knowledge-scope instructions (optional).
+        graph_rules: Shared graph-evidence instructions (optional).
         history: Formatted prior conversation turns (optional).
 
     Returns:
@@ -90,6 +108,7 @@ def render_template(
     """
     return (
         template.replace("{{scope_rules}}", scope_rules)
+        .replace("{{graph_rules}}", graph_rules)
         .replace("{{context}}", context)
         .replace("{{history}}", history)
         .replace("{{question}}", question)

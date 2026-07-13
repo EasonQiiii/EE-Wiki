@@ -10,6 +10,7 @@ from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import DATASHEET_DOCUMENT_TYPE, SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import StandardDocument
+from ee_wiki.ingestion.case_fields import enrich_failure_analysis_document
 from ee_wiki.ingestion.cleanup import RemovedProcessed, cleanup_orphaned_processed
 from ee_wiki.ingestion.keywords import extract_keywords
 from ee_wiki.ingestion.parsers.datasheet_pdf import parse_datasheet_pdf
@@ -188,6 +189,7 @@ def ingest_file(
         raise IngestionError(f"Failed to ingest {path.name}: {exc}") from exc
 
     document = _enrich_keywords(document)
+    document = enrich_failure_analysis_document(document)
 
     processed = write_processed_document(
         document,

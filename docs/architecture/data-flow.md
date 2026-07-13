@@ -11,7 +11,7 @@ Raw file under data/raw/{project}/{build}/{type}/…
     → StandardDocument (Markdown + Metadata)
     → knowledge/store → data/processed/  (mirrors raw tree)
     → chunker (structure-aware; see below)
-    → knowledge/indexer (embeddings + BM25 + components.json)
+    → knowledge/indexer (embeddings + BM25 + components.json + cases.json)
     → indexes on disk under data/indexes/
 ```
 
@@ -21,12 +21,14 @@ Raw file under data/raw/{project}/{build}/{type}/…
 |---------------|----------------|
 | `schematic` | Document-level + per-page `pages` sidecar → page-scoped chunk metadata |
 | `datasheet` | VLM parse + structured fields; table/graph/mixed pages may OCR-fallback via quality gate |
-| `failure_analysis` | FA keywords (failure modes, RMA/LOT tokens) |
+| `failure_analysis` | FA keywords (failure modes, RMA/LOT tokens); structured debug-case fields (`case_id`, `symptom`, `suspected_nets` / `suspected_parts`, `steps`, `root_cause`, `case_citations`) |
 | All | `keywords` (part numbers, voltages, protocols, packages) |
 
 **Incremental ingest** (default): `scripts/ingest.py` compares each raw file’s `mtime` and size to its processed sidecar (`.meta.json`). New or changed files are parsed and written to `data/processed/`; unchanged files are skipped. When raw files are removed, the matching processed `.md` and sidecar are deleted (orphan cleanup). Single-file ingest skips cleanup; directory or full-tree runs enable it. See [ingest.md](../usage/ingest.md#orphan-cleanup-raw-deleted).
 
-**Incremental index** (default): `scripts/index.py` compares each processed document’s `source_mtime` and `source_size` to the last build’s `manifest.json` fingerprints. New or changed documents are re-chunked and re-embedded; unchanged documents reuse existing rows; documents removed from `data/processed/` are dropped from the index (or the entire index is cleared when no processed documents remain). Pass `--force` to rebuild everything (required after chunker config changes).
+**Incremental index** (default): `scripts/index.py` compares each processed document’s `source_mtime` and `source_size` to the last build’s `manifest.json` fingerprints. New or changed documents are re-chunked and re-embedded; unchanged documents reuse existing rows; documents removed from `data/processed/` are dropped from the index (or the entire index is cleared when no processed documents remain). Pass `--force` to rebuild everything (required after chunker config changes). Index build also writes `components.json` and `cases.json` (V3 P2 debug cases from FA metadata).
+
+**Knowledge graph (V3):** after index, `scripts/build_graph.py` builds `data/graph/` from `chunks.jsonl` + `components.json` + `cases.json` (Case nodes; Rail nodes + `supplies` / `derived_from` when `graph.power_tree` is on). Engineering rules (P4) evaluate that graph (+ `cases.json`) via `scripts/evaluate_rules.py` / `GET /v1/rules/evaluate` using the YAML pack under `config/rules/`. Core graph queries are exposed as `GET /v1/graph/*` and MCP graph tools (P5). Optional `retrieval.graph_enrichment` (default off) attaches a compact neighborhood summary to RAG context after hybrid retrieval — generation never opens the store.
 
 After deleting raw files, run ingest + index together:
 

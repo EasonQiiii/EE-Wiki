@@ -17,10 +17,17 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import metadata_to_dict
 from ee_wiki.common.types import Chunk
 from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
+from ee_wiki.knowledge.indexer.case_index import CaseIndex, DebugCaseRecord, load_case_index
 from ee_wiki.knowledge.indexer.component_index import (
     ComponentHit,
     ComponentIndex,
     load_component_index,
+)
+from ee_wiki.retrieval.case_lookup import (
+    lookup_case_chunk_ids,
+)
+from ee_wiki.retrieval.case_lookup import (
+    search_cases as lookup_cases,
 )
 from ee_wiki.retrieval.component_lookup import COMPONENT_LOOKUP_BOOST, lookup_tokens
 from ee_wiki.retrieval.datasheet_query import (
@@ -28,6 +35,7 @@ from ee_wiki.retrieval.datasheet_query import (
     datasheet_rank_adjustment,
     parse_datasheet_query_hints,
 )
+from ee_wiki.retrieval.graph_enrichment import try_graph_enrichment
 from ee_wiki.retrieval.index_inventory import (
     IndexInventory,
     build_index_inventory,
@@ -118,6 +126,7 @@ class RetrievalResult:
 
     chunks: list[HybridChunk]
     top_rerank_score: float | None = None
+    graph_enrichment: str | None = None
 
 
 def _chunk_to_hybrid(chunk: Chunk, embedding: np.ndarray | None = None) -> HybridChunk:
@@ -152,6 +161,7 @@ class HybridRagEngine:
     _section_index: dict[str, list[HybridChunk]] = field(default_factory=dict, repr=False)
     _scope_catalog: ScopeCatalog | None = field(default=None, repr=False)
     _component_index: ComponentIndex | None = field(default=None, repr=False)
+    _case_index: CaseIndex | None = field(default=None, repr=False)
 
     def get_scope_catalog(self) -> ScopeCatalog:
         """Return cached product/revision catalog derived from the loaded index."""
@@ -228,6 +238,7 @@ class HybridRagEngine:
         self._section_index = build_section_index(self.knowledge_base)
         self._scope_catalog = None
         self._component_index = load_component_index(self.config.indexes_dir)
+        self._case_index = load_case_index(self.config.indexes_dir)
         self._build_embedding_matrix(embeddings, chunks)
         logger.info("Hybrid index loaded with %d chunk(s)", len(self.knowledge_base))
 
@@ -679,6 +690,23 @@ class HybridRagEngine:
             target_build=target_build,
             scope_inheritance=self.config.retrieval.scope_inheritance,
         )
+        case_boost = (
+            self.config.retrieval.case_lookup_boost
+            if self.config.retrieval.case_lookup
+            else 0
+        )
+        case_chunk_ids = (
+            lookup_case_chunk_ids(
+                self._case_index,
+                boost_tokens,
+                layout=layout,
+                target_project=target_project,
+                target_build=target_build,
+                scope_inheritance=self.config.retrieval.scope_inheritance,
+            )
+            if self.config.retrieval.case_lookup
+            else set()
+        )
 
         def keyword_boost(chunk: HybridChunk) -> int:
             if not boost_tokens:
@@ -689,13 +717,19 @@ class HybridRagEngine:
             component_hits = (
                 COMPONENT_LOOKUP_BOOST if chunk.chunk_id in component_chunk_ids else 0
             )
+            case_hits = case_boost if chunk.chunk_id in case_chunk_ids else 0
             datasheet_hits = datasheet_rank_adjustment(
                 chunk.content,
                 chunk.chunk_id,
                 datasheet_hints,
             )
-            return content_hits + (meta_hits * 2) + component_hits + datasheet_hits
-
+            return (
+                content_hits
+                + (meta_hits * 2)
+                + component_hits
+                + case_hits
+                + datasheet_hits
+            )
         return sorted(
             zip(logits, combined),
             key=lambda item: (
@@ -965,6 +999,39 @@ class HybridRagEngine:
             limit=limit,
         )
 
+    def search_cases(
+        self,
+        query: str,
+        *,
+        target_project: str | None = None,
+        target_build: str | None = None,
+        limit: int = 20,
+    ) -> list[DebugCaseRecord]:
+        """Look up debug / FA cases by symptom, part, net, or case id.
+
+        Args:
+            query: Natural language or keyword query.
+            target_project: Optional project metadata filter.
+            target_build: Optional build metadata filter.
+            limit: Maximum number of cases to return.
+
+        Returns:
+            Matching debug-case records scoped to the requested project/build.
+        """
+        if not self.knowledge_base:
+            self.load_index()
+        if self._case_index is None:
+            self._case_index = load_case_index(self.config.indexes_dir)
+        return lookup_cases(
+            self._case_index,
+            query,
+            layout=self.config.data_layout,
+            target_project=target_project,
+            target_build=target_build,
+            scope_inheritance=self.config.retrieval.scope_inheritance,
+            limit=limit,
+        )
+
     def retrieve(
         self,
         query: str,
@@ -1061,4 +1128,14 @@ class HybridRagEngine:
         hits = result.chunks
         if self.config.retrieval.expand_sections:
             hits = expand_retrieved_sections(hits, self._section_index)
-        return RetrievalResult(chunks=hits, top_rerank_score=result.top_rerank_score)
+        enrichment = try_graph_enrichment(
+            search_query,
+            config=self.config,
+            project=target_project,
+            build=target_build,
+        )
+        return RetrievalResult(
+            chunks=hits,
+            top_rerank_score=result.top_rerank_score,
+            graph_enrichment=enrichment,
+        )

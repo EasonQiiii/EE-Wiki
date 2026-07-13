@@ -6,6 +6,8 @@ How to run `scripts/eval_rag.py` — automated regression testing against the go
 
 Use the eval CLI after changes to chunking, indexing, retrieval, scope cascade, prompts, or LLM backends. It scores the system against fixed questions with known answers so you can detect regressions before shipping.
 
+**V3 note:** Graph neighbors/path, power tree, and rules evaluation are covered by focused unit/API tests (no live models in default `pytest`). Enable `retrieval.graph_enrichment` only when validating that optional context block; it defaults to off so golden RAG evals stay unchanged.
+
 | Artifact | Path | Role |
 |----------|------|------|
 | Human-readable benchmark | [docs/eval/qa.md](../eval/qa.md) | Question list, expected answers, scoring rubric |

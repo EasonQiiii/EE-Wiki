@@ -20,6 +20,8 @@ Task categories:
 - debug — Hardware debugging: abnormal behavior, troubleshooting, waveforms, measurements
 - fa — Failure analysis: burn damage, component failure, root cause, batch defects, reliability
 - design_review — Design review: schematic review, component selection, risk, compliance, rule violations
+- power — Power tree / rails: what feeds X, what Y powers, supply hierarchy, rail flags
+- rules — Engineering rules: evaluate or explain pass/fail checks (rail presence, naming, FA recurrence)
 - translate — Chinese/English translation of prior answer or quoted text; not a new KB question (e.g. "in English", "用中文", "translate the above")
 
 Rules:

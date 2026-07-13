@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ee_wiki.knowledge.indexer.case_index import DebugCaseRecord
 from ee_wiki.knowledge.indexer.component_index import ComponentHit
 from ee_wiki.retrieval.hybrid.engine import HybridChunk, RetrievalResult
 
@@ -36,6 +37,26 @@ def component_hit_to_dict(hit: ComponentHit, *, layout) -> dict[str, Any]:
         "excerpt": hit.excerpt,
     }
 
+
+def case_hit_to_dict(case: DebugCaseRecord, *, layout) -> dict[str, Any]:
+    """Convert one debug-case lookup hit to a JSON-serializable mapping."""
+    return {
+        "case_id": case.case_id,
+        "project": case.project,
+        "build": case.build,
+        "scope": _scope_label(project=case.project, build=case.build, layout=layout),
+        "title": case.title,
+        "source_file": case.source_file,
+        "document_type": case.document_type,
+        "symptom": case.symptom,
+        "suspected_nets": list(case.suspected_nets),
+        "suspected_parts": list(case.suspected_parts),
+        "steps": list(case.steps),
+        "root_cause": case.root_cause,
+        "case_citations": list(case.case_citations),
+        "keywords": list(case.keywords),
+        "chunk_ids": list(case.chunk_ids),
+    }
 
 def chunk_hit_to_dict(
     chunk: HybridChunk,
@@ -76,6 +97,35 @@ def format_component_search(
         "hits": [component_hit_to_dict(hit, layout=layout) for hit in hits],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def format_case_search(
+    *,
+    query: str,
+    hits: list[DebugCaseRecord],
+    layout,
+) -> str:
+    """Format debug-case lookup hits as JSON text for MCP clients."""
+    payload = {
+        "query": query,
+        "hits": [case_hit_to_dict(hit, layout=layout) for hit in hits],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def format_power_tree(result: dict[str, Any]) -> str:
+    """Format a power-tree query result as JSON text for MCP clients."""
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+def format_rules(result: dict[str, Any]) -> str:
+    """Format a rules list/evaluate payload as JSON text for MCP clients."""
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+def format_graph_query(result: dict[str, Any]) -> str:
+    """Format a graph neighbors/path/nodes/node payload as JSON text."""
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 def format_retrieval_result(

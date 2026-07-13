@@ -59,6 +59,147 @@ class ComponentSearchResponse(BaseModel):
     hits: list[ComponentHitModel] = Field(default_factory=list)
 
 
+class CaseHitModel(BaseModel):
+    """One debug-case lookup hit."""
+
+    case_id: str
+    project: str
+    build: str
+    title: str
+    source_file: str
+    document_type: str = "failure_analysis"
+    symptom: str = ""
+    suspected_nets: list[str] = Field(default_factory=list)
+    suspected_parts: list[str] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
+    root_cause: str = ""
+    case_citations: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    chunk_ids: list[str] = Field(default_factory=list)
+
+
+class CaseSearchResponse(BaseModel):
+    """Debug-case lookup response."""
+
+    query: str
+    hits: list[CaseHitModel] = Field(default_factory=list)
+
+
+class PowerTreeResponse(BaseModel):
+    """Power-tree query response (V3 P3 heuristic rails / supplies)."""
+
+    query: str = ""
+    direction: str = "tree"
+    project: str | None = None
+    build: str | None = None
+    resolved_id: str | None = None
+    hits: list[dict] = Field(default_factory=list)
+    feeds: list[dict] = Field(default_factory=list)
+    tree: str | None = None
+    flags: list[dict] = Field(default_factory=list)
+    limitations: str = ""
+
+
+class RuleCitationModel(BaseModel):
+    """Citation attached to a rule evaluation result."""
+
+    kind: str
+    ref: str
+    project: str = ""
+    build: str = ""
+    excerpt: str = ""
+
+
+class RuleDefinitionModel(BaseModel):
+    """One engineering rule from the YAML pack."""
+
+    id: str
+    name: str
+    description: str = ""
+    check_type: str
+    severity: str = "warning"
+    enabled: bool = True
+    params: dict = Field(default_factory=dict)
+    source_path: str = ""
+
+
+class RuleResultModel(BaseModel):
+    """Outcome of evaluating one engineering rule."""
+
+    rule_id: str
+    name: str = ""
+    status: str
+    severity: str = "warning"
+    message: str = ""
+    citations: list[RuleCitationModel] = Field(default_factory=list)
+    details: dict = Field(default_factory=dict)
+
+
+class RuleListResponse(BaseModel):
+    """List of configured engineering rules."""
+
+    pack_dir: str = ""
+    rules: list[RuleDefinitionModel] = Field(default_factory=list)
+
+
+class RuleEvaluateResponse(BaseModel):
+    """Engineering rules evaluation response (V3 P4)."""
+
+    project: str | None = None
+    build: str | None = None
+    pack_dir: str = ""
+    counts: dict = Field(default_factory=dict)
+    results: list[RuleResultModel] = Field(default_factory=list)
+    limitations: str = ""
+
+
+class GraphNeighborsResponse(BaseModel):
+    """Neighbor query response (V3 P5)."""
+
+    node_id: str = ""
+    resolved_id: str | None = None
+    project: str | None = None
+    build: str | None = None
+    max_hops: int = 1
+    edge_types: list[str] | None = None
+    neighbors: list[dict] = Field(default_factory=list)
+
+
+class GraphPathResponse(BaseModel):
+    """Shortest-path query response (V3 P5)."""
+
+    source: str = ""
+    target: str = ""
+    resolved_source: str | None = None
+    resolved_target: str | None = None
+    project: str | None = None
+    build: str | None = None
+    max_depth: int = 8
+    edge_types: list[str] | None = None
+    path: list[dict] | None = None
+    found: bool = False
+
+
+class GraphNodesResponse(BaseModel):
+    """Scope-filtered node listing (V3 P5)."""
+
+    project: str | None = None
+    build: str | None = None
+    node_types: list[str] | None = None
+    nodes: list[dict] = Field(default_factory=list)
+    count: int = 0
+
+
+class GraphNodeResponse(BaseModel):
+    """Single node open/lookup response (V3 P5)."""
+
+    query: str = ""
+    resolved_id: str | None = None
+    project: str | None = None
+    build: str | None = None
+    node: dict | None = None
+
+
 class ProjectInventoryEntryModel(BaseModel):
     """One indexed project path with builds and chunk count."""
 

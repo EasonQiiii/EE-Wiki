@@ -21,6 +21,7 @@ from ee_wiki.knowledge.chunker import (
     chunk_processed_record,
     chunk_processed_records,
 )
+from ee_wiki.knowledge.indexer.case_index import save_case_index
 from ee_wiki.knowledge.indexer.component_index import save_component_index
 from ee_wiki.knowledge.indexer.store import (
     IndexManifest,
@@ -173,6 +174,7 @@ def _full_build(
         source_fingerprints=_record_fingerprints(records),
     )
     save_component_index(chunks, config.indexes_dir)
+    save_case_index(chunks, config.indexes_dir)
     return IndexBuildResult(
         manifest=manifest,
         chunk_count=len(chunks),
@@ -344,6 +346,7 @@ def build_index_from_processed(
         source_fingerprints=_record_fingerprints(records),
     )
     save_component_index(chunks, config.indexes_dir)
+    save_case_index(chunks, config.indexes_dir)
     return IndexBuildResult(
         manifest=manifest,
         chunk_count=len(chunks),

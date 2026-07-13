@@ -21,6 +21,8 @@ VALID_TASKS: frozenset[str] = frozenset({
     "debug",
     "fa",
     "design_review",
+    "power",
+    "rules",
     "translate",
 })
 

@@ -6,10 +6,18 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.tools.context import ToolContext
 from ee_wiki.tools.handlers import (
     engineering_search,
+    evaluate_engineering_rules,
+    graph_filter_by_scope,
+    graph_neighbors,
+    graph_path,
+    list_engineering_rules,
     list_projects,
+    open_graph_node,
+    query_power_tree,
     query_schematic,
     search_component,
     search_datasheet,
+    search_debug_case,
 )
 
 logger = get_logger(__name__)
@@ -48,6 +56,141 @@ def search_component_tool(
         project=project,
         build=build,
         limit=limit,
+    )
+
+
+@mcp.tool()
+def search_debug_case_tool(
+    query: str,
+    project: str | None = None,
+    build: str | None = None,
+    limit: int = 20,
+) -> str:
+    """Search debug / failure-analysis cases by symptom, part, net, or case id."""
+    return search_debug_case(
+        _get_context(),
+        query,
+        project=project,
+        build=build,
+        limit=limit,
+    )
+
+
+@mcp.tool()
+def query_power_tree_tool(
+    query: str = "",
+    direction: str = "tree",
+    project: str | None = None,
+    build: str | None = None,
+    max_depth: int = 4,
+) -> str:
+    """Query heuristic power tree: what feeds X, what Y powers, tree text, or flags."""
+    return query_power_tree(
+        _get_context(),
+        query,
+        direction=direction,
+        project=project,
+        build=build,
+        max_depth=max_depth,
+    )
+
+
+@mcp.tool()
+def list_rules_tool(include_disabled: bool = False) -> str:
+    """List engineering rules from the configured YAML pack (V3 P4)."""
+    return list_engineering_rules(
+        _get_context(),
+        include_disabled=include_disabled,
+    )
+
+
+@mcp.tool()
+def evaluate_rules_tool(
+    project: str | None = None,
+    build: str | None = None,
+    rule_id: str | None = None,
+    include_disabled: bool = False,
+) -> str:
+    """Evaluate engineering rules (pass/fail/insufficient) against graph + cases."""
+    rule_ids = [rule_id] if rule_id else None
+    return evaluate_engineering_rules(
+        _get_context(),
+        project=project,
+        build=build,
+        rule_ids=rule_ids,
+        include_disabled=include_disabled,
+    )
+
+
+@mcp.tool()
+def graph_neighbors_tool(
+    query: str,
+    project: str | None = None,
+    build: str | None = None,
+    max_hops: int = 1,
+    edge_types: str | None = None,
+) -> str:
+    """Return neighboring knowledge-graph nodes for a designator, net, rail, or node id."""
+    return graph_neighbors(
+        _get_context(),
+        query,
+        project=project,
+        build=build,
+        max_hops=max_hops,
+        edge_types=edge_types,
+    )
+
+
+@mcp.tool()
+def graph_path_tool(
+    source: str,
+    target: str,
+    project: str | None = None,
+    build: str | None = None,
+    max_depth: int = 8,
+    edge_types: str | None = None,
+) -> str:
+    """Return one shortest path between two knowledge-graph nodes when found."""
+    return graph_path(
+        _get_context(),
+        source,
+        target,
+        project=project,
+        build=build,
+        max_depth=max_depth,
+        edge_types=edge_types,
+    )
+
+
+@mcp.tool()
+def graph_filter_tool(
+    project: str | None = None,
+    build: str | None = None,
+    node_types: str | None = None,
+    limit: int = 200,
+) -> str:
+    """List knowledge-graph nodes matching project/build scope (with inheritance)."""
+    return graph_filter_by_scope(
+        _get_context(),
+        project=project,
+        build=build,
+        node_types=node_types,
+        limit=limit,
+    )
+
+
+@mcp.tool()
+def open_graph_node_tool(
+    query: str,
+    project: str | None = None,
+    build: str | None = None,
+) -> str:
+    """Resolve and open one knowledge-graph node (designator, net, rail, case, or id)."""
+    return open_graph_node(
+        _get_context(),
+        query,
+        project=project,
+        build=build,
     )
 
 

@@ -59,7 +59,8 @@ src/ee_wiki/
 ├── knowledge/     → Storage, chunking, indexing
 ├── retrieval/     → Metadata filter → embed + BM25 → merge → rerank
 ├── generation/    → Prompt assembly + local LLM
-├── graph/         → Knowledge graph (V3+, stub OK until then)
+├── graph/         → Knowledge graph store/build/query (V3 P1–P3)
+├── rules/         → Engineering rules engine (V3 P4)
 ├── tools/         → MCP / function tools (V2)
 ├── protocols/     → Interfaces all implementations must satisfy
 └── common/        → Types, config, logging, errors
@@ -173,15 +174,15 @@ Allowed import flow (higher may depend on lower, never reverse):
 
 ```
 api
- ↓
-generation, tools, graph (orchestration layers)
- ↓
+  ↓
+generation, tools, graph, rules (orchestration layers)
+  ↓
 retrieval
- ↓
+  ↓
 knowledge
- ↓
+  ↓
 ingestion
- ↓
+  ↓
 common, protocols
 ```
 
@@ -197,8 +198,17 @@ When implementing, respect the roadmap in README.md:
 |---------|----------|--------------|
 | **V1** | Markdown/PDF ingest, hybrid retrieval, citations, Open WebUI REST, local LLM | Knowledge graph, multi-agent, schematic CAD parsing |
 | **V2** | Rich metadata, component DB, datasheet parser, MCP tools | Full graph reasoning, agent swarms |
-| **V3** | Knowledge graph, debug case DB, power tree | — |
+| **V3** | Knowledge graph, debug case DB, power tree | Full CAD netlist import, cloud graph DBs |
 | **V4** | Multi-agent orchestration | — |
+
+**V3 progress:**
+
+- **P0 (boundaries)** — [ADR 0006](docs/adr/0006-knowledge-graph-store.md): offline JSONL graph bundle under `data/graph/`; `protocols/graph.py`
+- **P1 (core)** — `src/ee_wiki/graph/` store + build + query; build from `chunks.jsonl` / schematic page fields / `components.json`; `scripts/build_graph.py` → `data/graph/`
+- **P2 (debug cases)** — FA/debug case schema on `failure_analysis` metadata; `data/indexes/cases.json`; Case graph nodes (`mentions` / `caused_by` / `related_to`); retrieval case lookup + boost; `GET /v1/cases/search` + MCP `search_debug_case_tool`
+- **P3 (power tree)** — Rail nodes + `supplies` / `derived_from` heuristics from schematic nets + datasheet `supply_voltage`; `PowerTreeQuery`; `GET /v1/power/tree` + MCP `query_power_tree_tool`; config `graph.power_tree`
+- **P4 (engineering rules)** — YAML rule pack under `config/rules/`; `src/ee_wiki/rules/` engine (pass/fail/insufficient + citations); starter checks for rail presence, power-tree flags, interface naming, FA recurrence; `GET /v1/rules` + `/v1/rules/evaluate` + MCP `list_rules_tool` / `evaluate_rules_tool` + `scripts/evaluate_rules.py`; config `rules.enabled` / `rules.pack_dir`
+- **P5 (API / MCP / prompts wrap-up)** — `GET /v1/graph/{node,neighbors,path,nodes}` + MCP `open_graph_node_tool` / `graph_neighbors_tool` / `graph_path_tool` / `graph_filter_tool`; graph-aware prompts (`prompts/_shared/graph_rules.md`, `prompts/power/`, `prompts/rules/`); optional `retrieval.graph_enrichment` (default **false**) attaches compact neighborhood text to RAG context without generation importing the store. **V3 complete** (CAD netlist import and cloud graph DBs remain out of scope).
 
 **V2 progress (implemented):**
 
@@ -206,13 +216,14 @@ When implementing, respect the roadmap in README.md:
 - **Datasheet structured fields** — `supply_voltage`, `pin_count`, `package`, `interfaces` on datasheet metadata (regex heuristics post-VLM)
 - **Engineering Metadata** — automatic keyword extraction (part numbers, voltages, protocols, packages) during ingestion; populates `keywords` for metadata boost
 - **FA metadata** — `fa/` → `failure_analysis`; FA-specific keywords (failure modes, symptoms, RMA/LOT/DATECODE tokens)
+- **Debug Case Database (V3 P2)** — structured case fields on FA docs (frontmatter / headings → `.meta.json`); `cases.json` index; Case graph links; config-gated retrieval boost + case search API/MCP
 - **Chunk-level schematic metadata** — per-page `major_components` / `nets` / `interfaces` on indexed chunks via `pages` sidecar
 - **Component Database** — `data/indexes/components.json`, retrieval boost, `GET /v1/components/search`
 - **Index inventory** — `GET /v1/projects`, chat inventory questions, MCP `list_projects_tool`; ScopeCatalog includes common-only products
 - **HTTP ingest admin** — `POST /v1/ingest` (sync or `async: true` → 202 + job poll); optional `EE_WIKI_INGEST_API_KEY`
 - **Datasheet VLM quality gate** — table/graph/mixed pages fall back to OCR body when heuristics fail (`datasheet_pdf/quality.py`)
 - **MCP Tools** — read-only tools in `src/ee_wiki/tools/` via `scripts/mcp_serve.py`
-- **Protocols** — `protocols/parser.py`, `protocols/retriever.py`, `protocols/index_store.py` (stubs before second backends)
+- **Protocols** — `protocols/parser.py`, `protocols/retriever.py`, `protocols/index_store.py` (stubs before second backends); V3 adds `protocols/graph.py` (ADR 0006)
 
 If a task belongs to a future version, implement a **protocol + stub** or document the interface only — do not build the full feature unless explicitly requested.
 
@@ -332,9 +343,10 @@ V1 baseline is decided — do not re-litigate without a new ADR:
 | Index storage | Flat on-disk hybrid bundle (`data/indexes/`) | [ADR 0002](docs/adr/0002-v1-runtime-stack.md) |
 | Embedding / reranker | `sentence-transformers`; paths in `config/default.yaml` | ADR 0002 |
 | Local LLM | MLX default; Transformers alternative; external OpenAI-compatible HTTP (`openai`) per ADR 0003 | ADR 0002, ADR 0003 |
+| Knowledge graph store | Offline JSONL bundle under `data/graph/`; `graph/` owns store/build/query; generation never imports store; P2 cases live in `data/indexes/cases.json` and as Case nodes in the graph | [ADR 0006](docs/adr/0006-knowledge-graph-store.md) |
 
-**Still open (V2+):** external vector DB (Qdrant, pgvector), Ollama/vLLM/llama.cpp — require ADR 0003+ before adoption.
+**Still open (V2+):** external vector DB (Qdrant, pgvector), Ollama/vLLM/llama.cpp — require a new ADR before adoption. Heavier graph backends (SQLite/NetworkX persistence, Neo4j embedded) require amending ADR 0006 or a follow-up ADR.
 
 ---
 
-*Last updated: V2 wrap-up — inventory, async ingest + API key, datasheet quality gate, MCP/Open WebUI docs.*
+*Last updated: V3 P5 — graph HTTP/MCP suite, graph-aware prompts, optional retrieval↔graph enrichment (V3 wrap-up).*

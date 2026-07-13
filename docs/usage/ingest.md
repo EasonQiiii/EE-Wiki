@@ -335,6 +335,8 @@ These fields improve retrieval boost for spec and pinout questions. Re-ingest `d
 
 Documents under `.../fa/` map to `document_type: failure_analysis` (see `data_layout.document_type_folders` in config). During ingest, FA-specific **keywords** are extracted: failure modes (`ESD`, `THERMAL_RUNAWAY`, …), symptoms (`NO_BOOT`, `INTERMITTENT`, …), and traceability tokens (`RMA:…`, `LOT:…`, `DATECODE:…`). Place RMA reports, 8D summaries, and FA write-ups under `data/raw/{project}/{build}/fa/` or `{project}/common/fa/`.
 
+**Debug cases (V3 P2):** optional structured fields (`case_id`, `symptom`, `suspected_nets`, `suspected_parts`, `steps`, `root_cause`, `case_citations`) via YAML frontmatter or Markdown headings. These land in the processed `.meta.json`, feed `data/indexes/cases.json` at index time, and become Case graph nodes on `python scripts/build_graph.py`. See [knowledge-authoring.md](knowledge-authoring.md#debug-cases-fa--v3-p2).
+
 ### HTTP ingest (admin)
 
 When the API server is running, you can trigger ingest + index over HTTP instead of CLI:

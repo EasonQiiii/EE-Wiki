@@ -33,11 +33,13 @@ EE-Wiki/
 │       └── README.md
 │
 ├── prompts/                  # Task-specific prompt templates (data, not code)
-│   ├── _shared/              # scope_rules.md — injected into engineering prompts
+│   ├── _shared/              # scope_rules.md, graph_rules.md — injected into engineering prompts
 │   ├── wiki/
 │   ├── debug/
 │   ├── design_review/
 │   ├── fa/
+│   ├── power/                # V3 P5 — power-tree answers
+│   ├── rules/                # V3 P5 — engineering-rules answers
 │   └── assistant/
 │
 ├── scripts/                  # CLI entry points for operators and CI
@@ -55,7 +57,7 @@ EE-Wiki/
 │       │
 │       ├── api/                # HTTP layer — Open WebUI / OpenAI-compatible REST
 │       │   ├── auth.py         # Optional ingest API-key gate (EE_WIKI_INGEST_API_KEY)
-│       │   └── routes/         # health, query, chat, sources, components, projects, ingest
+│       │   └── routes/         # health, query, chat, sources, components, cases, graph, power, rules, projects, ingest
 │       │
 │       ├── ingestion/          # Parse raw files → StandardDocument (Markdown + metadata)
 │       │   ├── parsers/        # markdown, prose_pdf, schematic_pdf, word, excel
@@ -70,11 +72,16 @@ EE-Wiki/
 │       │
 │       ├── retrieval/          # Hybrid search pipeline (no LLM generation)
 │       │   ├── hybrid/         # Scope filter, embed + BM25, merge, rerank
+│       │   ├── graph_enrichment.py  # Optional compact graph neighborhood for RAG (V3 P5)
 │       │   └── section_expand.py
 │       │
-│       ├── generation/         # Build prompts and call local LLM (no DB access)
+│       ├── generation/         # Build prompts and call local LLM (no DB / graph-store access)
 │       │   ├── templates/      # Loaders for prompts/ directory
 │       │   └── llm/            # MLX and Transformers backends
+│       │
+│       ├── graph/              # Knowledge graph store/build/query (V3; ADR 0006)
+│       ├── rules/              # Engineering rules engine (V3 P4)
+│       ├── tools/              # MCP / function tools (V2+)
 │       │
 │       ├── protocols/          # Abstract interfaces (typing.Protocol)
 │       │   ├── llm.py          # LlmBackend
@@ -106,12 +113,28 @@ EE-Wiki/
 | `generation/` | Format context + question, invoke LLM | Access database directly, parse files |
 | `api/` | Validate requests, orchestrate modules | Embed business logic duplicated from core |
 | `tools/` | MCP / function tools for Open WebUI and Cursor | Duplicate retrieval logic from `retrieval/` |
+| `graph/` | Own store + build + query (V3); retrieval may call queries | Generation must not import the graph store |
+| `rules/` | Evaluate config-driven engineering rules over graph/cases (V3 P4) | Generation must not import the graph store |
 
-**Not yet in repo (future versions):**
+**V3 graph (P0–P4):**
 
-| Path | Version | Role |
-|------|---------|------|
-| `graph/` | V3+ | Knowledge graph store and queries |
+| Path | Status | Role |
+|------|--------|------|
+| `src/ee_wiki/protocols/graph.py` | P0 (present) | `GraphStoreBackend` / `GraphQueryBackend` protocols |
+| `src/ee_wiki/graph/` | **P1–P3** | Store (JSONL), build from indexes (+ cases + power), scope-aware + power-tree query — [ADR 0006](../adr/0006-knowledge-graph-store.md) |
+| `src/ee_wiki/graph/power.py` | P3 | Rail naming heuristics + `supplies` / `derived_from` extraction |
+| `src/ee_wiki/graph/power_tree.py` | P3 | `PowerTreeQuery` (feeds / powers / tree / flags) |
+| `src/ee_wiki/rules/` | **P4** | Engineering rules engine (YAML pack → pass/fail/insufficient) |
+| `config/rules/` | P4 | Starter rule pack (`rail_presence`, `power_tree_flags`, `interface_naming`, `fa_recurrence`) |
+| `data/indexes/cases.json` | P2 runtime | Debug-case records built at index time from FA metadata |
+| `data/graph/` | Runtime path | On-disk JSONL graph bundle (`manifest.json` + `nodes.jsonl` + `edges.jsonl`); includes Case + Rail nodes |
+| `scripts/build_graph.py` | P1+ | Post-index CLI to rebuild the graph bundle |
+| `scripts/evaluate_rules.py` | P4 | Evaluate / list engineering rules |
+| `src/ee_wiki/ingestion/case_fields.py` | P2 | FA frontmatter / heading → case metadata |
+| `src/ee_wiki/knowledge/indexer/case_index.py` | P2 | Build/load `cases.json` |
+| `src/ee_wiki/retrieval/case_lookup.py` | P2 | Case search + chunk-id boost for hybrid retrieval |
+| `src/ee_wiki/api/routes/power.py` | P3 | `GET /v1/power/tree` |
+| `src/ee_wiki/api/routes/rules.py` | P4 | `GET /v1/rules`, `GET /v1/rules/evaluate` |
 
 ## Standard Data Contracts
 
@@ -146,7 +169,7 @@ data/
 ├── raw/                  # Original documents — see layout below
 ├── processed/            # Mirrors raw/ tree (Markdown + metadata sidecars)
 ├── indexes/              # Vector and BM25 indexes
-└── graph/                # Graph database files (V3+)
+└── graph/                # Knowledge graph JSONL bundle (V3; ADR 0006)
 
 models/                   # Local embedding, reranker, and LLM weights
 ```
@@ -187,9 +210,11 @@ When `retrieval.scope_inheritance` is true (default), a query for `{project}/{bu
 |------|----------------|
 | `src/ee_wiki/ingestion`, `knowledge`, `retrieval`, `generation`, `api` | V1 |
 | `prompts/`, `config/schema/metadata.schema.json` | V1 |
-| `src/ee_wiki/protocols/` | V2 (parser, retriever, index_store protocols) |
+| `src/ee_wiki/protocols/` | V2 (parser, retriever, index_store protocols); V3 adds `graph.py` |
 | `src/ee_wiki/tools/` | V2 (MCP / tool calling) |
-| `src/ee_wiki/graph/` | V3 |
+| `src/ee_wiki/graph/` | V3 P1–P3 (store/build/query + power tree; ADR 0006) |
+| `src/ee_wiki/rules/` | V3 P4 (engineering rules engine) |
+| `config/rules/` | V3 P4 (YAML rule pack) |
 | Multi-agent orchestration (future `src/ee_wiki/agents/`) | V4 |
 
 ## Adding New Code

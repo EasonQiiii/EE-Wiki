@@ -13,10 +13,12 @@ from ee_wiki.common.config import (
     DatasheetPdfConfig,
     ExcelConfig,
     GenerationConfig,
+    GraphConfig,
     IndexingConfig,
     IworkConfig,
     ProsePdfConfig,
     RetrievalConfig,
+    RulesConfig,
     SchematicPdfConfig,
     WordConfig,
 )
@@ -55,6 +57,8 @@ def _app_config(
         iwork=IworkConfig(),
         chunking=ChunkingConfig(),
         indexing=IndexingConfig(),
+        graph=GraphConfig(),
+        rules=RulesConfig(),
         retrieval=RetrievalConfig(
             top_k_embed=20,
             top_k_bm25=20,

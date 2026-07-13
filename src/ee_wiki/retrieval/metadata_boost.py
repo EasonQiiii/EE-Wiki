@@ -21,7 +21,17 @@ def metadata_keyword_boost(metadata: dict[str, Any], boost_tokens: list[str]) ->
         return 0
 
     haystacks: list[str] = []
-    for key in ("major_components", "interfaces", "nets", "keywords", "supply_voltage"):
+    for key in (
+        "major_components",
+        "interfaces",
+        "nets",
+        "keywords",
+        "supply_voltage",
+        "suspected_nets",
+        "suspected_parts",
+        "steps",
+        "case_citations",
+    ):
         values = metadata.get(key)
         if isinstance(values, list):
             haystacks.extend(str(value) for value in values)
@@ -29,9 +39,10 @@ def metadata_keyword_boost(metadata: dict[str, Any], boost_tokens: list[str]) ->
     if isinstance(title, str):
         haystacks.append(title)
 
-    package = metadata.get("package")
-    if isinstance(package, str) and package.strip():
-        haystacks.append(package)
+    for key in ("symptom", "root_cause", "case_id", "package"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            haystacks.append(value)
 
     pin_count = metadata.get("pin_count")
     if pin_count is not None:

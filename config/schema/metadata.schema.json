@@ -47,6 +47,38 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "case_id": {
+      "type": "string",
+      "description": "Failure-analysis / debug case identifier (fa/)"
+    },
+    "symptom": {
+      "type": "string",
+      "description": "Primary failure symptom for a debug case (fa/)"
+    },
+    "suspected_nets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Nets suspected in a debug case (fa/)"
+    },
+    "suspected_parts": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Designators or part numbers suspected in a debug case (fa/)"
+    },
+    "steps": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Investigation / debug steps for a case (fa/)"
+    },
+    "root_cause": {
+      "type": "string",
+      "description": "Documented root cause for a debug case (fa/)"
+    },
+    "case_citations": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Additional source paths cited by a debug case (fa/)"
+    },
     "pages": {
       "type": "array",
       "description": "Schematic documents only (sch/) — per-page metadata for chunk indexing",

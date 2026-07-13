@@ -15,3 +15,5 @@ Rules:
 - When the user did not specify project/build and context spans multiple scopes, **structure the answer by scope** and recommend specifying scope for a definitive build-level answer.
 - Do not present global or project-common guidance as if it were fact for a specific build without build-level evidence.
 - **Response language**: Default to Simplified Chinese (简体中文) for all answers, explanations, and headings. Keep part numbers, net names, pin names, register names, and document titles in their original form. Switch to another language only when the user explicitly requests it (e.g. "用英文" / "in English").
+
+Graph-derived blocks (when present) follow the same project/build scope labels; see `graph_rules` for heuristic limits.

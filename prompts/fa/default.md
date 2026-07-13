@@ -10,6 +10,8 @@ If the latest question is a follow-up about the conversation itself (e.g. transl
 
 {{scope_rules}}
 
+{{graph_rules}}
+
 ## Conversation history
 
 {{history}}

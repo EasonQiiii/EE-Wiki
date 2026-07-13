@@ -3,7 +3,7 @@
 > AI-Native Electronic Engineering Knowledge Platform  
 > Enterprise-grade Offline Engineering Wiki for Hardware Engineers
 
-**Status:** V2 — offline hybrid RAG with engineering metadata, component lookup, and MCP tools (see [Long-term Roadmap](#long-term-roadmap))
+**Status:** V3 — offline hybrid RAG + knowledge graph (cases, power tree, rules, graph query API/MCP); see [Long-term Roadmap](#long-term-roadmap)
 
 | Document | Purpose |
 |----------|---------|
@@ -607,14 +607,15 @@ The architecture should be fully compatible with MCP.
 
 Future tools may include:
 
-- search_component
-- search_datasheet
-- query_schematic
-- query_power_tree
-- search_debug_case
-- graph_query
+- search_component *(shipped)*
+- search_datasheet *(shipped)*
+- query_schematic *(shipped)*
+- query_power_tree *(shipped)*
+- search_debug_case *(shipped)*
+- graph_query — neighbors / path / filter / open node *(shipped as `graph_*` + `open_graph_node` tools)*
+- list_rules / evaluate_rules *(shipped)*
 - bom_lookup
-- engineering_search
+- engineering_search *(shipped)*
 
 LLMs should call tools rather than relying only on prompts.
 
@@ -683,7 +684,7 @@ Version 1
 - Markdown Knowledge Base
 - Open WebUI Integration
 
-Version 2 (current)
+Version 2
 
 - Engineering Metadata (keywords, FA tokens, datasheet structured fields)
 - Component Database (`components.json`, retrieval boost, HTTP + MCP lookup)
@@ -693,12 +694,13 @@ Version 2 (current)
 - MCP read-only tools + `POST /v1/ingest` (sync/async, optional API key)
 - Better Retrieval (metadata boost, component boost, scope cascade, Figure/Table ranking)
 
-Version 3
+Version 3 (current)
 
-- Knowledge Graph
-- Engineering Rules
-- Debug Case Database
-- Power Tree Analysis
+- Knowledge Graph (JSONL store, neighbors / path / scope filter; HTTP + MCP)
+- Engineering Rules (YAML pack, evaluate API/MCP/CLI)
+- Debug Case Database (`cases.json` + Case graph links)
+- Power Tree Analysis (heuristic rails / supplies)
+- Graph-aware prompts + optional `retrieval.graph_enrichment`
 
 Version 4
 
