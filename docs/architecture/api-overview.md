@@ -32,7 +32,8 @@ When both are set with `retrieval.scope_inheritance: true` (default), search exp
 |--------|------|---------|
 | `GET` | `/v1/components/search` | Part number / designator lookup against `data/indexes/components.json` |
 | `GET` | `/v1/projects` | Indexed project/build inventory (chunk counts; `global` flagged as enterprise) |
-| `POST` | `/v1/ingest` | Trigger document ingestion and optional index build (admin) |
+| `POST` | `/v1/ingest` | Trigger document ingestion and optional index build (admin; sync by default, or `async: true` → 202) |
+| `GET` | `/v1/ingest/jobs/{job_id}` | Poll async ingest job status (`queued` / `running` / `succeeded` / `failed`) |
 
 Query params for `GET /v1/components/search`: `q` (required), optional `project`, `build`, `limit` (default 20).
 
@@ -52,7 +53,8 @@ Request (all fields optional):
   "build": "p1",
   "force": false,
   "ingest_only": false,
-  "index_only": false
+  "index_only": false,
+  "async": false
 }
 ```
 
@@ -64,10 +66,11 @@ Request (all fields optional):
 | `force` | Re-ingest and rebuild even when fingerprints match |
 | `ingest_only` | Skip index build (like `scripts/sync.py --ingest-only`) |
 | `index_only` | Skip ingest (like `scripts/sync.py --index-only`) |
+| `async` | When `true`, return **202 Accepted** with a `job_id` and run ingest in the background (default `false` = synchronous 200) |
 
 When all path filters are omitted, the entire `data/raw/` tree is processed.
 
-Response:
+**Synchronous response** (`async` omitted or `false`) — HTTP 200:
 
 ```json
 {
@@ -85,7 +88,48 @@ Response:
 
 Index fields (`indexed_documents`, `skipped_documents`, `removed_documents`, `chunk_count`) are `null` when `ingest_only: true`. Ingest counts are zero when `index_only: true`.
 
-Errors: `400` for invalid paths or conflicting flags; `404` when the target path does not exist; `500` when index build fails (e.g. no processed documents on first run).
+**Async accept** (`"async": true`) — HTTP 202:
+
+```json
+{
+  "job_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "status": "queued",
+  "status_url": "/v1/ingest/jobs/a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "message": "Ingest job accepted; poll status_url for progress"
+}
+```
+
+(`status_url` is absolute when `api.public_base_url` is set.)
+
+### `GET /v1/ingest/jobs/{job_id}`
+
+Poll an async ingest job. Status values: `queued` | `running` | `succeeded` | `failed`.
+
+```json
+{
+  "job_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "status": "succeeded",
+  "created_at": "2026-07-13T01:00:00+00:00",
+  "started_at": "2026-07-13T01:00:01+00:00",
+  "finished_at": "2026-07-13T01:05:00+00:00",
+  "error": null,
+  "result": {
+    "ingested": 2,
+    "skipped": 5,
+    "removed": 0,
+    "indexed_documents": 2,
+    "chunk_count": 42
+  }
+}
+```
+
+On failure, `status` is `failed`, `error` holds the message, and `result` is `null`. Unknown `job_id` → 404.
+
+**Concurrency:** `api.max_concurrent_ingest_jobs` (default `1`) limits how many async ingest jobs run at once; additional jobs stay `queued` until a slot frees. Jobs are **in-memory only** and are lost on server restart (single-process FastAPI; no Redis/Celery).
+
+**Auth (optional):** when `EE_WIKI_INGEST_API_KEY` is set, both `POST /v1/ingest` and `GET /v1/ingest/jobs/{job_id}` require `X-API-Key: <secret>` or `Authorization: Bearer <secret>` (401 otherwise). When unset, ingest stays open; binding `api.host` to `0.0.0.0` without a key logs a startup warning. Chat/query/components are not gated.
+
+Errors on `POST /v1/ingest`: `400` for invalid paths or conflicting flags; `401` when the ingest API key is required but missing/wrong; `404` when the target path does not exist (sync path, or pre-accept validation); `500` when index build fails on the sync path (e.g. no processed documents on first run). Async pipeline errors surface on the job poll as `failed`.
 
 ## Planned endpoints (V2+)
 
@@ -274,7 +318,7 @@ See [open-webui.md](../usage/open-webui.md) for frontend connection steps.
 
 ## MCP tools (V2)
 
-Read-only engineering tools are exposed via stdio MCP for Cursor, Claude Desktop, and other MCP clients.
+Read-only engineering tools are exposed via **stdio** MCP (`scripts/mcp_serve.py`) for Cursor, Claude Desktop, and other local MCP clients. Open WebUI cannot attach stdio MCP directly (native support is Streamable HTTP only); use REST wrappers or host-side [mcpo](https://github.com/open-webui/mcpo) — see [open-webui.md](../usage/open-webui.md#mcp--engineering-tools-from-open-webui) and [mcp.md](../usage/mcp.md).
 
 Install:
 
@@ -288,12 +332,13 @@ Start:
 python scripts/mcp_serve.py
 ```
 
-| Tool | Purpose |
-|------|---------|
-| `search_component_tool` | Part number / designator lookup (`components.json`) |
-| `query_schematic_tool` | Hybrid retrieval scoped to `document_type=schematic` |
-| `search_datasheet_tool` | Hybrid retrieval scoped to `document_type=datasheet` |
-| `engineering_search_tool` | General hybrid retrieval with optional `document_type` |
+| Tool | Purpose | REST equivalent |
+|------|---------|-----------------|
+| `search_component_tool` | Part number / designator lookup (`components.json`) | `GET /v1/components/search` |
+| `query_schematic_tool` | Hybrid retrieval scoped to `document_type=schematic` | `POST /v1/query` (filter schematic) |
+| `search_datasheet_tool` | Hybrid retrieval scoped to `document_type=datasheet` | `POST /v1/query` (filter datasheet) |
+| `engineering_search_tool` | General hybrid retrieval with optional `document_type` | `POST /v1/query` |
+| `list_projects_tool` | Indexed project/build inventory | `GET /v1/projects` |
 
 All tools accept optional `project` and `build` filters and honor `retrieval.scope_inheritance`. Results are JSON with `scope` labels (`build`, `common`, `global`).
 
@@ -303,7 +348,7 @@ Example Cursor MCP config:
 {
   "mcpServers": {
     "ee-wiki": {
-      "command": "python",
+      "command": "/path/to/EE-Wiki/.venv/bin/python",
       "args": ["/path/to/EE-Wiki/scripts/mcp_serve.py"]
     }
   }

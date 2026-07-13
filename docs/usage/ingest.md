@@ -342,10 +342,11 @@ When the API server is running, you can trigger ingest + index over HTTP instead
 ```bash
 curl -X POST http://localhost:8080/v1/ingest \
   -H 'Content-Type: application/json' \
-  -d '{"path":"logan/p1/sch","force":true}'
+  -H 'X-API-Key: '"$EE_WIKI_INGEST_API_KEY" \
+  -d '{"path":"logan/p1/sch","force":true,"async":true}'
 ```
 
-See [mcp.md](mcp.md) and [api-overview.md](../architecture/api-overview.md).
+Set `EE_WIKI_INGEST_API_KEY` when exposing the API on LAN (optional; unset = open). For large VLM batches prefer `"async": true` and poll `GET /v1/ingest/jobs/{job_id}` — see [mcp.md](mcp.md) and [api-overview.md](../architecture/api-overview.md).
 
 ## CLI summary
 

@@ -93,6 +93,12 @@ class DatasheetPdfConfig:
     ocr_fidelity: bool = True
     save_page_images: bool = True
     images_rel_prefix: str = "images"
+    vlm_quality_gate: bool = True
+    vlm_max_empty_cell_ratio: float = 0.45
+    vlm_min_length_ratio: float = 0.25
+    vlm_max_garble_ratio: float = 0.12
+    vlm_min_ocr_chars_for_fallback: int = 80
+    vlm_min_table_rows_vs_ocr_lines: float = 0.15
 
 
 @dataclass(frozen=True)
@@ -194,6 +200,8 @@ class ApiConfig:
     warmup_on_startup: bool = False
     public_base_url: str | None = None
     request_timeout_seconds: int | None = 300
+    max_concurrent_ingest_jobs: int = 1
+    ingest_api_key: str | None = None
     concurrency: ApiConcurrencyConfig = field(default_factory=ApiConcurrencyConfig)
 
 
@@ -240,6 +248,22 @@ def _optional_float(value: object) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _optional_env_secret(name: str) -> str | None:
+    """Return a trimmed environment secret, or ``None`` when unset/empty.
+
+    Args:
+        name: Environment variable name.
+
+    Returns:
+        Non-empty secret string, or ``None``.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    return stripped or None
 
 
 def _resolve_path(repo_root: Path, value: str) -> Path:
@@ -405,6 +429,18 @@ def load_config(
             ocr_fidelity=bool(datasheet.get("ocr_fidelity", True)),
             save_page_images=bool(datasheet.get("save_page_images", True)),
             images_rel_prefix=str(datasheet.get("images_rel_prefix", "images")),
+            vlm_quality_gate=bool(datasheet.get("vlm_quality_gate", True)),
+            vlm_max_empty_cell_ratio=float(
+                datasheet.get("vlm_max_empty_cell_ratio", 0.45)
+            ),
+            vlm_min_length_ratio=float(datasheet.get("vlm_min_length_ratio", 0.25)),
+            vlm_max_garble_ratio=float(datasheet.get("vlm_max_garble_ratio", 0.12)),
+            vlm_min_ocr_chars_for_fallback=int(
+                datasheet.get("vlm_min_ocr_chars_for_fallback", 80)
+            ),
+            vlm_min_table_rows_vs_ocr_lines=float(
+                datasheet.get("vlm_min_table_rows_vs_ocr_lines", 0.15)
+            ),
         ),
         excel=ExcelConfig(
             output_format=str(excel.get("output_format", "markdown_table")),
@@ -495,6 +531,10 @@ def load_config(
             request_timeout_seconds=_optional_positive_int(
                 api.get("request_timeout_seconds", 300)
             ),
+            max_concurrent_ingest_jobs=max(
+                1, int(api.get("max_concurrent_ingest_jobs", 1))
+            ),
+            ingest_api_key=_optional_env_secret("EE_WIKI_INGEST_API_KEY"),
             concurrency=ApiConcurrencyConfig(
                 max_concurrent=int(concurrency.get("max_concurrent", 1)),
                 max_queue_depth=int(concurrency.get("max_queue_depth", 8)),

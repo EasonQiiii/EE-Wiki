@@ -6,9 +6,18 @@ import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 
+from ee_wiki.api.auth import require_ingest_api_key
 from ee_wiki.api.deps import get_config
-from ee_wiki.api.models import IngestIssueModel, IngestRequest, IngestResponse
+from ee_wiki.api.ingest_jobs import get_ingest_job_manager
+from ee_wiki.api.models import (
+    IngestIssueModel,
+    IngestJobAccepted,
+    IngestJobStatusResponse,
+    IngestRequest,
+    IngestResponse,
+)
 from ee_wiki.common.config import AppConfig
 from ee_wiki.common.logging import get_logger
 from ee_wiki.ingestion.pipeline import IngestionError, IngestRunResult, ingest_path
@@ -188,12 +197,87 @@ def _ingestion_http_status(exc: IngestionError) -> int:
     return 400
 
 
-@router.post("/ingest", response_model=IngestResponse)
+def _validate_ingest_request(body: IngestRequest, config: AppConfig) -> None:
+    """Raise ``IngestionError`` for conflicting flags or invalid path targets.
+
+    Args:
+        body: Ingest request to validate.
+        config: Application configuration.
+
+    Raises:
+        IngestionError: When flags conflict or path targets cannot be resolved.
+    """
+    if body.ingest_only and body.index_only:
+        raise IngestionError("Cannot use ingest_only and index_only together")
+    if not body.index_only:
+        resolve_ingest_targets(body, config)
+
+
+def _job_status_url(job_id: str, config: AppConfig) -> str:
+    """Build the poll URL for an ingest job.
+
+    Args:
+        job_id: Accepted job identifier.
+        config: Application configuration (uses ``public_base_url`` when set).
+
+    Returns:
+        Absolute or root-relative status URL.
+    """
+    path = f"/v1/ingest/jobs/{job_id}"
+    base = (config.api.public_base_url or "").rstrip("/")
+    if base:
+        return f"{base}{path}"
+    return path
+
+
+def _job_manager(config: AppConfig):
+    """Return the shared ingest job manager wired to the sync pipeline."""
+    return get_ingest_job_manager(
+        max_concurrent=config.api.max_concurrent_ingest_jobs,
+        run_fn=_run_ingest_sync,
+    )
+
+
+@router.post(
+    "/ingest",
+    response_model=None,
+    responses={
+        200: {"model": IngestResponse},
+        202: {"model": IngestJobAccepted},
+    },
+    dependencies=[Depends(require_ingest_api_key)],
+)
 async def ingest_documents(
     body: IngestRequest,
     config: AppConfig = Depends(get_config),
-) -> IngestResponse:
-    """Trigger document ingestion and optional index build (admin)."""
+) -> IngestResponse | JSONResponse:
+    """Trigger document ingestion and optional index build (admin).
+
+    Default is synchronous (200 + counts). Set ``async: true`` to accept a
+    background job (202) and poll ``GET /v1/ingest/jobs/{job_id}``.
+    """
+    try:
+        _validate_ingest_request(body, config)
+    except IngestionError as exc:
+        logger.error("Ingest request invalid: %s", exc)
+        raise HTTPException(
+            status_code=_ingestion_http_status(exc),
+            detail=str(exc),
+        ) from exc
+
+    if body.async_mode:
+        manager = _job_manager(config)
+        record = manager.submit(body, config)
+        accepted = IngestJobAccepted(
+            job_id=record.job_id,
+            status=record.status.value,
+            status_url=_job_status_url(record.job_id, config),
+        )
+        return JSONResponse(
+            status_code=202,
+            content=accepted.model_dump(),
+        )
+
     try:
         return await asyncio.to_thread(_run_ingest_sync, body, config)
     except IngestionError as exc:
@@ -205,3 +289,31 @@ async def ingest_documents(
     except RuntimeError as exc:
         logger.error("Index build failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get(
+    "/ingest/jobs/{job_id}",
+    response_model=IngestJobStatusResponse,
+    dependencies=[Depends(require_ingest_api_key)],
+)
+async def get_ingest_job(
+    job_id: str,
+    config: AppConfig = Depends(get_config),
+) -> IngestJobStatusResponse:
+    """Return status (and result when finished) for an async ingest job.
+
+    Jobs are stored in-process only and are lost on server restart.
+    """
+    manager = _job_manager(config)
+    record = manager.get(job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Unknown ingest job: {job_id}")
+    return IngestJobStatusResponse(
+        job_id=record.job_id,
+        status=record.status.value,
+        created_at=record.created_at,
+        started_at=record.started_at,
+        finished_at=record.finished_at,
+        error=record.error,
+        result=record.result,
+    )

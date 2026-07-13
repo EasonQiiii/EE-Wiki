@@ -51,10 +51,28 @@ The component index is built automatically during `scripts/index.py` / `scripts/
 
 Triggers the same pipeline as `scripts/sync.py` (ingest raw → processed, then build/update indexes). Useful for LAN automation without SSH.
 
+**Sync** (default — waits for completion):
+
 ```bash
 curl -X POST http://localhost:8080/v1/ingest \
   -H 'Content-Type: application/json' \
+  -H 'X-API-Key: '"$EE_WIKI_INGEST_API_KEY" \
   -d '{"project":"logan","build":"p1","force":true}'
+```
+
+**Async** (202 + poll — preferred for large VLM batches):
+
+```bash
+# Start job
+curl -X POST http://localhost:8080/v1/ingest \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: '"$EE_WIKI_INGEST_API_KEY" \
+  -d '{"project":"logan","build":"p1","force":true,"async":true}'
+# → {"job_id":"...","status":"queued","status_url":"/v1/ingest/jobs/..."}
+
+# Poll until succeeded|failed
+curl -H 'X-API-Key: '"$EE_WIKI_INGEST_API_KEY" \
+  http://localhost:8080/v1/ingest/jobs/<job_id>
 ```
 
 | Field | Meaning |
@@ -65,8 +83,11 @@ curl -X POST http://localhost:8080/v1/ingest \
 | `force` | Re-ingest/rebuild even when fingerprints match |
 | `ingest_only` | Skip index build |
 | `index_only` | Skip ingest |
+| `async` | `true` → 202 + background job; poll `GET /v1/ingest/jobs/{job_id}` |
 
-**Security:** V1/V2 do not enforce auth on this endpoint. Restrict to admin networks or add a reverse-proxy API key before exposing on LAN.
+Config: `api.max_concurrent_ingest_jobs` (default `1`). Jobs are in-memory and lost on server restart.
+
+**Security (optional API key):** set `EE_WIKI_INGEST_API_KEY` to require `X-API-Key` or `Authorization: Bearer` on ingest routes. When unset, ingest stays open (local-dev friendly); binding `0.0.0.0` without a key logs a startup warning. Chat/query remain unauthenticated.
 
 Full request/response contract: [api-overview.md](../architecture/api-overview.md).
 
@@ -74,11 +95,12 @@ Full request/response contract: [api-overview.md](../architecture/api-overview.m
 
 ## MCP server (stdio)
 
-EE-Wiki exposes read-only engineering tools for Cursor, Claude Desktop, and other MCP clients.
+EE-Wiki exposes read-only engineering tools over **stdio** for Cursor, Claude Desktop, and other local MCP clients.
 
-Start:
+Start (from the EE-Wiki venv):
 
 ```bash
+pip install -e ".[tools]"   # if not already installed
 python scripts/mcp_serve.py
 ```
 
@@ -90,7 +112,9 @@ python scripts/mcp_serve.py
 | `engineering_search_tool` | General hybrid retrieval |
 | `list_projects_tool` | Indexed project/build inventory and chunk counts |
 
-All retrieval tools accept optional `project`, `build`, and return JSON with `scope` labels.
+All retrieval tools accept optional `project`, `build`, and return JSON with `scope` labels (`build`, `common`, `global`). Scope follows `retrieval.scope_inheritance`.
+
+The MCP process loads indexes from the same config paths as `serve.py` (`data/indexes/` by default). Run it from the EE-Wiki checkout (or with the same `EE_WIKI_*` / config overrides) so it sees the indexes you built.
 
 ### HTTP project inventory
 
@@ -100,20 +124,41 @@ curl "http://localhost:8080/v1/projects"
 
 Chat questions like “当前知识库有多少 project / 有哪些项目” are answered from the same inventory (no document RAG).
 
-### Cursor configuration
+### Cursor / Claude Desktop configuration
 
 ```json
 {
   "mcpServers": {
     "ee-wiki": {
-      "command": "python",
+      "command": "/absolute/path/to/EE-Wiki/.venv/bin/python",
       "args": ["/absolute/path/to/EE-Wiki/scripts/mcp_serve.py"]
     }
   }
 }
 ```
 
-Use the same Python environment where `pip install -e ".[tools]"` was run.
+Prefer the venv’s `python` binary (where `pip install -e ".[tools]"` was run), not system Python.
+
+### Open WebUI
+
+Open WebUI does **not** run stdio MCP servers (native MCP is Streamable HTTP only, ≥ 0.6.31). EE-Wiki does not ship a Streamable HTTP MCP endpoint.
+
+| Deploy | Practical choice |
+|--------|------------------|
+| Typical Open WebUI Docker + EE-Wiki API | **REST** — chat via `/v1`; tools via `/v1/components/search`, `/v1/query`, `/v1/projects` |
+| Need tool picker + same MCP handlers | Host-side **[mcpo](https://github.com/open-webui/mcpo)** wrapping `mcp_serve.py`, register as OpenAPI External Tool |
+| Cursor on the same machine | Direct stdio MCP (above) |
+
+REST ↔ tool mapping and mcpo steps: [open-webui.md](open-webui.md#mcp--engineering-tools-from-open-webui).
+
+### Troubleshooting (MCP)
+
+| Issue | Check |
+|-------|-------|
+| `ImportError` / missing `mcp` | `pip install -e ".[tools]"` in the interpreter used by the client |
+| Empty results | Indexes built; MCP process sees the same `data/indexes` as `serve.py` |
+| Wrong project/build | Pass `project` / `build` on the tool call; inheritance still searches `common` + `global` |
+| Open WebUI Docker + stdio config | Will not work — use REST or mcpo on the host |
 
 ---
 
@@ -131,7 +176,10 @@ Re-ingest and re-index when you need:
 ```bash
 python scripts/sync.py --force
 # or
-curl -X POST http://localhost:8080/v1/ingest -H 'Content-Type: application/json' -d '{"force":true}'
+curl -X POST http://localhost:8080/v1/ingest \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: '"$EE_WIKI_INGEST_API_KEY" \
+  -d '{"force":true}'
 ```
 
 ---
@@ -142,4 +190,4 @@ curl -X POST http://localhost:8080/v1/ingest -H 'Content-Type: application/json'
 - [ingest.md](ingest.md) — V2 ingest metadata (datasheet VLM, schematic pages, FA)
 - [index.md](index.md) — `components.json` and index bundle
 - [api-overview.md](../architecture/api-overview.md) — full REST contracts
-- [open-webui.md](open-webui.md) — chat UI integration
+- [open-webui.md](open-webui.md) — chat UI + Open WebUI MCP/tools wiring

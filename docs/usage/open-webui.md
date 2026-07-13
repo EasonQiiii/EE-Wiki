@@ -116,6 +116,91 @@ Without `project` / `build`, EE-Wiki can **infer scope from the question** when 
 
 When scope cannot be inferred, retrieval searches the **entire index**; answers should list findings **per scope** and recommend specifying scope for build-level conclusions.
 
+## MCP / engineering tools from Open WebUI
+
+EE-Wiki already grounds chat answers via RAG on `/v1/chat/completions`. Separate **tool calls** (component lookup, schematic-only search, inventory) are useful when a model outside EE-Wiki’s chat path should query the index explicitly.
+
+| Client | What works |
+|--------|------------|
+| **Cursor / Claude Desktop** | Direct **stdio** MCP (`scripts/mcp_serve.py`) — see [mcp.md](mcp.md) |
+| **Open WebUI (typical Docker)** | **REST** against EE-Wiki API (recommended). Native MCP is **Streamable HTTP only** (Open WebUI ≥ 0.6.31); EE-Wiki ships **stdio only**, so Open WebUI cannot spawn `mcp_serve.py` inside the container |
+| **Open WebUI + mcpo** | Optional bridge: run [mcpo](https://github.com/open-webui/mcpo) on the **host** next to EE-Wiki indexes, register the OpenAPI URL as an External Tool |
+
+### Recommended path: REST (Docker / LAN)
+
+Keep Open WebUI pointed at `http://<ee-wiki-host>:8080/v1` for chat. For explicit tool-like lookups, call the same process that MCP tools wrap:
+
+| Need | REST | MCP equivalent |
+|------|------|----------------|
+| Designator / part number | `GET /v1/components/search?q=…&project=…&build=…` | `search_component_tool` |
+| Scoped RAG (schematic, datasheet, general) | `POST /v1/query` with `project` / `build` / optional `document_type` | `query_schematic_tool`, `search_datasheet_tool`, `engineering_search_tool` |
+| Indexed inventory | `GET /v1/projects` | `list_projects_tool` |
+
+Pass `project` and `build` whenever possible. Scope inheritance matches MCP (`build` → `common` → `global`). Full contracts: [api-overview.md](../architecture/api-overview.md), [mcp.md](mcp.md).
+
+Chat through EE-Wiki already answers inventory questions (“有哪些项目”) without a separate tool call.
+
+### Optional path: mcpo → Open WebUI External Tools
+
+Use when you want Open WebUI’s tool picker to invoke the same handlers as Cursor MCP. Requires host access to the EE-Wiki venv and `data/indexes/` (do not expect this inside a stock Open WebUI-only container).
+
+**Prerequisites**
+
+1. Indexes built (`python scripts/sync.py` or ingest + index)
+2. Same venv as API/MCP: `pip install -e ".[tools]"` (and `ml` extras if embeddings are needed for hybrid tools)
+3. [mcpo](https://github.com/open-webui/mcpo) available on the host (`uvx mcpo` or install separately)
+4. Open WebUI can reach the host port (Docker: `host.docker.internal`, not `localhost`)
+
+**Start mcpo wrapping EE-Wiki stdio MCP**
+
+```bash
+cd /absolute/path/to/EE-Wiki
+source .venv/bin/activate
+uvx mcpo --host 0.0.0.0 --port 8000 -- \
+  /absolute/path/to/EE-Wiki/.venv/bin/python \
+  /absolute/path/to/EE-Wiki/scripts/mcp_serve.py
+```
+
+Or a Claude-style config file:
+
+```json
+{
+  "mcpServers": {
+    "ee-wiki": {
+      "command": "/absolute/path/to/EE-Wiki/.venv/bin/python",
+      "args": ["/absolute/path/to/EE-Wiki/scripts/mcp_serve.py"]
+    }
+  }
+}
+```
+
+```bash
+uvx mcpo --host 0.0.0.0 --port 8000 --config /path/to/ee-wiki-mcp.json
+```
+
+**Register in Open WebUI**
+
+1. **Admin Settings → External Tools → +**
+2. Type: **OpenAPI** (mcpo exposes OpenAPI, not Streamable HTTP MCP)
+3. URL: `http://host.docker.internal:8000/ee-wiki` when using a named config entry, or the single-server root mcpo prints on startup (often `http://host.docker.internal:8000`)
+4. Auth: **None** unless you started mcpo with an API key
+5. Enable the tool in the chat **+ → Tools** panel
+
+Tools that should appear (names may be prefixed by mcpo): `search_component_tool`, `query_schematic_tool`, `search_datasheet_tool`, `engineering_search_tool`, `list_projects_tool`. Each retrieval tool accepts optional `project` / `build`.
+
+Do **not** paste Cursor `mcpServers` JSON into an OpenAPI connection, and do **not** set Type to **MCP (Streamable HTTP)** for mcpo — that path expects a Streamable HTTP MCP URL, which EE-Wiki does not serve.
+
+### Troubleshooting (tools / MCP bridge)
+
+| Issue | Check |
+|-------|-------|
+| Open WebUI cannot run `mcp_serve.py` | Expected for Docker; use REST or host-side mcpo |
+| Wrong Python / `ImportError: MCP support requires…` | Use EE-Wiki `.venv` with `.[tools]`; absolute path to that interpreter in mcpo config |
+| Empty tool results | Indexes exist under `data/indexes/`; MCP/mcpo cwd or config must see the same tree as `serve.py` |
+| Docker tool URL fails | Use `host.docker.internal` (or host LAN IP); confirm mcpo listens on `0.0.0.0` |
+| Tools missing in chat | Enable under chat **+ → Tools**; admin must add External Tools first |
+| Want native “MCP (Streamable HTTP)” type | Not supported by EE-Wiki today — use mcpo (OpenAPI) or REST |
+
 ## Troubleshooting
 
 | Issue | Check |
@@ -147,5 +232,5 @@ The index stores chunk embeddings only. Query-time embedding and reranking are r
 ## Related docs
 
 - [query.md](query.md) — CLI retrieval and RAG usage
-- [mcp.md](mcp.md) — V2 component lookup and MCP tools
+- [mcp.md](mcp.md) — V2 component lookup, stdio MCP, Cursor config
 - [api-overview.md](../architecture/api-overview.md) — endpoint contracts

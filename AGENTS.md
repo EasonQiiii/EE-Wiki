@@ -209,7 +209,8 @@ When implementing, respect the roadmap in README.md:
 - **Chunk-level schematic metadata** — per-page `major_components` / `nets` / `interfaces` on indexed chunks via `pages` sidecar
 - **Component Database** — `data/indexes/components.json`, retrieval boost, `GET /v1/components/search`
 - **Index inventory** — `GET /v1/projects`, chat inventory questions, MCP `list_projects_tool`; ScopeCatalog includes common-only products
-- **HTTP ingest admin** — `POST /v1/ingest` (orchestrates `sync.py` pipeline)
+- **HTTP ingest admin** — `POST /v1/ingest` (sync or `async: true` → 202 + job poll); optional `EE_WIKI_INGEST_API_KEY`
+- **Datasheet VLM quality gate** — table/graph/mixed pages fall back to OCR body when heuristics fail (`datasheet_pdf/quality.py`)
 - **MCP Tools** — read-only tools in `src/ee_wiki/tools/` via `scripts/mcp_serve.py`
 - **Protocols** — `protocols/parser.py`, `protocols/retriever.py`, `protocols/index_store.py` (stubs before second backends)
 
@@ -336,4 +337,4 @@ V1 baseline is decided — do not re-litigate without a new ADR:
 
 ---
 
-*Last updated: V2 phase — metadata, component DB, MCP tools, ingest API.*
+*Last updated: V2 wrap-up — inventory, async ingest + API key, datasheet quality gate, MCP/Open WebUI docs.*

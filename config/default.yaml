@@ -90,6 +90,13 @@ ingestion:
     ocr_fidelity: true            # append raw OCR text for lossless searchability
     save_page_images: true        # save full-page renders for citation images
     images_rel_prefix: images
+    # Prefer OCR as page body when VLM markdown fails quality heuristics (table/graph/mixed)
+    vlm_quality_gate: true
+    vlm_max_empty_cell_ratio: 0.45      # fail if empty MD-table cells exceed this fraction
+    vlm_min_length_ratio: 0.25          # fail if len(vlm) / len(ocr) below this
+    vlm_max_garble_ratio: 0.12          # fail if garbled-token fraction exceeds this
+    vlm_min_ocr_chars_for_fallback: 80  # require this much OCR before replacing VLM body
+    vlm_min_table_rows_vs_ocr_lines: 0.15  # fail if table rows << OCR nonempty lines
 
 chunking:
   max_chars: 1500
@@ -133,6 +140,7 @@ api:
   public_base_url: http://192.168.0.155:8080
   warmup_on_startup: true
   request_timeout_seconds: 300  # whole RAG request cap; null or 0 disables
+  max_concurrent_ingest_jobs: 1  # async POST /v1/ingest workers; extra jobs queue in-memory
   concurrency:
     max_concurrent: 6       # MLX in-process: must stay 1; openai backend: try 6
     max_queue_depth: 12      # additional requests allowed to wait (openai: try 12)

@@ -25,6 +25,10 @@ from ee_wiki.ingestion.parsers.datasheet_pdf.engine import (
 )
 from ee_wiki.ingestion.parsers.datasheet_pdf.fields import extract_datasheet_fields
 from ee_wiki.ingestion.parsers.datasheet_pdf.merge import PageResult, merge_pages
+from ee_wiki.ingestion.parsers.datasheet_pdf.quality import (
+    VlmQualityThresholds,
+    select_page_markdown,
+)
 from ee_wiki.ingestion.path_metadata import parse_path_metadata
 
 if TYPE_CHECKING:
@@ -168,10 +172,25 @@ def parse_datasheet_pdf(
                 clf.page_type,
                 ocr_text=ocr_text if ocr_text else None,
             )
+            thresholds = VlmQualityThresholds(
+                enabled=ds_cfg.vlm_quality_gate,
+                max_empty_cell_ratio=ds_cfg.vlm_max_empty_cell_ratio,
+                min_length_ratio=ds_cfg.vlm_min_length_ratio,
+                max_garble_ratio=ds_cfg.vlm_max_garble_ratio,
+                min_ocr_chars=ds_cfg.vlm_min_ocr_chars_for_fallback,
+                min_table_rows_vs_ocr_lines=ds_cfg.vlm_min_table_rows_vs_ocr_lines,
+            )
+            page_markdown, _score = select_page_markdown(
+                vlm_markdown=vlm_markdown,
+                ocr_text=ocr_text,
+                page_type=clf.page_type,
+                page_num=clf.page_num,
+                thresholds=thresholds,
+            )
 
             page_results.append(PageResult(
                 page_num=clf.page_num,
-                markdown=vlm_markdown or ocr_text,
+                markdown=page_markdown,
                 ocr_text=ocr_text,
             ))
 

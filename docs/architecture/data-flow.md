@@ -20,7 +20,7 @@ Raw file under data/raw/{project}/{build}/{type}/…
 | Document type | Extra metadata |
 |---------------|----------------|
 | `schematic` | Document-level + per-page `pages` sidecar → page-scoped chunk metadata |
-| `datasheet` | VLM parse + `supply_voltage`, `pin_count`, `package`, `interfaces` |
+| `datasheet` | VLM parse + structured fields; table/graph/mixed pages may OCR-fallback via quality gate |
 | `failure_analysis` | FA keywords (failure modes, RMA/LOT tokens) |
 | All | `keywords` (part numbers, voltages, protocols, packages) |
 

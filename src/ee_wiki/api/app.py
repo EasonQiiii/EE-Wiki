@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from ee_wiki.api.auth import warn_if_ingest_unprotected
 from ee_wiki.api.deps import get_config, warmup_rag_service
 from ee_wiki.api.routes.chat import router as chat_router
 from ee_wiki.api.routes.components import router as components_router
@@ -22,6 +23,7 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     config = get_config()
+    warn_if_ingest_unprotected(config)
     if config.api.warmup_on_startup:
         warmup_rag_service()
     yield

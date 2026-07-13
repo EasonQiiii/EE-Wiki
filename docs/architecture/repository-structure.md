@@ -54,6 +54,7 @@ EE-Wiki/
 │       ├── __init__.py
 │       │
 │       ├── api/                # HTTP layer — Open WebUI / OpenAI-compatible REST
+│       │   ├── auth.py         # Optional ingest API-key gate (EE_WIKI_INGEST_API_KEY)
 │       │   └── routes/         # health, query, chat, sources, components, projects, ingest
 │       │
 │       ├── ingestion/          # Parse raw files → StandardDocument (Markdown + metadata)
@@ -125,7 +126,7 @@ Chunks and citations are defined in `common/types.py` and must include provenanc
 
 ### Datasheet structured metadata (V2)
 
-Datasheet ingestion (`ingestion/parsers/datasheet_pdf/fields.py`) post-processes VLM Markdown to populate optional document metadata:
+Datasheet ingestion (`ingestion/parsers/datasheet_pdf/fields.py`) post-processes VLM Markdown to populate optional document metadata. Table/graph/mixed pages also run `datasheet_pdf/quality.py` (VLM quality gate → OCR body fallback when heuristics fail).
 
 | Field | Type | Example |
 |-------|------|---------|

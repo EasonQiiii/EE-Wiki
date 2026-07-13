@@ -107,10 +107,11 @@ curl "http://localhost:8080/v1/components/search?q=U101&project=logan&build=p1"
 ```bash
 curl -X POST http://localhost:8080/v1/ingest \
   -H 'Content-Type: application/json' \
+  -H 'X-API-Key: '"$EE_WIKI_INGEST_API_KEY" \
   -d '{"force":true}'
 ```
 
-See [mcp.md](mcp.md) for MCP tools and when to re-sync after V2 metadata changes.
+Optional `EE_WIKI_INGEST_API_KEY` (omit header when unset). Use `"async": true` for large VLM batches — see [mcp.md](mcp.md).
 
 See [open-webui.md](open-webui.md) for Open WebUI integration.
 

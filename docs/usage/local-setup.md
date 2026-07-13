@@ -31,6 +31,7 @@ Optional:
 | `EE_WIKI_OPENAI_BASE_URL` | External LLM when `generation.llm_backend: openai` |
 | `EE_WIKI_OPENAI_MODEL` | Model name on the inference server |
 | `EE_WIKI_OPENAI_API_KEY` | Optional bearer token for the inference server |
+| `EE_WIKI_INGEST_API_KEY` | Optional shared secret for `POST /v1/ingest` (and job poll) |
 
 ### System tools
 
@@ -204,7 +205,7 @@ After V2 metadata and tooling upgrades, additionally verify:
 - [ ] FA reports under `fa/` → `document_type=failure_analysis` and FA keywords in sidecar
 - [ ] `data/indexes/components.json` exists after index; `GET /v1/components/search?q=U101` returns hits
 - [ ] `python scripts/mcp_serve.py` starts; Cursor can call `search_component_tool` / `query_schematic_tool`
-- [ ] `POST /v1/ingest` with `{"force":true}` completes (admin network only)
+- [ ] `POST /v1/ingest` with `{"force":true}` completes (set `EE_WIKI_INGEST_API_KEY` on LAN)
 - [ ] Mandatory eval: `python scripts/eval_rag.py --mandatory-only --fail-on-threshold`
 
 See [mcp.md](mcp.md) for re-sync commands.

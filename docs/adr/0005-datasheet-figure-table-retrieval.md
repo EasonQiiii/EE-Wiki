@@ -1,7 +1,7 @@
 # 0005. Datasheet Figure/Table Retrieval
 
 Date: 2026-07-11  
-Status: accepted (partial — retrieval + ingest hooks; re-ingest required for full benefit)
+Status: accepted (partial — retrieval + ingest hooks + VLM quality gate; re-ingest required for full benefit)
 
 ## Context
 
@@ -33,6 +33,7 @@ Implement a phased fix (code in `src/ee_wiki/`):
    - Penalize `multiplexed` chunks when the query requires `non-multiplexed` (and similar negated modifiers).
 4. **Query expansion** — `expand_hw_query()` appends explicit Figure/Table tokens for BM25/dense recall.
 5. **Eval** — golden cases Q-027 (Figure 58) and Q-028 (non-multiplexed timings) in `docs/eval/qa.yaml`.
+6. **Ingest quality gate** — `datasheet_pdf/quality.py`: score VLM markdown (empty-cell ratio, length vs OCR, garble, table rows vs OCR lines); on failure for table/graph/mixed pages prefer OCR as the page body before merge/label enrich.
 
 ### Mid-term backlog (do not forget)
 
@@ -41,7 +42,7 @@ Captured from production debugging session ([agent transcript](41b94d1f-1701-409
 - Ingest时把 Figure N / Table N 写进 chunk 标题或 keywords — **partially done** (OCR enrich + chunk keywords); re-run `scripts/sync.py --force` on datasheets to materialize.
 - 检索对 `Figure \d+` 做专门解析，避免和 Page N 混淆 — **done** (`datasheet_query.py`).
 - 对 `non-multiplexed` 等否定修饰词做 metadata/BM25 加权 — **done** (rank adjustment in `datasheet_query.py`).
-- 修复 page 131 等损坏的 VLM 提取，或优先用 OCR fidelity 表 — **open**; consider table-page fallback to OCR when VLM row count / empty-cell ratio exceeds threshold.
+- 修复 page 131 等损坏的 VLM 提取，或优先用 OCR fidelity 表 — **done** (`datasheet_pdf/quality.py`): quality gate on table/graph/mixed pages; when empty-cell / length / garble / row-count heuristics fail and OCR is richer, page body uses OCR (labels still enriched in `merge_pages`). Config: `ingestion.datasheet_pdf.vlm_quality_gate` and related thresholds.
 
 ### Re-ingest checklist
 
@@ -60,6 +61,6 @@ python3 scripts/eval_rag.py --mode retrieval --case Q-027 --case Q-028
 
 ## Consequences
 
-- **Positive**: Figure/Table and negated-modifier queries rank correctly without schema changes; eval cases guard regressions.
-- **Re-ingest**: Existing processed markdown keeps old headings until datasheet force sync; retrieval adjustments work immediately on current index.
-- **Open**: VLM quality gate + OCR table fallback remains future work; track under backlog item 4 above.
+- **Positive**: Figure/Table and negated-modifier queries rank correctly without schema changes; eval cases guard regressions; corrupted VLM table/graph pages fall back to OCR body at ingest.
+- **Re-ingest**: Existing processed markdown keeps old headings / VLM bodies until datasheet force sync; retrieval adjustments work immediately on current index; quality-gate OCR body replacement requires re-ingest.
+- **Open**: none for backlog item 4 (VLM quality gate + OCR table fallback).

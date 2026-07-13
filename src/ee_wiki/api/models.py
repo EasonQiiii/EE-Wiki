@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CitationModel(BaseModel):
@@ -79,6 +81,8 @@ class ProjectInventoryResponse(BaseModel):
 class IngestRequest(BaseModel):
     """Admin request to trigger document ingest and optional index build."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     path: str | None = Field(
         default=None,
         description="Optional file or directory under data/raw/ (relative or data/raw/...)",
@@ -107,6 +111,14 @@ class IngestRequest(BaseModel):
         default=False,
         description="Run index build only; skip ingest",
     )
+    async_mode: bool = Field(
+        default=False,
+        alias="async",
+        description=(
+            "When true, accept the job immediately (202) and run ingest in the "
+            "background; poll GET /v1/ingest/jobs/{job_id} for status"
+        ),
+    )
 
 
 class IngestIssueModel(BaseModel):
@@ -132,6 +144,30 @@ class IngestResponse(BaseModel):
     skipped_documents: int | None = None
     removed_documents: int | None = None
     chunk_count: int | None = None
+
+
+IngestJobStatusLiteral = Literal["queued", "running", "succeeded", "failed"]
+
+
+class IngestJobAccepted(BaseModel):
+    """202 Accepted payload when ``async: true`` starts a background ingest job."""
+
+    job_id: str
+    status: IngestJobStatusLiteral = "queued"
+    status_url: str
+    message: str = "Ingest job accepted; poll status_url for progress"
+
+
+class IngestJobStatusResponse(BaseModel):
+    """Poll response for ``GET /v1/ingest/jobs/{job_id}``."""
+
+    job_id: str
+    status: IngestJobStatusLiteral
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+    result: IngestResponse | None = None
 
 
 class ChatMessage(BaseModel):

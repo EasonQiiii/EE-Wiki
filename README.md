@@ -15,7 +15,7 @@
 | [docs/usage/query.md](docs/usage/query.md) | **CLI retrieval and RAG** (`query.py`, `ask.py`) |
 | [docs/usage/mcp.md](docs/usage/mcp.md) | **V2 tools** — component lookup, MCP, HTTP ingest API |
 | [docs/usage/eval.md](docs/usage/eval.md) | **RAG regression eval** (`eval_rag.py`, golden QA) |
-| [docs/usage/open-webui.md](docs/usage/open-webui.md) | **Open WebUI integration** |
+| [docs/usage/open-webui.md](docs/usage/open-webui.md) | **Open WebUI** — chat connection, citations, MCP/tools wiring |
 | [docs/architecture/repository-structure.md](docs/architecture/repository-structure.md) | Canonical directory layout and module boundaries |
 | [docs/architecture/data-flow.md](docs/architecture/data-flow.md) | Ingestion and query pipelines |
 | [docs/architecture/api-overview.md](docs/architecture/api-overview.md) | REST surface for Open WebUI |
@@ -687,10 +687,11 @@ Version 2 (current)
 
 - Engineering Metadata (keywords, FA tokens, datasheet structured fields)
 - Component Database (`components.json`, retrieval boost, HTTP + MCP lookup)
-- Datasheet VLM Parser (page-classified extraction)
+- Datasheet VLM Parser (page-classified extraction; OCR quality-gate fallback)
 - Chunk-level schematic metadata (`pages` sidecar)
-- MCP read-only tools + `POST /v1/ingest` admin API
-- Better Retrieval (metadata boost, component boost, scope cascade)
+- Index inventory (`GET /v1/projects`, chat + MCP)
+- MCP read-only tools + `POST /v1/ingest` (sync/async, optional API key)
+- Better Retrieval (metadata boost, component boost, scope cascade, Figure/Table ranking)
 
 Version 3
 
