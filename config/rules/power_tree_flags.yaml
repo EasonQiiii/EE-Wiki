@@ -1,0 +1,15 @@
+id: power_tree_flags
+name: Power-tree diagnostic flags
+description: >
+  Surface heuristic power-tree flags (missing supplier, multi-supplier conflict,
+  missing parent rail) as rule failures. Edges are co-occurrence candidates —
+  not CAD netlist truth.
+severity: warning
+enabled: true
+check:
+  type: power_tree_flags
+  params:
+    fail_codes:
+      - missing_supplier
+      - multi_supplier
+      - missing_parent_rail

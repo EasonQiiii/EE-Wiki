@@ -1,0 +1,23 @@
+id: interface_naming
+name: Interface nets follow naming convention
+description: >
+  Nets whose names start with a known bus family (I2C, SPI, UART, USB, CAN, …)
+  should use PREFIX_SIGNAL form (e.g. I2C_SDA, SPI_MOSI). Bare family tokens
+  without a signal suffix fail.
+severity: info
+enabled: true
+check:
+  type: interface_naming
+  params:
+    family_prefixes:
+      - I2C
+      - SPI
+      - UART
+      - USART
+      - USB
+      - CAN
+      - MDIO
+      - RGMII
+      - RMII
+    # After the family prefix, require underscore + at least one signal token
+    require_suffix: true

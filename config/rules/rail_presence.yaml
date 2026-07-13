@@ -1,0 +1,12 @@
+id: rail_presence
+name: Named rail nets must have Rail nodes
+description: >
+  Schematic nets that look like power rails (voltage-like names) must have a
+  corresponding Rail node in the knowledge graph for the same project/build.
+  Ground nets are skipped.
+severity: warning
+enabled: true
+check:
+  type: rail_presence
+  params:
+    skip_ground: true

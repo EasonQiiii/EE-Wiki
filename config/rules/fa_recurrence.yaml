@@ -1,0 +1,15 @@
+id: fa_recurrence
+name: FA case recurrence across builds
+description: >
+  Flag when the same normalized symptom or suspected part appears in failure-
+  analysis cases across multiple builds (within a project when scoped). Helps
+  spot recurring debug issues.
+severity: warning
+enabled: true
+check:
+  type: fa_recurrence
+  params:
+    min_builds: 2
+    match_on:
+      - symptom
+      - suspected_parts
