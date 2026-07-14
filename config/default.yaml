@@ -78,6 +78,18 @@ ingestion:
     do_sample: false
     images_rel_prefix: images
     save_page_images: true        # save full-page renders as PNG alongside figure crops
+    # ADR 0007 — module↔net: CAD companion first, else PDF connector catchment, else OCR spatial
+    connectivity:
+      enabled: true
+      write_sidecar: true           # *.connectivity.json next to processed .md
+      max_connector_distance: 90.0  # PDF geometry: net label → connector center (page pts)
+      cad_extensions:               # companion discovery next to sch PDF / sch/cad/
+        - .net
+        - .kicad_sch
+        - .kicad_pro
+        - .SchDoc
+        - .prjpcb
+        - .PrjPcb
   datasheet_pdf:
     max_pages: null
     min_text_chars_for_skip: 500  # pages with more embedded text and few vector lines → text_only

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
 from ee_wiki.ingestion.parsers.schematic_pdf.prompt import schematic_image_slug
+from ee_wiki.ingestion.parsers.schematic_pdf.signals import OcrToken
 
 if TYPE_CHECKING:
     from ee_wiki.common.config import AppConfig
@@ -30,6 +31,25 @@ class PageLayoutResult:
     crop_image_bytes: bytes | None
     slice_filenames: list[str]
     page_image_filename: str = ""
+    ocr_tokens: tuple[OcrToken, ...] = field(default_factory=tuple)
+    source_pdf: Path | None = None
+
+
+def extract_page_ocr_tokens(page) -> tuple[OcrToken, ...]:
+    """Extract OCR words with page-space bounding boxes from a PyMuPDF page.
+
+    Args:
+        page: Opened ``fitz.Page`` instance.
+
+    Returns:
+        Immutable sequence of OCR tokens in document order.
+    """
+    words = page.get_text("words")
+    return tuple(
+        OcrToken(text=word[4], x0=float(word[0]), y0=float(word[1]), x1=float(word[2]), y1=float(word[3]))
+        for word in words
+        if word[4] and str(word[4]).strip()
+    )
 
 
 def _extract_text_and_boxes(page, zoom_factor: float, img_w: int, img_h: int) -> tuple[list[str], list[list[int]]]:
@@ -125,6 +145,7 @@ class SchematicLayoutEngine:
             image = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
             img_w, img_h = image.size
             raw_ocr_text = page.get_text("text").strip()
+            ocr_tokens = extract_page_ocr_tokens(page)
             text_list, boxes_list = _extract_text_and_boxes(page, zoom, img_w, img_h)
             document.close()
         except Exception as exc:
@@ -230,6 +251,8 @@ class SchematicLayoutEngine:
             crop_image_bytes=best_crop_bytes,
             slice_filenames=slice_filenames,
             page_image_filename=page_image_filename,
+            ocr_tokens=ocr_tokens,
+            source_pdf=pdf_path,
         )
 
 

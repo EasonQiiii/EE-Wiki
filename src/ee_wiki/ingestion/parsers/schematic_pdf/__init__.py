@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -11,6 +12,13 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import SCHEMATIC_DOCUMENT_TYPE
 from ee_wiki.common.types import DataLayoutConfig, PageMetadata, StandardDocument
 from ee_wiki.ingestion.parsers.pdf_common import PDF_SUFFIXES
+from ee_wiki.ingestion.parsers.schematic_pdf.connectivity.model import (
+    PageConnectivity,
+    SchematicConnectivity,
+)
+from ee_wiki.ingestion.parsers.schematic_pdf.connectivity.resolve import (
+    resolve_page_module_nets,
+)
 from ee_wiki.ingestion.parsers.schematic_pdf.engine import (
     SchematicVisionEngine,
     build_vision_engine,
@@ -20,11 +28,13 @@ from ee_wiki.ingestion.parsers.schematic_pdf.layout import (
     PageLayoutResult,
     SchematicLayoutEngine,
     build_layout_engine,
+    extract_page_ocr_tokens,
 )
 from ee_wiki.ingestion.parsers.schematic_pdf.merge import PageExtraction, merge_page_extractions
 from ee_wiki.ingestion.parsers.schematic_pdf.ocr_fidelity import (
     build_fidelity_extraction,
     enrich_with_fidelity,
+    extract_fidelity_fields,
 )
 from ee_wiki.ingestion.parsers.schematic_pdf.prompt import schematic_image_slug
 from ee_wiki.ingestion.path_metadata import parse_path_metadata
@@ -59,6 +69,65 @@ def _images_dir(raw_path: Path, layout: DataLayoutConfig) -> Path:
     return content_path.parent / "images" / slug
 
 
+def _connectivity_kwargs(config: AppConfig) -> dict:
+    conn = config.schematic_pdf.connectivity
+    return {
+        "connectivity_enabled": conn.enabled,
+        "max_connector_distance": conn.max_connector_distance,
+        "cad_extensions": conn.cad_extensions,
+    }
+
+
+def _append_page_connectivity(
+    pages: list[PageConnectivity],
+    layout: PageLayoutResult,
+    *,
+    config: AppConfig,
+) -> None:
+    """Resolve and record connectivity for one page when enabled."""
+    conn = config.schematic_pdf.connectivity
+    if not conn.enabled:
+        return
+    fields = extract_fidelity_fields(layout.raw_ocr_text)
+    _module_nets, _source, page_conn = resolve_page_module_nets(
+        page=layout.page,
+        module_labels=fields.module_labels,
+        nets=fields.nets,
+        ocr_text=layout.raw_ocr_text,
+        ocr_tokens=layout.ocr_tokens or None,
+        pdf_path=layout.source_pdf,
+        cad_extensions=conn.cad_extensions,
+        max_connector_distance=conn.max_connector_distance,
+    )
+    if page_conn is not None:
+        pages.append(page_conn)
+
+
+def _write_connectivity_sidecar(
+    raw_path: Path,
+    layout: DataLayoutConfig,
+    connectivity: SchematicConnectivity,
+) -> Path | None:
+    """Write ``*.connectivity.json`` next to the processed Markdown mirror."""
+    content_path, _ = resolve_processed_paths(
+        raw_path,
+        layout,
+        content_extension=".md",
+    )
+    sidecar_path = content_path.with_name(f"{content_path.stem}.connectivity.json")
+    try:
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        sidecar_path.write_text(
+            json.dumps(connectivity.to_dict(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logger.warning("Failed to write connectivity sidecar %s: %s", sidecar_path, exc)
+        return None
+    logger.info("Wrote schematic connectivity sidecar %s", sidecar_path)
+    return sidecar_path
+
+
 def parse_schematic_pdf(
     raw_path: Path,
     layout: DataLayoutConfig,
@@ -74,6 +143,7 @@ def parse_schematic_pdf(
       PDF page → LayoutLMv3 figure crop + OCR text
       → Qwen3-VL Markdown reconstruction (crop + OCR prompt)
       → rule-based fallback when VLM fails
+      → ADR 0007 connectivity ladder (CAD → PDF geometry → OCR spatial)
     """
     base_metadata = parse_path_metadata(raw_path, layout, repo_root=repo_root)
     if base_metadata.document_type != SCHEMATIC_DOCUMENT_TYPE:
@@ -106,6 +176,8 @@ def parse_schematic_pdf(
     use_vlm = fidelity_mode != "ocr_only"
     if use_vlm and vision_engine is None:
         vision_engine = build_vision_engine(config)
+    conn_kwargs = _connectivity_kwargs(config)
+    connectivity_pages: list[PageConnectivity] = []
 
     logger.info(
         "Schematic PDF %s: pipeline for %d page(s) (fidelity_mode=%s)",
@@ -130,13 +202,25 @@ def parse_schematic_pdf(
                 raw_ocr_text=raw_ocr_text,
                 crop_image_bytes=None,
                 slice_filenames=[],
+                ocr_tokens=extract_page_ocr_tokens(document[page_index]),
+                source_pdf=raw_path,
             )
             extractions.append(
-                build_fidelity_extraction(page_layout, project_id=project_id)
+                build_fidelity_extraction(
+                    page_layout,
+                    project_id=project_id,
+                    **conn_kwargs,
+                )
             )
+            _append_page_connectivity(connectivity_pages, page_layout, config=config)
             continue
 
-        logger.info("Schematic PDF %s: page %d/%d — layout analysis", raw_path.name, page_num, limit)
+        logger.info(
+            "Schematic PDF %s: page %d/%d — layout analysis",
+            raw_path.name,
+            page_num,
+            limit,
+        )
         page_layout = layout_engine.analyze_page(
             raw_path,
             page_index,
@@ -145,7 +229,12 @@ def parse_schematic_pdf(
             save_page_images=config.schematic_pdf.save_page_images,
         )
 
-        logger.info("Schematic PDF %s: page %d/%d — VLM reconstruction", raw_path.name, page_num, limit)
+        logger.info(
+            "Schematic PDF %s: page %d/%d — VLM reconstruction",
+            raw_path.name,
+            page_num,
+            limit,
+        )
         extraction = vision_engine.extract_page(
             page_layout, project_id=project_id, source_stem=raw_path.stem,
         )
@@ -160,10 +249,12 @@ def parse_schematic_pdf(
                 project_id=project_id,
                 source_stem=raw_path.stem,
                 images_rel_prefix=images_rel_prefix,
+                **conn_kwargs,
             )
         if fidelity_mode == "vlm_plus_ocr":
-            extraction = enrich_with_fidelity(extraction, page_layout)
+            extraction = enrich_with_fidelity(extraction, page_layout, **conn_kwargs)
         extractions.append(extraction)
+        _append_page_connectivity(connectivity_pages, page_layout, config=config)
 
     document.close()
 
@@ -195,6 +286,16 @@ def parse_schematic_pdf(
         metadata=metadata,
         source_ref=str(raw_path.resolve()),
     )
+    conn_cfg = config.schematic_pdf.connectivity
+    if conn_cfg.enabled and conn_cfg.write_sidecar:
+        _write_connectivity_sidecar(
+            raw_path,
+            layout,
+            SchematicConnectivity(
+                source_file=base_metadata.source_file,
+                pages=connectivity_pages,
+            ),
+        )
     logger.info(
         "Parsed schematic PDF %s (%d pages, %d components, %d nets)",
         base_metadata.source_file,

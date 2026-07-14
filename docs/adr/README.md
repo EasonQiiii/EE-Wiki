@@ -29,3 +29,4 @@ Status: proposed | accepted | deprecated
 - [0004-iwork-macos-export.md](0004-iwork-macos-export.md) — Keynote/Numbers ingest via macOS AppleScript export
 - [0005-datasheet-figure-table-retrieval.md](0005-datasheet-figure-table-retrieval.md) — Figure/Table vs Page retrieval, negated modifier ranking, ingest label enrichment
 - [0006-knowledge-graph-store.md](0006-knowledge-graph-store.md) — V3 offline JSONL graph bundle under `data/graph/`, module boundaries, scope inheritance
+- [0007-schematic-connectivity-extraction.md](0007-schematic-connectivity-extraction.md) — CAD-first schematic module↔net ladder; PDF connector geometry fallback; OCR spatial last

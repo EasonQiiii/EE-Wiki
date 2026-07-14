@@ -20,6 +20,9 @@ def build_fallback_report(
     project_id: str,
     source_stem: str = "",
     images_rel_prefix: str = "images",
+    connectivity_enabled: bool = True,
+    max_connector_distance: float = 90.0,
+    cad_extensions: tuple[str, ...] | None = None,
 ) -> PageExtraction:
     """Build a rule-based markdown report matching legacy temp3 fallback.
 
@@ -29,6 +32,9 @@ def build_fallback_report(
         source_stem: Original PDF filename stem (used to derive the slug
             subdirectory under ``images/``).
         images_rel_prefix: Relative directory prefix for image references.
+        connectivity_enabled: When True, use ADR 0007 module↔net ladder.
+        max_connector_distance: PDF geometry catchment radius.
+        cad_extensions: Companion CAD suffixes for discovery.
     """
     fields = extract_fidelity_fields(layout.raw_ocr_text)
     major_components = fields.major_components
@@ -83,6 +89,11 @@ def build_fallback_report(
         page=layout.page,
         raw_ocr_text=layout.raw_ocr_text,
         fields=fields,
+        ocr_tokens=layout.ocr_tokens or None,
+        source_pdf=layout.source_pdf,
+        connectivity_enabled=connectivity_enabled,
+        max_connector_distance=max_connector_distance,
+        cad_extensions=cad_extensions,
     )
 
     return PageExtraction(

@@ -19,7 +19,40 @@ def test_extract_module_labels_finds_ampersand_zone_labels() -> None:
     text = "COMM&USB\nEEPROM\nDISPLAY&SENSOR\nLED\nU10\n"
     labels = extract_module_labels(text)
     assert _MODULE_A in labels
+    assert "EEPROM" in labels
+    assert "LED" not in labels  # short pin/UI tokens are not zone titles
     assert "U10" not in labels
+
+
+def test_extract_module_labels_filters_designator_noise_and_pinlike_slash() -> None:
+    text = "OLED&CAMERA\nCD/DATA3\nPIC7501 PIC7502\nWIRELESS\nUSB/CAN\nSCL\n"
+    labels = extract_module_labels(text)
+    assert "OLED&CAMERA" in labels
+    assert "WIRELESS" in labels
+    assert "USB/CAN" in labels
+    assert "CD/DATA3" not in labels
+    assert "PIC7501 PIC7502" not in labels
+    assert "SCL" not in labels
+
+
+def test_extract_module_labels_keeps_zone_slash_rejects_pin_mux_slash() -> None:
+    text = (
+        "USB/CAN\nRS232/RS485\nRS232/BTCOM&GPS\n"
+        "TMS/SWDIO\nTCK/SWCLK\nPB2/BOOT1\nLED1/REGOFF\nWR/CLK\nRXD1/MODE1\n"
+        "6 AXIS SENSOR\nSD CARD\n"
+    )
+    labels = extract_module_labels(text)
+    assert "USB/CAN" in labels
+    assert "RS232/RS485" in labels
+    assert "RS232/BTCOM&GPS" in labels
+    assert "6 AXIS SENSOR" in labels
+    assert "SD CARD" in labels
+    assert "TMS/SWDIO" not in labels
+    assert "TCK/SWCLK" not in labels
+    assert "PB2/BOOT1" not in labels
+    assert "LED1/REGOFF" not in labels
+    assert "WR/CLK" not in labels
+    assert "RXD1/MODE1" not in labels
 
 
 def test_extract_fidelity_fields_recovers_embedded_nets() -> None:

@@ -77,6 +77,23 @@ class ProsePdfConfig:
 
 
 @dataclass(frozen=True)
+class SchematicConnectivityConfig:
+    """CAD-first / PDF-geometry module↔net binding (ADR 0007)."""
+
+    enabled: bool = True
+    write_sidecar: bool = True
+    max_connector_distance: float = 90.0
+    cad_extensions: tuple[str, ...] = (
+        ".net",
+        ".kicad_sch",
+        ".kicad_pro",
+        ".SchDoc",
+        ".prjpcb",
+        ".PrjPcb",
+    )
+
+
+@dataclass(frozen=True)
 class SchematicPdfConfig:
     """Settings for schematic PDF vision parsing."""
 
@@ -92,6 +109,9 @@ class SchematicPdfConfig:
     fidelity_mode: str = "vlm_plus_ocr"
     vlm_max_image_side: int = 1280
     save_page_images: bool = True
+    connectivity: SchematicConnectivityConfig = field(
+        default_factory=SchematicConnectivityConfig
+    )
 
 
 @dataclass(frozen=True)
@@ -334,6 +354,24 @@ def _load_models_config(repo_root: Path, models: dict) -> ModelsConfig:
     return cfg
 
 
+def _load_schematic_connectivity(raw: dict) -> SchematicConnectivityConfig:
+    """Parse ``ingestion.schematic_pdf.connectivity`` from YAML."""
+    defaults = SchematicConnectivityConfig()
+    extensions = raw.get("cad_extensions")
+    if extensions is None:
+        cad_extensions = defaults.cad_extensions
+    else:
+        cad_extensions = tuple(str(item) for item in extensions)
+    return SchematicConnectivityConfig(
+        enabled=bool(raw.get("enabled", defaults.enabled)),
+        write_sidecar=bool(raw.get("write_sidecar", defaults.write_sidecar)),
+        max_connector_distance=float(
+            raw.get("max_connector_distance", defaults.max_connector_distance)
+        ),
+        cad_extensions=cad_extensions,
+    )
+
+
 def load_config(
     config_path: Path | None = None,
     repo_root: Path | None = None,
@@ -446,6 +484,7 @@ def load_config(
             fidelity_mode=str(schematic.get("fidelity_mode", "vlm_plus_ocr")),
             vlm_max_image_side=int(schematic.get("vlm_max_image_side", 1280)),
             save_page_images=bool(schematic.get("save_page_images", True)),
+            connectivity=_load_schematic_connectivity(schematic.get("connectivity") or {}),
         ),
         datasheet_pdf=DatasheetPdfConfig(
             max_pages=datasheet.get("max_pages"),
