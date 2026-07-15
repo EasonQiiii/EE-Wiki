@@ -11,6 +11,8 @@ from typing import Any
 
 from ee_wiki.common.config import AppConfig
 from ee_wiki.common.logging import get_logger
+from ee_wiki.graph.power import is_rail_like_net
+from ee_wiki.graph.power_tree import open_power_query
 from ee_wiki.graph.query import GraphQuery, open_query
 from ee_wiki.graph.store import GraphStoreError, JsonlGraphStore, graph_exists
 from ee_wiki.retrieval.query_boost import query_boost_tokens
@@ -22,6 +24,118 @@ GRAPH_ENRICHMENT_LIMITATIONS = (
     "indexed metadata — not a CAD netlist. Prefer document citations for "
     "board-verified wiring."
 )
+
+# Keywords that strongly signal a power / supply-chain question. Used only as a
+# cheap pre-filter before attempting precise graph resolution.
+_POWER_KEYWORDS = (
+    "供电", "电源", "rail", "rails", "suppl", "missing", "丢失", "掉电", "上电",
+    "电压", "voltage", "regulator", "ldo", "pmic", "buck", "boost", "powers",
+    "feeds", "vbias", "current", "电流",
+)
+
+
+def is_power_query(query: str) -> bool:
+    """Heuristic gate: does the query ask about power rails / supply chains?
+
+    Args:
+        query: User or retrieval query text.
+
+    Returns:
+        ``True`` when a power keyword or rail-like token is present.
+    """
+    lowered = query.lower()
+    if any(kw in lowered for kw in _POWER_KEYWORDS):
+        return True
+    for token in query_boost_tokens(query):
+        if is_rail_like_net(token) or is_rail_like_net(token.removeprefix("NET_")):
+            return True
+    return False
+
+
+def _resolve_power_seed(
+    power_query: Any,
+    tokens: list[str],
+    *,
+    project: str | None,
+    build: str | None,
+) -> str | None:
+    """Resolve the first power-relevant token, folding separators (``V_BAT``→``VBAT``).
+
+    Args:
+        power_query: A :class:`PowerTreeQuery` bound to the loaded graph.
+        tokens: Candidate tokens from the query.
+        project: Optional project scope.
+        build: Optional build scope.
+
+    Returns:
+        Resolved node id, or ``None`` when no token maps to a graph node.
+    """
+    for token in tokens:
+        cleaned = token.strip()
+        if not cleaned:
+            continue
+        for candidate in (cleaned, cleaned.replace("_", ""), cleaned.replace("-", "")):
+            if not candidate:
+                continue
+            resolved = power_query.resolve(candidate, project=project, build=build)
+            if resolved:
+                return resolved
+    return None
+
+
+def format_power_tree_block(
+    *,
+    seed_id: str,
+    feeds: list[dict[str, Any]],
+    powers: list[dict[str, Any]],
+    flags: list[Any],
+    confidence: str,
+) -> str:
+    """Render a directed power-tree enrichment block for LLM context.
+
+    Args:
+        seed_id: Resolved seed node id.
+        feeds: Upstream sources (``what_feeds`` results).
+        powers: Downstream loads (``what_powers`` results).
+        flags: Scope-relevant :class:`PowerFlag` diagnostics.
+        confidence: ``high`` when any directed edge/flag was found, else ``low``.
+
+    Returns:
+        Formatted multi-line block, or empty string when nothing to show.
+    """
+    lines: list[str] = [
+        f"[graph] kind=power_tree confidence={confidence} "
+        f"limitations={GRAPH_ENRICHMENT_LIMITATIONS}",
+        f"  seed id={seed_id}",
+    ]
+    if feeds:
+        lines.append("  feeds (upstream sources):")
+        for item in feeds:
+            via = _edge_kind(item) or item.get("relation") or "supplies"
+            lines.append(f"    - {item.get('type')}:{item.get('id')} via {via}")
+    if powers:
+        lines.append("  powers (downstream loads):")
+        for item in powers:
+            via = _edge_kind(item) or "supplies"
+            lines.append(f"    - {item.get('type')}:{item.get('id')} via {via}")
+    if flags:
+        lines.append("  flags:")
+        for flag in flags:
+            lines.append(f"    - {flag.code}: {flag.message}")
+    if not (feeds or powers or flags):
+        lines.append("  (no directed power edges resolved for this seed)")
+    return "\n".join(lines)
+
+
+def _edge_kind(item: dict[str, Any]) -> str | None:
+    """Best-effort edge label: prefer ``kind`` attribute, fall back to type."""
+    via_edge = item.get("via_edge") or {}
+    if not isinstance(via_edge, dict):
+        return None
+    kind = (via_edge.get("attributes") or {}).get("kind")
+    if kind:
+        return str(kind)
+    return via_edge.get("type")
 
 
 def format_neighborhood_block(
@@ -73,6 +187,7 @@ def build_graph_enrichment(
     max_hops: int = 1,
     max_nodes: int = 12,
     max_seeds: int = 3,
+    power_tree: bool = True,
 ) -> str | None:
     """Resolve query tokens to graph nodes and format a compact neighborhood.
 
@@ -81,9 +196,12 @@ def build_graph_enrichment(
         graph_query: Loaded scope-aware graph query handle.
         project: Optional project filter.
         build: Optional build filter.
-        max_hops: Neighbor traversal depth.
-        max_nodes: Cap on total neighbor rows included.
+        max_hops: Neighbor traversal depth (generic neighborhood path).
+        max_nodes: Cap on total neighbor rows included (generic path).
         max_seeds: Cap on seed nodes resolved from query tokens.
+        power_tree: When a power/rail intent is detected, route through the
+            directed :class:`PowerTreeQuery` instead of the undirected
+            neighborhood. Set ``False`` to force the generic path.
 
     Returns:
         Formatted enrichment text, or ``None`` when no seeds resolve.
@@ -92,6 +210,40 @@ def build_graph_enrichment(
     if not tokens:
         return None
 
+    # Power-intent routing: reuse the already-correct directed power tree
+    # (what_feeds / what_powers / flags) for rail/regulator questions instead
+    # of the undirected, all-edge-mixed generic neighborhood. This keeps the
+    # supply chain readable (upstream vs downstream) and feeds the V4 Power
+    # Engineer agent a trustworthy structured view.
+    if power_tree and is_power_query(query):
+        pw = open_power_query(graph_query)
+        seed_id = _resolve_power_seed(pw, tokens, project=project, build=build)
+        if seed_id is not None:
+            feeds = pw.what_feeds(seed_id, project=project, build=build)
+            powers = pw.what_powers(seed_id, project=project, build=build)
+            related_ids = (
+                {seed_id}
+                | {str(f.get("id", "")) for f in feeds}
+                | {str(p.get("id", "")) for p in powers}
+            )
+            scoped_flags = [
+                flag
+                for flag in pw.flags(project=project, build=build)
+                if any(nid in related_ids for nid in flag.node_ids)
+            ]
+            confidence = "high" if (feeds or powers or scoped_flags) else "low"
+            text = format_power_tree_block(
+                seed_id=seed_id,
+                feeds=feeds,
+                powers=powers,
+                flags=scoped_flags,
+                confidence=confidence,
+            )
+            return text or None
+        # No power seed resolved — fall through to the generic neighborhood so
+        # the query still gets graph context when a non-power node matches.
+
+    # --- generic undirected neighborhood (unchanged) ---
     seeds: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for token in tokens:
@@ -180,4 +332,5 @@ def try_graph_enrichment(
         build=build,
         max_hops=retrieval.graph_enrichment_max_hops,
         max_nodes=retrieval.graph_enrichment_max_nodes,
+        power_tree=retrieval.graph_enrichment_power_tree,
     )

@@ -169,6 +169,7 @@ class RetrievalConfig:
     graph_enrichment: bool = False
     graph_enrichment_max_hops: int = 1
     graph_enrichment_max_nodes: int = 12
+    graph_enrichment_power_tree: bool = True
 
 
 @dataclass(frozen=True)
@@ -576,6 +577,9 @@ def load_config(
             graph_enrichment_max_hops=int(retrieval.get("graph_enrichment_max_hops", 1)),
             graph_enrichment_max_nodes=int(
                 retrieval.get("graph_enrichment_max_nodes", 12)
+            ),
+            graph_enrichment_power_tree=bool(
+                retrieval.get("graph_enrichment_power_tree", True)
             ),
         ),
         data_layout=layout,

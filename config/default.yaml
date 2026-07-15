@@ -149,6 +149,7 @@ retrieval:
   graph_enrichment: false # V3 P5 — attach compact graph neighborhood to RAG context (off by default)
   graph_enrichment_max_hops: 1
   graph_enrichment_max_nodes: 12
+  graph_enrichment_power_tree: true # route power/rail queries through directed PowerTreeQuery (what_feeds/what_powers/flags)
 
 # Path segment names for shared libraries (must match data/raw/ folders)
 data_layout:
