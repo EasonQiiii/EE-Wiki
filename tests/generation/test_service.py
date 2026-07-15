@@ -177,7 +177,7 @@ def test_answer_generates_from_retrieved_chunks(rag_service, repo_root) -> None:
     assert "VBAT" in result.answer
     assert len(result.citations) == 1
     assert result.citations[0].chunk_id == "note__power"
-    assert result.citations[0].url.endswith("/v1/sources/logan/p1/note/note.md#power")
+    assert result.citations[0].url.endswith("/v1/raw/logan/p1/note/note.md")
     assert "[1]" in result.answer
     assert "<a href=" not in result.answer
     assert "**引用 / References**" not in result.answer

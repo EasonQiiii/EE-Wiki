@@ -7,7 +7,7 @@ from ee_wiki.common.types import Citation
 from ee_wiki.generation.citation_urls import (
     citation_image_urls,
     page_image_url,
-    source_document_url,
+    raw_document_url,
 )
 from ee_wiki.retrieval.hybrid.engine import HybridChunk
 
@@ -17,7 +17,7 @@ def build_enriched_citations(chunks: list[HybridChunk], config: AppConfig) -> li
 
     Args:
         chunks: Retrieved hybrid chunks used for generation.
-        config: Application configuration (processed paths and public base URL).
+        config: Application configuration (processed/raw paths and public base URL).
 
     Returns:
         Citations aligned with context block numbering.
@@ -25,20 +25,13 @@ def build_enriched_citations(chunks: list[HybridChunk], config: AppConfig) -> li
     citations: list[Citation] = []
     for chunk in chunks:
         citation = chunk.citation
+        source_file = str(citation.get("source_file", ""))
         target_file = str(chunk.metadata.get("target_file") or "")
-        if not target_file:
-            source = str(citation.get("source_file", ""))
-            if source.startswith("data/raw/"):
-                target_file = source.replace("data/raw/", "data/processed/", 1)
-            else:
-                target_file = source
+        if not target_file and source_file.startswith("data/raw/"):
+            target_file = source_file.replace("data/raw/", "data/processed/", 1)
 
         chunk_id = str(citation.get("chunk_id", chunk.chunk_id))
-        url = (
-            source_document_url(config, target_file=target_file, chunk_id=chunk_id)
-            if target_file
-            else ""
-        )
+        url = raw_document_url(config, source_file=source_file) if source_file else ""
         images = citation_image_urls(config, target_file=target_file, content=chunk.content)
         if not images:
             page = int(citation.get("page", 0))

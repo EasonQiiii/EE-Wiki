@@ -30,6 +30,26 @@ def processed_relative_path(target_file: str, processed_dir: Path) -> str:
     return rel.as_posix()
 
 
+def raw_relative_path(source_file: str, raw_dir: Path) -> str:
+    """Map a raw ``source_file`` label to a URL path under ``/v1/raw``.
+
+    Labels are usually repo-relative (``data/raw/...``) or absolute paths.
+    Strip the leading ``data/raw`` segment(s) so the result is relative to
+    ``raw_dir`` and safe to embed in a URL.
+    """
+    path = Path(source_file)
+    parts = PurePosixPath(source_file.replace("\\", "/")).parts
+    if "raw" in parts:
+        idx = len(parts) - 1 - parts[::-1].index("raw")
+        stripped = parts[idx + 1 :]
+        if stripped:
+            return Path(*stripped).as_posix()
+    try:
+        return path.resolve().relative_to(raw_dir.resolve()).as_posix()
+    except ValueError:
+        return path.name
+
+
 def section_fragment(chunk_id: str) -> str:
     """Derive an HTML fragment anchor from a chunk id suffix."""
     if "__" not in chunk_id:
@@ -45,6 +65,19 @@ def source_document_url(config: AppConfig, *, target_file: str, chunk_id: str) -
     rel = processed_relative_path(target_file, config.processed_dir)
     fragment = section_fragment(chunk_id)
     return f"{base}/v1/sources/{quote(rel, safe='/')}{fragment}"
+
+
+def raw_document_url(config: AppConfig, *, source_file: str) -> str:
+    """Build a clickable download URL for a raw source document.
+
+    Unlike :func:`source_document_url`, this points at the original file under
+    ``data/raw/`` (e.g. a ``.pdf`` or ``.docx``) rather than the processed
+    ``.md`` mirror. The HTML section fragment is intentionally dropped because
+    raw binary documents have no in-page anchors.
+    """
+    base = resolve_public_base_url(config.api)
+    rel = raw_relative_path(source_file, config.raw_dir)
+    return f"{base}/v1/raw/{quote(rel, safe='/')}"
 
 
 def asset_url(config: AppConfig, *, asset_rel: str) -> str:

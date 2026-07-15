@@ -9,6 +9,8 @@ from ee_wiki.generation.citation_urls import (
     citation_image_urls,
     parse_markdown_image_refs,
     processed_relative_path,
+    raw_document_url,
+    raw_relative_path,
     resolve_asset_relative_path,
     section_fragment,
     source_document_url,
@@ -34,6 +36,23 @@ def test_source_document_url_includes_fragment(app_config) -> None:
         chunk_id="iPadManual__get-dut-sn",
     )
     assert url.endswith("/v1/sources/logan/p1/note/iPadManual.md#get-dut-sn")
+
+
+def test_raw_relative_path_strips_data_raw_prefix(app_config) -> None:
+    rel = raw_relative_path(
+        "data/raw/logan/p1/datasheet/STM32F4.pdf",
+        app_config.raw_dir,
+    )
+    assert rel == "logan/p1/datasheet/STM32F4.pdf"
+
+
+def test_raw_document_url_points_at_raw_route(app_config) -> None:
+    url = raw_document_url(
+        app_config,
+        source_file="data/raw/logan/p1/datasheet/STM32F4.pdf",
+    )
+    assert url.endswith("/v1/raw/logan/p1/datasheet/STM32F4.pdf")
+    assert "#" not in url
 
 
 def test_parse_markdown_image_refs() -> None:
