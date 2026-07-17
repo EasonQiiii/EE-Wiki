@@ -107,6 +107,26 @@ def test_schematic_metadata_includes_schematic_fields() -> None:
     assert data["interfaces"] == ["I2C1"]
 
 
+def test_metadata_from_dict_strips_schematic_fields_for_note() -> None:
+    """Hand-edited sidecars must not load schematic fields into note metadata."""
+    data = {
+        "project": "logan",
+        "build": "p1",
+        "document_type": "engineering_note",
+        "title": "manual",
+        "source_file": "data/raw/logan/p1/note/manual.md",
+        "major_components": ["U0902"],
+        "nets": ["VBAT"],
+        "interfaces": ["I2C1"],
+        "pages": [{"page": 1, "major_components": ["U0902"], "nets": ["VBAT"], "interfaces": []}],
+    }
+    restored = metadata_from_dict(data)
+    assert restored.major_components is None
+    assert restored.nets is None
+    assert restored.interfaces is None
+    assert restored.pages is None
+
+
 def test_metadata_from_dict_roundtrip() -> None:
     original = Metadata(
         project="logan",

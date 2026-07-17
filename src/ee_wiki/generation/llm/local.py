@@ -288,10 +288,17 @@ class LocalLlmBackend:
                     if text:
                         yield text
             finally:
-                if not cancelled:
+                if thread.is_alive():
+                    if cancelled:
+                        # Wait for the in-flight ``self._model.generate`` to drain
+                        # rather than abandoning it. Releasing ``_generate_lock``
+                        # while the daemon thread is still running would let a
+                        # concurrent request start a second ``generate`` on the
+                        # same model, which is unsafe for transformers.
+                        logger.info(
+                            "LLM stream generation cancelled; joining worker thread"
+                        )
                     thread.join()
-                elif thread.is_alive():
-                    logger.info("LLM stream generation abandoned (daemon thread)")
 
         if cancelled:
             logger.info("LLM stream generation cancelled")

@@ -7,6 +7,7 @@ Generation never opens the graph store. Callers load a :class:`GraphQuery`
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ee_wiki.common.config import AppConfig
@@ -25,12 +26,15 @@ GRAPH_ENRICHMENT_LIMITATIONS = (
     "board-verified wiring."
 )
 
-# Keywords that strongly signal a power / supply-chain question. Used only as a
-# cheap pre-filter before attempting precise graph resolution.
-_POWER_KEYWORDS = (
-    "供电", "电源", "rail", "rails", "suppl", "missing", "丢失", "掉电", "上电",
-    "电压", "voltage", "regulator", "ldo", "pmic", "buck", "boost", "powers",
-    "feeds", "vbias", "current", "电流",
+# Chinese keywords are substring-safe; English terms use word boundaries so
+# generic phrases like "missing capacitor" or "current build" do not route here.
+_CHINESE_POWER_KEYWORDS = ("供电", "电源", "丢失", "掉电", "上电", "电压", "电流")
+_ENGLISH_POWER_KEYWORDS_RE = re.compile(
+    r"\b("
+    r"rail|rails|supply|supplies|supplied|supplier|"
+    r"voltage|regulator|ldo|pmic|buck|boost|feeds|vbias|powers"
+    r")\b",
+    re.IGNORECASE,
 )
 
 
@@ -43,8 +47,9 @@ def is_power_query(query: str) -> bool:
     Returns:
         ``True`` when a power keyword or rail-like token is present.
     """
-    lowered = query.lower()
-    if any(kw in lowered for kw in _POWER_KEYWORDS):
+    if any(kw in query for kw in _CHINESE_POWER_KEYWORDS):
+        return True
+    if _ENGLISH_POWER_KEYWORDS_RE.search(query):
         return True
     for token in query_boost_tokens(query):
         if is_rail_like_net(token) or is_rail_like_net(token.removeprefix("NET_")):
@@ -231,15 +236,17 @@ def build_graph_enrichment(
                 for flag in pw.flags(project=project, build=build)
                 if any(nid in related_ids for nid in flag.node_ids)
             ]
-            confidence = "high" if (feeds or powers or scoped_flags) else "low"
-            text = format_power_tree_block(
-                seed_id=seed_id,
-                feeds=feeds,
-                powers=powers,
-                flags=scoped_flags,
-                confidence=confidence,
-            )
-            return text or None
+            if feeds or powers or scoped_flags:
+                text = format_power_tree_block(
+                    seed_id=seed_id,
+                    feeds=feeds,
+                    powers=powers,
+                    flags=scoped_flags,
+                    confidence="high",
+                )
+                return text or None
+            # Resolved seed but no directed edges/flags — fall through to the
+            # generic neighborhood instead of emitting a low-confidence stub.
         # No power seed resolved — fall through to the generic neighborhood so
         # the query still gets graph context when a non-power node matches.
 

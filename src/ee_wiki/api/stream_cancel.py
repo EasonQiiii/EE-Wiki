@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 
@@ -46,19 +47,39 @@ async def iter_sync_text_chunks(
     *,
     cancel: threading.Event,
     request: Request | None = None,
+    timeout_seconds: float | None = None,
 ) -> AsyncIterator[str]:
     """Bridge a blocking text iterator to async SSE without blocking the event loop.
 
     Each ``next()`` call runs in a worker thread so disconnect watchers can run
     between MLX tokens.
+
+    Args:
+        chunks: Blocking text iterator (for example MLX/local token fragments).
+        cancel: Threading event set on client disconnect or explicit cancel.
+        request: Optional request used to detect client disconnect.
+        timeout_seconds: Optional wall-clock budget for the whole stream. When
+            exceeded a :class:`RequestTimeoutError` is raised so the caller can
+            map it to an HTTP 504 (previously the generation phase was unbounded).
     """
+    from ee_wiki.api.timeout import RequestTimeoutError
+
     iterator = iter(chunks)
+    deadline = (
+        time.monotonic() + timeout_seconds
+        if timeout_seconds and timeout_seconds > 0
+        else None
+    )
     try:
         while not cancel.is_set():
             if request is not None and await request.is_disconnected():
                 cancel.set()
                 logger.info("Stopping stream: client disconnected during generation")
                 break
+            if deadline is not None and time.monotonic() > deadline:
+                raise RequestTimeoutError(
+                    f"Request exceeded {timeout_seconds}s timeout during generation"
+                )
             try:
                 fragment = await await_sync_iterator_next(iterator)
             except StopIteration:

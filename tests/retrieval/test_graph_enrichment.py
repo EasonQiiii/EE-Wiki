@@ -20,6 +20,7 @@ from ee_wiki.retrieval.graph_enrichment import (
     _resolve_power_seed,
     build_graph_enrichment,
     format_neighborhood_block,
+    is_power_query,
     try_graph_enrichment,
 )
 
@@ -169,30 +170,36 @@ def test_resolve_power_seed_folds_separators(tmp_path: Path) -> None:
     assert _resolve_power_seed(pw, ["NOPE"], project="logan", build="p1") is None
 
 
-def test_power_tree_low_confidence_when_tree_empty(tmp_path: Path) -> None:
-    """A resolved seed with no directed edges and no related flag is low-confidence."""
+def test_power_tree_empty_falls_back_to_neighborhood(tmp_path: Path) -> None:
+    """A resolved seed with no directed edges falls back to generic neighborhood."""
     g = KnowledgeGraph()
-    # Lone rail (will be a missing_supplier flag, but for a different node).
     vcc3 = rail_node_id("logan", "p1", "VCC3")
     g.add_node(GraphNode(id=vcc3, type=NODE_RAIL, project="logan", build="p1",
                          attributes={"name": "VCC3", "role": "output"}))
-    # Component seed with no supplies edges.
     u7 = component_node_id("logan", "p1", "U7")
     g.add_node(GraphNode(id=u7, type=NODE_COMPONENT, project="logan", build="p1",
                          attributes={"name": "U7"}))
 
     gq = open_query(g, layout=_layout(tmp_path), scope_inheritance=True)
     text = build_graph_enrichment(
-        "U7 供电 missing",
+        "U7 供电",
         graph_query=gq,
         project="logan",
         build="p1",
         power_tree=True,
     )
     assert text is not None
-    assert "kind=power_tree" in text
-    assert "confidence=low" in text
-    assert "no directed power edges resolved for this seed" in text
+    assert "kind=neighborhood" in text
+    assert "kind=power_tree" not in text
+    assert "U7" in text.upper() or "component:logan/p1:U7" in text
+
+
+def test_is_power_query_rejects_generic_missing_and_current() -> None:
+    assert not is_power_query("missing capacitor C12")
+    assert not is_power_query("LCD missing pin mapping")
+    assert not is_power_query("what is the current build status")
+    assert is_power_query("why is VBAT missing on U0902")
+    assert is_power_query("VBAT 掉电")
 
 
 def test_power_tree_routing_disabled_uses_neighborhood(tmp_path: Path) -> None:

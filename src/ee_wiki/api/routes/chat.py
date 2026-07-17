@@ -247,6 +247,11 @@ async def chat_completions(
     request_started = time.monotonic()
     request_timeout = config.api.request_timeout_seconds
     show_elapsed_time = config.generation.show_elapsed_time
+    request_deadline = (
+        request_started + request_timeout
+        if request_timeout and request_timeout > 0
+        else None
+    )
 
     if body.stream:
         slot_ctx = gate.slot()
@@ -299,6 +304,11 @@ async def chat_completions(
             raise raise_queue_full_http_error(exc) from exc
         try:
             response.headers.update(queue_response_headers(snapshot))
+            remaining_timeout = None
+            if request_deadline is not None:
+                remaining_timeout = request_deadline - time.monotonic()
+                if remaining_timeout <= 0:
+                    raise RequestTimeoutError("Request timed out before retrieval")
             try:
                 stream_result = await run_sync_with_request_timeout(
                     _fetch_stream_result,
@@ -312,7 +322,7 @@ async def chat_completions(
                     cancel_event=cancel,
                     task=body.task,
                     history=history,
-                    timeout_seconds=request_timeout,
+                    timeout_seconds=remaining_timeout,
                 )
             except (RequestTimeoutError, LlmTimeoutError) as exc:
                 logger.error("Chat completion %s timed out: %s", chat_id, exc)
@@ -326,6 +336,10 @@ async def chat_completions(
                 return Response(status_code=204)
 
             retrieval_done_at = time.monotonic()
+            if request_deadline is not None:
+                remaining_timeout = request_deadline - time.monotonic()
+                if remaining_timeout <= 0:
+                    raise RequestTimeoutError("Request timed out before generation")
             fragments: list[str] = []
             first_char_at: float | None = None
             try:
@@ -333,6 +347,7 @@ async def chat_completions(
                     stream_result.text_chunks,
                     cancel=cancel,
                     request=request,
+                    timeout_seconds=remaining_timeout,
                 ):
                     if cancel.is_set():
                         logger.info(
@@ -343,7 +358,7 @@ async def chat_completions(
                     if first_char_at is None:
                         first_char_at = time.monotonic()
                     fragments.append(fragment)
-            except LlmTimeoutError as exc:
+            except (RequestTimeoutError, LlmTimeoutError) as exc:
                 logger.error("Chat completion %s timed out: %s", chat_id, exc)
                 raise raise_request_timeout_http_error(exc) from exc
 
@@ -503,14 +518,19 @@ async def _stream_answer(
                 sources=sources,
             )
 
+        remaining_timeout = None
+        if deadline is not None:
+            remaining_timeout = deadline - time.monotonic()
+            if remaining_timeout <= 0:
+                raise RequestTimeoutError("Request timed out before generation")
+
         generation_status_active = True
         async for fragment in iter_sync_text_chunks(
             stream_result.text_chunks,
             cancel=cancel,
             request=request,
+            timeout_seconds=remaining_timeout,
         ):
-            if _timed_out():
-                raise RequestTimeoutError("Request timed out during streaming")
             if generation_status_active:
                 yield clear_status_chunk(
                     chat_id=chat_id, model=model, created=created,

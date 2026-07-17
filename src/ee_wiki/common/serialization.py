@@ -65,20 +65,27 @@ def metadata_from_dict(data: dict[str, Any]) -> Metadata:
     Returns:
         Metadata instance with defaults for missing optional fields.
     """
+    document_type = str(data.get("document_type", ""))
+    is_schematic = document_type == SCHEMATIC_DOCUMENT_TYPE
+    is_datasheet = document_type == DATASHEET_DOCUMENT_TYPE
     return Metadata(
         project=str(data.get("project", "")),
         build=str(data.get("build", "")),
-        document_type=str(data.get("document_type", "")),
+        document_type=document_type,
         title=str(data.get("title", "")),
         source_file=str(data.get("source_file", "")),
         target_file=str(data.get("target_file", "")),
         source_mtime=float(data.get("source_mtime", 0.0)),
         source_size=int(data.get("source_size", 0)),
         page=int(data.get("page", 0)),
-        major_components=data.get("major_components"),
-        nets=data.get("nets"),
-        interfaces=data.get("interfaces"),
-        pages=_pages_from_dict(data),
+        # Schematic-only fields must only be populated for schematic (and
+        # ``interfaces`` also for datasheet) sidecars. Loading them
+        # unconditionally lets a hand-edited sidecar wrongly boost unrelated
+        # document types downstream (e.g. metadata_keyword_boost).
+        major_components=data.get("major_components") if is_schematic else None,
+        nets=data.get("nets") if is_schematic else None,
+        interfaces=data.get("interfaces") if (is_schematic or is_datasheet) else None,
+        pages=_pages_from_dict(data) if is_schematic else None,
         keywords=list(data.get("keywords", [])),
         supply_voltage=_optional_string_list(data.get("supply_voltage")),
         pin_count=_optional_int(data.get("pin_count")),
