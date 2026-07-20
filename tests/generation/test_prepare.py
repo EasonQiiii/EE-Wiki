@@ -132,14 +132,14 @@ class TestParsePrepareScope:
     @pytest.fixture()
     def catalog(self, data_layout) -> ScopeCatalog:
         return ScopeCatalog(
-            products={"logan": frozenset({"p1", "p2"})},
+            products={"iphone": {"logan": frozenset({"p1", "p2"})}},
             enterprise_segment=data_layout.enterprise_project,
             project_shared_segment=data_layout.project_shared_build,
         )
 
     def test_parses_product_revision_layer(self, catalog: ScopeCatalog) -> None:
         raw = (
-            "PRODUCT: logan\n"
+            "PRODUCT: iphone\n"
             "REVISION: p1\n"
             "LAYER: build\n"
             "QUERY: LCD touch pins\n"
@@ -147,13 +147,13 @@ class TestParsePrepareScope:
         )
         result = _parse_prepare_output(
             raw,
-            question="Logan p1 lcd的pin有哪些",
+            question="iPhone p1 lcd的pin有哪些",
             default_task="wiki",
             classify=True,
             catalog=catalog,
             scope_inference=True,
         )
-        assert result.product == "logan"
+        assert result.product == "iphone"
         assert result.revision == "p1"
         assert result.layer == "build"
         assert result.retrieval_query == "LCD touch pins"

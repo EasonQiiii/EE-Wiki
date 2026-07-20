@@ -9,6 +9,7 @@ from ee_wiki.api.concurrency import queue_response_headers
 from ee_wiki.api.deps import get_config, get_queue_gate, get_rag_service
 from ee_wiki.api.models import QueryRequest, QueryResponse
 from ee_wiki.api.rag_handler import rag_request_slot
+from ee_wiki.api.scope_params import resolve_request_scope
 from ee_wiki.api.timeout import (
     RequestTimeoutError,
     raise_request_timeout_http_error,
@@ -34,12 +35,16 @@ async def query(
     with rag_request_slot(gate) as snapshot:
         response.headers.update(queue_response_headers(snapshot))
         try:
+            product, project, build = resolve_request_scope(
+                config, body.product, body.project, body.build
+            )
             result = await run_sync_with_request_timeout(
                 service.answer,
                 body.query,
                 timeout_seconds=config.api.request_timeout_seconds,
-                target_project=body.project,
-                target_build=body.build,
+                target_product=product,
+                target_project=project,
+                target_build=build,
                 document_type=body.document_type,
                 top_k_final=body.top_k,
                 task=body.task,

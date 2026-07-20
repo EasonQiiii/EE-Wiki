@@ -19,10 +19,10 @@ from ee_wiki.generation.citation_urls import (
 
 def test_processed_relative_path_maps_under_processed_dir(app_config) -> None:
     rel = processed_relative_path(
-        "data/processed/logan/p1/note/iPadManual.md",
+        "data/processed/iphone/logan/p1/note/iPadManual.md",
         app_config.processed_dir,
     )
-    assert rel == "logan/p1/note/iPadManual.md"
+    assert rel == "iphone/logan/p1/note/iPadManual.md"
 
 
 def test_section_fragment_strips_window_suffix() -> None:
@@ -32,26 +32,26 @@ def test_section_fragment_strips_window_suffix() -> None:
 def test_source_document_url_includes_fragment(app_config) -> None:
     url = source_document_url(
         app_config,
-        target_file="data/processed/logan/p1/note/iPadManual.md",
+        target_file="data/processed/iphone/logan/p1/note/iPadManual.md",
         chunk_id="iPadManual__get-dut-sn",
     )
-    assert url.endswith("/v1/sources/logan/p1/note/iPadManual.md#get-dut-sn")
+    assert url.endswith("/v1/sources/iphone/logan/p1/note/iPadManual.md#get-dut-sn")
 
 
 def test_raw_relative_path_strips_data_raw_prefix(app_config) -> None:
     rel = raw_relative_path(
-        "data/raw/logan/p1/datasheet/STM32F4.pdf",
+        "data/raw/iphone/logan/p1/datasheet/STM32F4.pdf",
         app_config.raw_dir,
     )
-    assert rel == "logan/p1/datasheet/STM32F4.pdf"
+    assert rel == "iphone/logan/p1/datasheet/STM32F4.pdf"
 
 
 def test_raw_document_url_points_at_raw_route(app_config) -> None:
     url = raw_document_url(
         app_config,
-        source_file="data/raw/logan/p1/datasheet/STM32F4.pdf",
+        source_file="data/raw/iphone/logan/p1/datasheet/STM32F4.pdf",
     )
-    assert url.endswith("/v1/raw/logan/p1/datasheet/STM32F4.pdf")
+    assert url.endswith("/v1/raw/iphone/logan/p1/datasheet/STM32F4.pdf")
     assert "#" not in url
 
 
@@ -67,7 +67,7 @@ def test_resolve_asset_relative_path(app_config, tmp_path: Path) -> None:
     from dataclasses import replace
 
     processed = tmp_path / "processed"
-    note_dir = processed / "logan/p1/note"
+    note_dir = processed / "iphone/logan/p1/note"
     assets = note_dir / "iPadManual.assets"
     assets.mkdir(parents=True)
     image = assets / "screen.png"
@@ -76,9 +76,9 @@ def test_resolve_asset_relative_path(app_config, tmp_path: Path) -> None:
     config = replace(app_config, processed_dir=processed)
 
     rel = resolve_asset_relative_path(str(target), "iPadManual.assets/screen.png", processed)
-    assert rel == "logan/p1/note/iPadManual.assets/screen.png"
+    assert rel == "iphone/logan/p1/note/iPadManual.assets/screen.png"
     assert asset_url(config, asset_rel=rel).endswith(
-        "/v1/assets/logan/p1/note/iPadManual.assets/screen.png"
+        "/v1/assets/iphone/logan/p1/note/iPadManual.assets/screen.png"
     )
 
 
@@ -88,7 +88,7 @@ def test_page_image_url_finds_saved_page_render(app_config, tmp_path: Path) -> N
     from ee_wiki.generation.citation_urls import page_image_url
 
     processed = tmp_path / "processed"
-    sch_dir = processed / "logan/p1/sch"
+    sch_dir = processed / "iphone/logan/p1/sch"
     images = sch_dir / "images/explorer_stm32f4_v2_2_sch"
     images.mkdir(parents=True)
     (images / "explorer_stm32f4_v2_2_sch_p4_page.png").write_bytes(b"png")
@@ -98,7 +98,7 @@ def test_page_image_url_finds_saved_page_render(app_config, tmp_path: Path) -> N
     url = page_image_url(config, target_file=str(target), page=4)
     assert url is not None
     assert url.endswith(
-        "/v1/assets/logan/p1/sch/images/explorer_stm32f4_v2_2_sch/"
+        "/v1/assets/iphone/logan/p1/sch/images/explorer_stm32f4_v2_2_sch/"
         "explorer_stm32f4_v2_2_sch_p4_page.png"
     )
     assert page_image_url(config, target_file=str(target), page=9) is None
@@ -109,7 +109,7 @@ def test_citation_image_urls_from_chunk_content(app_config, tmp_path: Path) -> N
     from dataclasses import replace
 
     processed = tmp_path / "processed"
-    note_dir = processed / "logan/p1/note"
+    note_dir = processed / "iphone/logan/p1/note"
     assets = note_dir / "manual.assets"
     assets.mkdir(parents=True)
     (assets / "diag.png").write_bytes(b"png")
@@ -123,20 +123,20 @@ def test_citation_image_urls_from_chunk_content(app_config, tmp_path: Path) -> N
         content="![diag](manual.assets/diag.png)",
     )
     assert len(urls) == 1
-    assert urls[0].endswith("/v1/assets/logan/p1/note/manual.assets/diag.png")
+    assert urls[0].endswith("/v1/assets/iphone/logan/p1/note/manual.assets/diag.png")
 
 
 def test_resolve_asset_relative_path_with_repo_relative_target(tmp_path: Path) -> None:
     """Index metadata stores target_file as ``data/processed/...`` labels."""
     processed = tmp_path / "data" / "processed"
-    sch_dir = processed / "logan/p1/sch"
+    sch_dir = processed / "iphone/logan/p1/sch"
     images = sch_dir / "images/board"
     images.mkdir(parents=True)
     (images / "board_p4_page.png").write_bytes(b"png")
 
     rel = resolve_asset_relative_path(
-        "data/processed/logan/p1/sch/board.md",
+        "data/processed/iphone/logan/p1/sch/board.md",
         "images/board/board_p4_page.png",
         processed,
     )
-    assert rel == "logan/p1/sch/images/board/board_p4_page.png"
+    assert rel == "iphone/logan/p1/sch/images/board/board_p4_page.png"

@@ -32,6 +32,7 @@ def test_build_graph_adds_case_nodes_and_edges(tmp_path: Path) -> None:
         chunk_id="fa1",
         content="No boot. Open solder on U101.",
         metadata=Metadata(
+            product="demo",
             project="demo",
             build="p1",
             document_type="failure_analysis",
@@ -56,6 +57,7 @@ def test_build_graph_adds_case_nodes_and_edges(tmp_path: Path) -> None:
         cases=(
             DebugCaseRecord(
                 case_id="RMA-100",
+                product="demo",
                 project="demo",
                 build="p1",
                 title="RMA",
@@ -76,13 +78,13 @@ def test_build_graph_adds_case_nodes_and_edges(tmp_path: Path) -> None:
         case_index=case_index,
     )
 
-    cid = case_node_id("demo", "p1", "RMA-100")
+    cid = case_node_id("demo", "demo", "p1", "RMA-100")
     assert cid in graph.nodes
     assert graph.nodes[cid].type == NODE_CASE
     assert graph.nodes[cid].attributes.get("symptom") == "No boot"
 
-    u101 = component_node_id("demo", "p1", "U101")
-    net = net_node_id("demo", "p1", "NET_VCC")
+    u101 = component_node_id("demo", "demo", "p1", "U101")
+    net = net_node_id("demo", "demo", "p1", "NET_VCC")
     mentions = [
         e
         for e in graph.edges

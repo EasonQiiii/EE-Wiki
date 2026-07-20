@@ -40,6 +40,7 @@ def _layout(tmp_path: Path) -> DataLayoutConfig:
 def _chunk(
     *,
     chunk_id: str,
+    product: str,
     project: str,
     build: str,
     source_file: str,
@@ -51,6 +52,7 @@ def _chunk(
     title: str = "Schematic",
 ) -> Chunk:
     metadata = Metadata(
+        product=product,
         project=project,
         build=build,
         document_type=document_type,
@@ -79,9 +81,10 @@ def sample_chunks() -> list[Chunk]:
     return [
         _chunk(
             chunk_id="c1",
+            product="acme",
             project="demo",
             build="p1",
-            source_file="demo/p1/sch/power.md",
+            source_file="acme/demo/p1/sch/power.md",
             major_components=["U101", "C10"],
             nets=["NET_VCC", "GND"],
             keywords=["STM32F407VGT6"],
@@ -89,9 +92,10 @@ def sample_chunks() -> list[Chunk]:
         ),
         _chunk(
             chunk_id="c2",
+            product="acme",
             project="demo",
             build="common",
-            source_file="demo/common/note/arch.md",
+            source_file="acme/demo/common/note/arch.md",
             document_type="engineering_note",
             keywords=["STM32F407VGT6"],
             page=0,
@@ -99,9 +103,10 @@ def sample_chunks() -> list[Chunk]:
         ),
         _chunk(
             chunk_id="c3",
+            product="global",
             project="global",
             build="global",
-            source_file="global/global/datasheet/stm32.md",
+            source_file="global/datasheet/stm32.md",
             document_type="datasheet",
             keywords=["STM32F407VGT6"],
             page=0,
@@ -116,11 +121,12 @@ def test_build_creates_component_net_document_scope_nodes(
     layout = _layout(tmp_path)
     graph = build_graph_from_chunks(sample_chunks, layout=layout)
 
-    assert component_node_id("demo", "p1", "U101") in graph.nodes
-    assert net_node_id("demo", "p1", "NET_VCC") in graph.nodes
+    assert component_node_id("acme", "demo", "p1", "U101") in graph.nodes
+    assert net_node_id("acme", "demo", "p1", "NET_VCC") in graph.nodes
     assert part_node_id("STM32F407VGT6") in graph.nodes
-    assert "project:demo" in graph.nodes
-    assert "build:demo/p1" in graph.nodes
+    assert "product:acme" in graph.nodes
+    assert "project:acme/demo" in graph.nodes
+    assert "build:acme/demo/p1" in graph.nodes
     assert any(n.type == "Document" for n in graph.nodes.values())
 
     edge_types = {e.type for e in graph.edges}
@@ -132,8 +138,8 @@ def test_connects_to_links_designators_to_nets(
     sample_chunks: list[Chunk], tmp_path: Path
 ) -> None:
     graph = build_graph_from_chunks(sample_chunks, layout=_layout(tmp_path))
-    u101 = component_node_id("demo", "p1", "U101")
-    net = net_node_id("demo", "p1", "NET_VCC")
+    u101 = component_node_id("acme", "demo", "p1", "U101")
+    net = net_node_id("acme", "demo", "p1", "NET_VCC")
     connects = [
         e
         for e in graph.edges
@@ -147,7 +153,7 @@ def test_same_as_links_designator_to_part(
     sample_chunks: list[Chunk], tmp_path: Path
 ) -> None:
     graph = build_graph_from_chunks(sample_chunks, layout=_layout(tmp_path))
-    u101 = component_node_id("demo", "p1", "U101")
+    u101 = component_node_id("acme", "demo", "p1", "U101")
     part = part_node_id("STM32F407VGT6")
     same = [
         e
@@ -169,7 +175,7 @@ def test_jsonl_store_roundtrip(sample_chunks: list[Chunk], tmp_path: Path) -> No
     loaded = store.load_graph(graph_dir)
     assert len(loaded.nodes) == len(graph.nodes)
     assert len(loaded.edges) == len(graph.edges)
-    assert component_node_id("demo", "p1", "U101") in loaded.adjacency
+    assert component_node_id("acme", "demo", "p1", "U101") in loaded.adjacency
 
 
 def test_open_graph_missing_raises(tmp_path: Path) -> None:
@@ -183,22 +189,25 @@ def test_neighbors_and_path(sample_chunks: list[Chunk], tmp_path: Path) -> None:
     graph = build_graph_from_chunks(sample_chunks, layout=layout)
     query = GraphQuery(graph, layout=layout, scope_inheritance=True)
 
-    u101 = component_node_id("demo", "p1", "U101")
-    neighbors = query.neighbors(u101, project="demo", build="p1", max_hops=1)
+    u101 = component_node_id("acme", "demo", "p1", "U101")
+    neighbors = query.neighbors(
+        u101, product="acme", project="demo", build="p1", max_hops=1
+    )
     neighbor_ids = {n["id"] for n in neighbors}
-    assert net_node_id("demo", "p1", "NET_VCC") in neighbor_ids
+    assert net_node_id("acme", "demo", "p1", "NET_VCC") in neighbor_ids
     assert all("scope" in n for n in neighbors)
 
     path = query.path(
         u101,
-        net_node_id("demo", "p1", "GND"),
+        net_node_id("acme", "demo", "p1", "GND"),
+        product="acme",
         project="demo",
         build="p1",
         edge_types=[EDGE_CONNECTS_TO],
     )
     assert path is not None
     assert path[0]["id"] == u101
-    assert path[-1]["id"] == net_node_id("demo", "p1", "GND")
+    assert path[-1]["id"] == net_node_id("acme", "demo", "p1", "GND")
 
 
 def test_filter_by_scope_inheritance(sample_chunks: list[Chunk], tmp_path: Path) -> None:
@@ -206,7 +215,9 @@ def test_filter_by_scope_inheritance(sample_chunks: list[Chunk], tmp_path: Path)
     graph = build_graph_from_chunks(sample_chunks, layout=layout)
     query = open_query(graph, layout=layout, scope_inheritance=True)
 
-    nodes = query.filter_by_scope(project="demo", build="p1", node_types=[NODE_COMPONENT])
+    nodes = query.filter_by_scope(
+        product="acme", project="demo", build="p1", node_types=[NODE_COMPONENT]
+    )
     scopes = {n["scope"] for n in nodes}
     # build designators + global part node via inheritance
     assert "build" in scopes
@@ -214,18 +225,55 @@ def test_filter_by_scope_inheritance(sample_chunks: list[Chunk], tmp_path: Path)
 
     no_inherit = GraphQuery(graph, layout=layout, scope_inheritance=False)
     strict = no_inherit.filter_by_scope(
-        project="demo", build="p1", node_types=[NODE_COMPONENT]
+        product="acme", project="demo", build="p1", node_types=[NODE_COMPONENT]
     )
-    assert all(n["project"] == "demo" and n["build"] == "p1" for n in strict)
+    assert all(
+        n["product"] == "acme" and n["project"] == "demo" and n["build"] == "p1"
+        for n in strict
+    )
+
+
+def test_filter_by_scope_excludes_other_product_same_slugs(tmp_path: Path) -> None:
+    """Identical project/build slugs under two products must not leak."""
+    layout = _layout(tmp_path)
+    chunks = [
+        _chunk(
+            chunk_id="a1",
+            product="acme",
+            project="demo",
+            build="p1",
+            source_file="acme/demo/p1/sch/a.md",
+            major_components=["U101"],
+            nets=["NET_VCC"],
+        ),
+        _chunk(
+            chunk_id="b1",
+            product="beta",
+            project="demo",
+            build="p1",
+            source_file="beta/demo/p1/sch/b.md",
+            major_components=["U900"],
+            nets=["NET_VCC"],
+        ),
+    ]
+    graph = build_graph_from_chunks(chunks, layout=layout)
+    query = open_query(graph, layout=layout, scope_inheritance=True)
+    nodes = query.filter_by_scope(
+        product="acme", project="demo", build="p1", node_types=[NODE_COMPONENT]
+    )
+    ids = {n["id"] for n in nodes}
+    assert component_node_id("acme", "demo", "p1", "U101") in ids
+    assert component_node_id("beta", "demo", "p1", "U900") not in ids
 
 
 def test_build_uses_component_index(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     chunk = _chunk(
         chunk_id="c1",
+        product="acme",
         project="demo",
         build="p1",
-        source_file="demo/p1/sch/page.md",
+        source_file="acme/demo/p1/sch/page.md",
         major_components=["U200"],
         nets=["CLK"],
     )
@@ -241,10 +289,11 @@ def test_build_uses_component_index(tmp_path: Path) -> None:
                     key="EXTRA-PART-99",
                     kind="part_number",
                     chunk_id="c1",
+                    product="acme",
                     project="demo",
                     build="p1",
                     document_type="schematic",
-                    source_file="demo/p1/sch/page.md",
+                    source_file="acme/demo/p1/sch/page.md",
                     page=1,
                     title="Schematic",
                     excerpt="…",
@@ -276,16 +325,18 @@ def test_empty_graph_query() -> None:
     query = GraphQuery(KnowledgeGraph(), layout=layout)
     assert query.neighbors("missing") == []
     assert query.path("a", "b") is None
-    assert query.filter_by_scope(project="demo", build="p1") == []
-    assert query.resolve_node("U101", project="demo", build="p1") is None
+    assert query.filter_by_scope(product="acme", project="demo", build="p1") == []
+    assert (
+        query.resolve_node("U101", product="acme", project="demo", build="p1") is None
+    )
 
 
 def test_resolve_node_from_designator(sample_chunks: list[Chunk], tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     graph = build_graph_from_chunks(sample_chunks, layout=layout)
     query = open_query(graph, layout=layout, scope_inheritance=True)
-    resolved = query.resolve_node("U101", project="demo", build="p1")
-    assert resolved == component_node_id("demo", "p1", "U101")
-    node = query.get_node(resolved, project="demo", build="p1")
+    resolved = query.resolve_node("U101", product="acme", project="demo", build="p1")
+    assert resolved == component_node_id("acme", "demo", "p1", "U101")
+    node = query.get_node(resolved, product="acme", project="demo", build="p1")
     assert node is not None
     assert node["type"] == NODE_COMPONENT

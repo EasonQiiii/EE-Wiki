@@ -22,36 +22,82 @@ cp .env.example .env
 | `EE_WIKI_DATA_DIR` | Data root (default: `./data`) |
 | `EE_WIKI_MODELS_DIR` | Local models (default: see `.env.example`) |
 
-Schematic PDF parsing requires ML extras (`ee-wiki[ml]`) and models configured in `config/default.yaml`:
+Schematic PDF parsing depends on `ingestion.schematic_pdf.fidelity_mode`:
 
-- `layoutlmv3-base` — LayoutLM figure crop for `sch/` PDFs (stage 1)
-- `Qwen3-VL-4B-Instruct` — vision reconstruction for `sch/` PDFs (stage 2)
-- Markdown / TXT need no models
+| Mode | Models | When to use |
+|------|--------|-------------|
+| **`ocr_only` (default)** | none for vision — PyMuPDF OCR text only | FA / ingest speed; pin–net truth comes from netlist / `.brd` (ADR 0009) |
+| `vlm_plus_ocr` | `layoutlmv3-base` + `Qwen3-VL-*` | Optional schematic prose for RAG recall (slow) |
+
+Datasheet PDFs under `datasheet/` still use the datasheet VLM pipeline when pages are table/graph/mixed. Markdown / TXT need no models.
 
 ## Where to put raw files
 
-Place documents under `data/raw/` using this layout (see [Raw Data Layout](../../README.md#raw-data-layout) in README):
+Place documents under `data/raw/` using the three-level layout (see [Raw Data Layout](../../README.md#raw-data-layout) and [ADR 0011](../adr/0011-product-project-build-hierarchy.md)):
 
 ```
 data/raw/
-├── global/                    # enterprise-wide shared
-├── {project}/                 # e.g. logan
-│   ├── common/                # shared across builds in this project
-│   └── {build}/               # e.g. p1
-│       ├── note/              # engineering notes (.md, .txt)
-│       ├── sch/               # schematics (.pdf)
-│       └── sop/               # SOPs
+├── global/                         # enterprise-wide shared
+├── {product}/                      # e.g. iphone
+│   ├── common/                     # product common (all projects)
+│   └── {project}/                  # e.g. logan
+│       ├── common/                 # project common (all builds)
+│       └── {build}/                # e.g. p1
+│           ├── note/               # engineering notes (.md, .txt)
+│           ├── sch/                # schematics (.pdf)
+│           └── sop/                # SOPs
 ```
 
 ### Where to put a document
 
 | Put it under | When |
 |--------------|------|
-| `global/{type}/` | Shared by **all projects** — generic tool guides, industry practices, common component datasheets |
-| `{project}/common/{type}/` | Shared by **all builds in that project** — product architecture, project naming, cross-build SOPs |
-| `{project}/{build}/{type}/` | Specific to **one hardware revision** — schematics, build debug notes, that build's procedures |
+| `global/{type}/` | Shared by **all products** — generic tool guides, industry practices, common component datasheets |
+| `{product}/common/{type}/` | Shared by **all projects in that product** — platform architecture, naming, cross-project SOPs |
+| `{product}/{project}/common/{type}/` | Shared by **all builds in that project** — program-wide knowledge, not board wiring |
+| `{product}/{project}/{build}/{type}/` | Specific to **one hardware revision** — schematics, build debug notes, that build's procedures |
 
 See [README — Retrieval Scope](../../README.md#retrieval-scope) for how retrieval and answers treat each layer.
+
+### ADR 0011 layout migration
+
+Legacy trees used two levels (`data/raw/{project}/...`). After ADR 0011 they must
+live under `data/raw/{product}/{project}/...`. Use the dry-run-first CLI:
+
+```bash
+# Dry-run (default): print planned moves only
+python scripts/migrate_raw_layout.py --map logan=iphone,macon=iphone
+
+# Or load the map from YAML/JSON
+python scripts/migrate_raw_layout.py --map-file path/to/map.yaml
+
+# Execute moves
+python scripts/migrate_raw_layout.py --map logan=iphone,macon=iphone --apply
+```
+
+Safety rules:
+
+- Mapping is **required** (CLI `--map` and/or `--map-file`)
+- `data/raw/global/` is never moved
+- Reserved names `global` / `common` are rejected as ordinary product or project slugs
+- Destination collisions and nesting into another legacy project tree are refused
+- **Only** `data/raw/` project trees are moved — not `data/processed/`, `data/indexes/`,
+  `data/graph/`, or FA cache/exports (those stay Radar-keyed)
+
+**Cutover after `--apply`:**
+
+1. Migrate raw (commands above)
+2. Delete / recreate `data/processed/`, `data/indexes/`, and `data/graph/`
+3. Re-ingest, re-index, rebuild the graph:
+
+```bash
+rm -rf data/processed data/indexes data/graph
+mkdir -p data/processed data/indexes data/graph
+python scripts/ingest.py --force
+python scripts/index.py --force
+python scripts/build_graph.py
+# or: python scripts/sync.py --force && python scripts/build_graph.py
+```
 
 For **how to write** Markdown (glossaries, lifecycle docs, templates for AI reformatting), see [knowledge-authoring.md](knowledge-authoring.md).
 
@@ -60,7 +106,7 @@ Supported formats (V1):
 | Folder | Formats |
 |--------|---------|
 | `note/`, `sop/`, `datasheet/`, etc. | `.md`, `.markdown`, `.txt`, `.pdf` (text + OCR), `.xlsx`, `.doc`, `.docx`, `.key`, `.numbers` (macOS) |
-| `sch/` | `.pdf` (schematic vision pipeline) |
+| `sch/` | `.pdf` (schematic vision pipeline); optional same-stem companions: `.brd` (BoardView), `.net` / KiCad / Altium (netlist) — see ADR 0009 |
 | `datasheet/` | `.pdf` (datasheet VLM pipeline when under `datasheet/`; prose PDF + OCR otherwise) |
 | `fa/` | `.md`, `.txt`, `.pdf`, `.doc`, `.docx` (failure analysis reports) |
 
@@ -173,17 +219,17 @@ python scripts/ingest.py
 ### Ingest one subdirectory
 
 ```bash
-python scripts/ingest.py data/raw/logan/p1/
+python scripts/ingest.py data/raw/iphone/logan/p1/
 ```
 
 - Scope: all ingestible files under that directory
-- Cleanup: only within the matching `data/processed/logan/p1/` subtree
+- Cleanup: only within the matching `data/processed/iphone/logan/p1/` subtree
 
 ### Ingest a single file
 
 ```bash
-python scripts/ingest.py data/raw/acme/p2/sch/board.pdf
-python scripts/ingest.py data/raw/acme/p2/note/bringup.md
+python scripts/ingest.py data/raw/iphone/logan/p2/sch/board.pdf
+python scripts/ingest.py data/raw/iphone/logan/p2/note/bringup.md
 ```
 
 - Scope: that file only
@@ -195,7 +241,7 @@ Use this when you want to re-run one document without scanning the full tree.
 
 ```bash
 python scripts/ingest.py --force
-python scripts/ingest.py data/raw/logan/p1/note/ --force
+python scripts/ingest.py data/raw/iphone/logan/p1/note/ --force
 ```
 
 Ignores `source_mtime` / `source_size` in existing sidecars and re-processes every file in scope.
@@ -204,15 +250,23 @@ Ignores `source_mtime` / `source_size` in existing sidecars and re-processes eve
 
 ```bash
 python scripts/ingest.py -v
-python scripts/ingest.py data/raw/logan/p1/sch/board.pdf --verbose
+python scripts/ingest.py data/raw/iphone/logan/p1/sch/board.pdf --verbose
 ```
 
-Sets EE-Wiki log level to DEBUG (useful for transformers load details). Schematic PDF ingest always logs page progress at INFO:
+Sets EE-Wiki log level to DEBUG (useful for transformers load details). Schematic PDF ingest always logs page progress at INFO. Default `ocr_only`:
 
 ```
-INFO  Ingesting: acme/p2/sch/board.pdf
-INFO  Schematic PDF board.pdf: starting vision extraction for 5 page(s)
-INFO  Schematic PDF board.pdf: page 1/5
+INFO  Ingesting: acme/demo/p2/sch/board.pdf
+INFO  Schematic PDF board.pdf: pipeline for 5 page(s) (fidelity_mode=ocr_only)
+INFO  Schematic PDF board.pdf: page 1/5 — OCR fidelity
+```
+
+With `fidelity_mode: vlm_plus_ocr`, expect LayoutLM + VLM heartbeats (slow):
+
+```
+INFO  Schematic PDF board.pdf: pipeline for 5 page(s) (fidelity_mode=vlm_plus_ocr)
+INFO  Schematic PDF board.pdf: page 1/5 — layout analysis
+INFO  Schematic PDF board.pdf: page 1/5 — VLM reconstruction
 INFO  Vision inference started: page 1 (image 4960x3508, 2.1 MB)
 INFO  Vision inference page 1 still running (30s elapsed)
 INFO  Vision inference finished: page 1 in 842.3s (1523 output tokens)
@@ -226,8 +280,8 @@ Each sidecar (`.meta.json`) stores a fingerprint of the raw file:
 
 ```json
 {
-  "source_file": "data/raw/acme/p2/note/bringup.md",
-  "target_file": "data/processed/acme/p2/note/bringup.md",
+  "source_file": "data/raw/acme/demo/p2/note/bringup.md",
+  "target_file": "data/processed/acme/demo/p2/note/bringup.md",
   "source_mtime": 1719856070.5,
   "source_size": 36941
 }
@@ -251,7 +305,7 @@ When raw files are removed from `data/raw/`, processed outputs must not linger.
 | Invoke mode | Cleanup scope |
 |-------------|----------------|
 | `python scripts/ingest.py` | All of `data/processed/` |
-| `python scripts/ingest.py data/raw/logan/p1/` | `data/processed/logan/p1/` only |
+| `python scripts/ingest.py data/raw/iphone/logan/p1/` | `data/processed/iphone/logan/p1/` only |
 | Single-file path | No cleanup |
 
 Cleanup reads `source_file` from each `.meta.json`. If that raw path no longer exists, it deletes:
@@ -293,28 +347,31 @@ If all processed documents are removed, `index.py` clears the entire index bundl
 ## Output layout
 
 ```
-data/raw/logan/p1/note/manual.pdf
-    →  data/processed/logan/p1/note/manual.md
-    →  data/processed/logan/p1/note/manual.md.meta.json
+data/raw/iphone/logan/p1/note/manual.pdf
+    →  data/processed/iphone/logan/p1/note/manual.md
+    →  data/processed/iphone/logan/p1/note/manual.md.meta.json
 
-data/raw/logan/p1/sch/board.pdf
-    →  data/processed/logan/p1/sch/board.md
-    →  data/processed/logan/p1/sch/board.md.meta.json
+data/raw/iphone/logan/p1/sch/board.pdf
+    →  data/processed/iphone/logan/p1/sch/board.md
+    →  data/processed/iphone/logan/p1/sch/board.md.meta.json
 
-data/raw/logan/p1/note/manual.md
-    →  data/processed/logan/p1/note/manual.md
-    →  data/processed/logan/p1/note/manual.md.meta.json
+data/raw/iphone/logan/p1/note/manual.md
+    →  data/processed/iphone/logan/p1/note/manual.md
+    →  data/processed/iphone/logan/p1/note/manual.md.meta.json
 ```
 
-Prose PDFs (`note/`, `sop/`, `datasheet/`, …) emit per-page `## Page N` sections for chunking. Schematic PDFs use the **temp3 two-stage pipeline**:
+Prose PDFs (`note/`, `sop/`, `datasheet/` outside the datasheet VLM path, …) emit per-page `## Page N` sections for chunking. Schematic PDFs follow `ingestion.schematic_pdf.fidelity_mode`:
 
-1. **LayoutLMv3** — OCR text + figure region crop → `data/processed/.../sch/images/<pdf>_p<N>_crop_*.png`
-2. **Qwen3-VL** — reconstruct Markdown from OCR text + crop image (system FA expert prompt)
-3. **Fallback** — rule-based report if VLM fails
+| Mode | Pipeline |
+|------|----------|
+| **`ocr_only` (default)** | Per-page embedded OCR → fidelity Markdown (designators / nets / module labels) + optional connectivity sidecar. **No LayoutLMv3 / Qwen3-VL.** Fast; suitable when FA relies on netlist / BoardView for traces. |
+| `vlm_plus_ocr` | (1) LayoutLMv3 crop → (2) Qwen3-VL Markdown reconstruction → (3) OCR fidelity appendix; rule-based fallback if VLM fails. Slow; optional for narrative RAG recall. |
 
-Output merges per-page reports under one `# 电子图纸分析报告：{title}` document. Metadata includes document-level `major_components`, `nets`, and `interfaces`.
+Output merges per-page reports under one `# 电子图纸分析报告：{title}` document. Metadata includes document-level `major_components`, `nets`, and `interfaces` (from OCR fidelity and/or VLM, depending on mode).
 
 **V2 — per-page sidecar:** schematic ingest also writes a `pages` array in `.meta.json` (one entry per PDF page with that page's components/nets/interfaces). At index time the chunker attaches page-scoped metadata to each schematic chunk. Re-ingest existing `sch/` PDFs with `--force` to populate `pages`; then re-index.
+
+**ADR 0009 — connectivity map:** when enabled, schematic ingest also writes `{stem}.connectivity.json` next to the processed `.md`. Optional companions beside the PDF (or under `sch/cad/`) are merged by evidence priority: netlist → BoardView `.brd` → PDF geometry → OCR spatial. Missing companions are skipped (ingest still succeeds). Connectivity does **not** depend on VLM — `ocr_only` still builds the sidecar. Query via `GET /v1/schematic/connectivity/{net,pins,module-nets}` or MCP tools; answer-grade traces require `cad_netlist` / `boardview` (authoritative gate).
 
 ### Datasheet PDFs (`datasheet/`)
 
@@ -333,7 +390,7 @@ These fields improve retrieval boost for spec and pinout questions. Re-ingest `d
 
 ### Failure analysis (`fa/`)
 
-Documents under `.../fa/` map to `document_type: failure_analysis` (see `data_layout.document_type_folders` in config). During ingest, FA-specific **keywords** are extracted: failure modes (`ESD`, `THERMAL_RUNAWAY`, …), symptoms (`NO_BOOT`, `INTERMITTENT`, …), and traceability tokens (`RMA:…`, `LOT:…`, `DATECODE:…`). Place RMA reports, 8D summaries, and FA write-ups under `data/raw/{project}/{build}/fa/` or `{project}/common/fa/`.
+Documents under `.../fa/` map to `document_type: failure_analysis` (see `data_layout.document_type_folders` in config). During ingest, FA-specific **keywords** are extracted: failure modes (`ESD`, `THERMAL_RUNAWAY`, …), symptoms (`NO_BOOT`, `INTERMITTENT`, …), and traceability tokens (`RMA:…`, `LOT:…`, `DATECODE:…`). Place RMA reports, 8D summaries, and FA write-ups under `data/raw/{product}/{project}/{build}/fa/` or `{product}/{project}/common/fa/`.
 
 **Debug cases (V3 P2):** optional structured fields (`case_id`, `symptom`, `suspected_nets`, `suspected_parts`, `steps`, `root_cause`, `case_citations`) via YAML frontmatter or Markdown headings. These land in the processed `.meta.json`, feed `data/indexes/cases.json` at index time, and become Case graph nodes on `python scripts/build_graph.py`. See [knowledge-authoring.md](knowledge-authoring.md#debug-cases-fa--v3-p2).
 
@@ -345,7 +402,7 @@ When the API server is running, you can trigger ingest + index over HTTP instead
 curl -X POST http://localhost:8080/v1/ingest \
   -H 'Content-Type: application/json' \
   -H 'X-API-Key: '"$EE_WIKI_INGEST_API_KEY" \
-  -d '{"path":"logan/p1/sch","force":true,"async":true}'
+  -d '{"path":"iphone/logan/p1/sch","force":true,"async":true}'
 ```
 
 Set `EE_WIKI_INGEST_API_KEY` when exposing the API on LAN (optional; unset = open). For large VLM batches prefer `"async": true` and poll `GET /v1/ingest/jobs/{job_id}` — see [mcp.md](mcp.md) and [api-overview.md](../architecture/api-overview.md).
@@ -357,8 +414,8 @@ Set `EE_WIKI_INGEST_API_KEY` when exposing the API on LAN (optional; unset = ope
 # Ingested: 1, skipped (unchanged): 2, removed (raw deleted): 1
 
 # stdout lists paths for newly ingested files:
-# /path/to/data/processed/logan/p1/note/new.md
-# /path/to/data/processed/logan/p1/note/new.md.meta.json
+# /path/to/data/processed/iphone/logan/p1/note/new.md
+# /path/to/data/processed/iphone/logan/p1/note/new.md.meta.json
 ```
 
 ## Troubleshooting
@@ -373,7 +430,8 @@ Set `EE_WIKI_INGEST_API_KEY` when exposing the API on LAN (optional; unset = ope
 | Deleted docs still appear in query results | Run `python scripts/index.py` after ingest cleanup |
 | Word `.doc` ingest fails | Install LibreOffice; verify `soffice --version`. Set `EE_WIKI_LIBREOFFICE_PATH` if needed. |
 | Word `.docx` ingest fails | Run `pip install -e ".[dev,ml]"` for the `mammoth` dependency. |
-| Path layout error | Path must match `{project}/{build}/{type}/file` — see README Raw Data Layout |
+| Path layout error | Path must match `{product}/{project}/{build}/{type}/file` (or reserved `global` / `common` forms) — see README Raw Data Layout |
+| Legacy two-level paths | Run `scripts/migrate_raw_layout.py` then rebuild processed/indexes/graph — [ADR 0011 migration](#adr-0011-layout-migration) |
 
 ## Related docs
 

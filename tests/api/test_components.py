@@ -18,10 +18,11 @@ def test_components_search_returns_hits() -> None:
             key="U101",
             kind="designator",
             chunk_id="board__p001",
+            product="iphone",
             project="logan",
             build="p1",
             document_type="schematic",
-            source_file="data/raw/logan/p1/sch/board.pdf",
+            source_file="data/raw/iphone/logan/p1/sch/board.pdf",
             page=1,
             title="board",
             excerpt="U101 PHY",
@@ -34,7 +35,7 @@ def test_components_search_returns_hits() -> None:
 
     response = client.get(
         "/v1/components/search",
-        params={"q": "U101", "project": "logan", "build": "p1"},
+        params={"q": "U101", "product": "iphone", "project": "logan", "build": "p1"},
     )
 
     assert response.status_code == 200

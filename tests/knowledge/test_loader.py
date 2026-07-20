@@ -27,8 +27,8 @@ def test_load_processed_records_reads_md_and_sidecar(tmp_path: Path) -> None:
                 "build": "p1",
                 "document_type": "engineering_note",
                 "title": "sample",
-                "source_file": "data/raw/logan/p1/note/sample.md",
-                "target_file": "data/processed/logan/p1/note/sample.md",
+                "source_file": "data/raw/iphone/logan/p1/note/sample.md",
+                "target_file": "data/processed/iphone/logan/p1/note/sample.md",
             }
         ),
         encoding="utf-8",
@@ -41,7 +41,7 @@ def test_load_processed_records_reads_md_and_sidecar(tmp_path: Path) -> None:
     assert "Body text" in record.content
     assert record.metadata.project == "logan"
     assert record.metadata.build == "p1"
-    assert record.target_file == "data/processed/logan/p1/note/sample.md"
+    assert record.target_file == "data/processed/iphone/logan/p1/note/sample.md"
 
 
 def test_processed_loader_reexport_matches_knowledge_loader(tmp_path: Path) -> None:

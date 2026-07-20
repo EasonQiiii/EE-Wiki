@@ -17,7 +17,7 @@ from ee_wiki.ingestion.keywords import is_designator, is_part_number_keyword
 logger = get_logger(__name__)
 
 COMPONENTS_NAME = "components.json"
-COMPONENT_INDEX_VERSION = 1
+COMPONENT_INDEX_VERSION = 2
 ComponentKind = Literal["designator", "part_number"]
 
 
@@ -32,6 +32,7 @@ class ComponentHit:
     key: str
     kind: ComponentKind
     chunk_id: str
+    product: str
     project: str
     build: str
     document_type: str
@@ -45,6 +46,7 @@ class ComponentHit:
             "key": self.key,
             "kind": self.kind,
             "chunk_id": self.chunk_id,
+            "product": self.product,
             "project": self.project,
             "build": self.build,
             "document_type": self.document_type,
@@ -60,6 +62,7 @@ class ComponentHit:
             key=str(data.get("key", "")),
             kind=str(data.get("kind", "part_number")),  # type: ignore[arg-type]
             chunk_id=str(data.get("chunk_id", "")),
+            product=str(data.get("product", "")),
             project=str(data.get("project", "")),
             build=str(data.get("build", "")),
             document_type=str(data.get("document_type", "")),
@@ -128,6 +131,7 @@ def _hit_from_chunk(
         key=key,
         kind=kind,
         chunk_id=chunk.chunk_id,
+        product=metadata.product,
         project=metadata.project,
         build=metadata.build,
         document_type=metadata.document_type,

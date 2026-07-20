@@ -26,9 +26,10 @@ def _layout(tmp_path: Path) -> DataLayoutConfig:
 def _fa_chunk(
     *,
     chunk_id: str,
+    product: str = "acme",
     project: str = "demo",
     build: str = "p1",
-    source_file: str = "demo/p1/fa/rma.md",
+    source_file: str = "acme/demo/p1/fa/rma.md",
     case_id: str = "RMA-1",
     symptom: str = "No boot",
     suspected_nets: list[str] | None = None,
@@ -36,6 +37,7 @@ def _fa_chunk(
     root_cause: str = "Open on U101",
 ) -> Chunk:
     metadata = Metadata(
+        product=product,
         project=project,
         build=build,
         document_type="failure_analysis",
@@ -69,6 +71,7 @@ def test_build_and_save_case_index(tmp_path: Path) -> None:
             chunk_id="note1",
             content="unrelated",
             metadata=Metadata(
+                product="demo",
                 project="demo",
                 build="p1",
                 document_type="engineering_note",
@@ -133,9 +136,38 @@ def test_lookup_case_chunk_ids_respects_scope(tmp_path: Path) -> None:
         index,
         ["NO", "BOOT", "U101"],
         layout=layout,
+        target_product="acme",
         target_project="demo",
         target_build="p1",
         scope_inheritance=True,
     )
     assert "p1" in matched
     assert "other" not in matched
+
+
+def test_lookup_case_chunk_ids_excludes_same_slugs_other_product(
+    tmp_path: Path,
+) -> None:
+    layout = _layout(tmp_path)
+    index = build_case_index(
+        [
+            _fa_chunk(chunk_id="p1", product="acme"),
+            _fa_chunk(
+                chunk_id="leak",
+                product="beta",
+                source_file="beta/demo/p1/fa/rma.md",
+                case_id="BETA-1",
+            ),
+        ]
+    )
+    matched = lookup_case_chunk_ids(
+        index,
+        ["NO", "BOOT", "U101"],
+        layout=layout,
+        target_product="acme",
+        target_project="demo",
+        target_build="p1",
+        scope_inheritance=True,
+    )
+    assert "p1" in matched
+    assert "leak" not in matched

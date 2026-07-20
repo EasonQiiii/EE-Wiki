@@ -5,13 +5,23 @@ alwaysApply: true
 
 # Raw Data & Retrieval Scope (AGENTS.md §4)
 
-Raw path layout: `data/raw/{project}/{build}/{type}/<file>`
+Raw path layout — three scope levels `product` / `project` / `build` (ADR 0011):
 
-| Segment | Path | Meaning | Purpose |
-|---------|------|---------|---------|
-| `global` | `data/raw/global/` | Enterprise shared (`project=global`, `build=global`) | All projects: generic tools, industry practices, common datasheets |
-| `common` | `data/raw/{project}/common/` | All builds in that project | Project-wide knowledge: architecture, naming, cross-build SOPs |
-| `{build}` | e.g. `p1` | Specific hardware build | Build truth: schematics and docs for that revision |
+```
+global/{type}/<file>                        → product=global, project=global, build=global
+{product}/common/{type}/<file>              → product common (project=common, build=common)
+{product}/{project}/common/{type}/<file>    → project common (build=common)
+{product}/{project}/{build}/{type}/<file>   → build truth
+```
+
+| Segment | Meaning | Purpose |
+|---------|---------|---------|
+| `global` | Enterprise shared (`product`=`project`=`build`=`global`) | All products: generic tools, industry practices, common datasheets |
+| `{product}/common` | Shared across all projects in a product | Platform architecture, naming, cross-project SOPs |
+| `{product}/{project}/common` | Shared across all builds in a project | Project-wide knowledge, not board-specific wiring |
+| `{build}` | Specific hardware build | Build truth: schematics and docs for that revision |
+
+`global` and `common` are reserved — never ordinary product/project/build slugs.
 
 Folders `note`, `sch`, `sop`, `datasheet`, `fa` → `document_type` via `config/default.yaml` → `data_layout.document_type_folders`.
 
@@ -19,15 +29,15 @@ V2 ingest metadata: schematic `pages` sidecar (per-page components/nets); datash
 
 ## Ingestion
 
-- Derive `project`, `build`, `document_type` from path — never hardcode project names in `src/`.
+- Derive `product`, `project`, `build`, `document_type` from path — never hardcode names in `src/`.
 - Write to `data/processed/` mirroring `data/raw/` (`.md` + optional `.meta.json`).
 - Use metadata field `build`, never `board`.
 
 ## Retrieval
 
 - Honor `retrieval.scope_inheritance` (default `true`).
-- Filter `project=X, build=Y` → also search `X/common/` and `global/`.
-- Rank: build-specific > `common` > `global`.
+- Filter `product=P, project=X, build=Y` → expand upward: build → project `common` → product `common` → `global`.
+- Rank: build-specific > project `common` > product `common` > `global`.
 
 ## Answers
 

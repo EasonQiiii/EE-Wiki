@@ -15,6 +15,7 @@ class RuleCitation:
 
     kind: str
     ref: str
+    product: str = ""
     project: str = ""
     build: str = ""
     excerpt: str = ""
@@ -25,6 +26,8 @@ class RuleCitation:
             "kind": self.kind,
             "ref": self.ref,
         }
+        if self.product:
+            payload["product"] = self.product
         if self.project:
             payload["project"] = self.project
         if self.build:

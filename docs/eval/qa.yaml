@@ -3,6 +3,10 @@
 # Schema: config/schema/qa_eval.schema.json
 
 version: "1.0"
+# Post ADR 0011: paths are product/project/build.
+# Assumed migrate map for this golden set: logan→iphone;
+# kingboo remains a product with product-common docs at kingboo/common/.
+# Remap + re-ingest live corpus before scoring against production indexes.
 
 corpus:
   manifest: data/indexes/manifest.json
@@ -11,7 +15,7 @@ corpus:
   coverage:
     - global
     - kingboo/common
-    - logan/p1
+    - iphone/logan/p1
 
 scoring:
   dimensions:
@@ -42,6 +46,7 @@ cases:
     category: datasheet
     mandatory: true
     filters:
+      product: global
       project: global
       build: global
     scope_label: global
@@ -63,6 +68,7 @@ cases:
     category: schematic
     mandatory: true
     filters:
+      product: iphone
       project: logan
       build: p1
     scope_label: build
@@ -74,7 +80,7 @@ cases:
       - RMII
       - "25 MHz"
     required_sources:
-      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
     must_not_contain:
       - 千兆 PHY
 
@@ -83,6 +89,7 @@ cases:
     category: schematic
     mandatory: true
     filters:
+      product: iphone
       project: logan
       build: p1
     scope_label: build
@@ -97,13 +104,14 @@ cases:
       - SDIN
       - SDOUT
     required_sources:
-      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
 
   - id: Q-005
     title: 以太网 MDIO 网络名
     category: schematic
     mandatory: false
     filters:
+      product: iphone
       project: logan
       build: p1
     scope_label: build
@@ -112,14 +120,15 @@ cases:
     expected_facts:
       - ETH_MDIO
     required_sources:
-      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
 
   - id: Q-006
     title: Mahi PingPong 测试
     category: scope
     mandatory: true
     filters:
-      project: kingboo
+      product: kingboo
+      project: common
       build: common
     scope_label: common
     question: Kingboo 项目中 Mahi PingPong Test 的目的是什么？Feature 0x43 返回的数据里，前 4 字节和后 4 字节分别代表什么？
@@ -141,7 +150,8 @@ cases:
     category: scope
     mandatory: true
     filters:
-      project: kingboo
+      product: kingboo
+      project: common
       build: common
     scope_label: common
     question: Mahi OOK Test 中，Unit 作为 Aggressor 会发送哪三种频率的 OOK-PRBS 信号？最恶劣条件下 VDDPA 和 SignalScale 设置是多少？
@@ -162,7 +172,8 @@ cases:
     category: scope
     mandatory: false
     filters:
-      project: kingboo
+      product: kingboo
+      project: common
       build: common
     scope_label: common
     question: Mahi CoEx 文档中 LPCD 是什么？NFC Reader 发送 LPCD 脉冲的频率是多少？
@@ -179,7 +190,8 @@ cases:
     category: scope
     mandatory: false
     filters:
-      project: kingboo
+      product: kingboo
+      project: common
       build: common
     scope_label: common
     question: Mahi CoEx 工站 Pencil 额定容量 50 mAh 时，三种充电电流 5 mA / 50 mA / 200 mA 分别对应多少 C 倍率？
@@ -197,6 +209,7 @@ cases:
     category: fa
     mandatory: true
     filters:
+      product: global
       project: global
       build: global
     scope_label: global
@@ -220,6 +233,7 @@ cases:
     category: sop
     mandatory: false
     filters:
+      product: global
       project: global
       build: global
     scope_label: global
@@ -239,6 +253,7 @@ cases:
     category: platform
     mandatory: false
     filters:
+      product: global
       project: global
       build: global
     scope_label: global
@@ -257,6 +272,7 @@ cases:
     category: platform
     mandatory: false
     filters:
+      product: global
       project: global
       build: global
     scope_label: global
@@ -275,17 +291,18 @@ cases:
     category: scope
     mandatory: true
     filters:
+      product: iphone
       project: logan
       build: p1
     scope_label: build
     question: logan p1 Explorer 原理图中以太网 PHY 芯片型号是什么？
     expected_answer: |
-      LAN8720A；板级结论应来自 logan/p1 原理图（build 级真相），
+      LAN8720A；板级结论应来自 iphone/logan/p1 原理图（build 级真相），
       可补充 global LAN8720A datasheet 作器件参考，但不得用 datasheet 替代原理图。
     expected_facts:
       - LAN8720A
     required_sources:
-      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
     must_not_contain:
       - kingboo
 
@@ -294,6 +311,7 @@ cases:
     category: scope
     mandatory: true
     filters:
+      product: iphone
       project: logan
       build: p1
     scope_label: build
@@ -306,7 +324,7 @@ cases:
     forbidden_sources:
       - data/processed/kingboo/common/note/mahi_info.md
     required_sources:
-      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
     must_not_contain:
       - logan 使用 Mahi
       - PingPong Test 在 logan p1
@@ -316,16 +334,18 @@ cases:
     category: negative
     mandatory: true
     filters:
+      product: iphone
       project: logan
       build: p2
     scope_label: null
     expect_refusal: true
     question: logan p2 原理图上 U502 的 FB 引脚连接到哪个网络？
     forbidden_scope:
+      product: iphone
       project: logan
       build: p2
     expected_answer: |
-      知识库无 logan/p2 文档，应明确知识不足（insufficient knowledge），不得编造网络名或位号。
+      知识库无 iphone/logan/p2 文档，应明确知识不足（insufficient knowledge），不得编造网络名或位号。
     required_sources: []
     must_not_contain: []
 
@@ -334,6 +354,7 @@ cases:
     category: negative
     mandatory: true
     filters:
+      product: global
       project: global
       build: global
     scope_label: null
@@ -353,15 +374,17 @@ cases:
     category: negative
     mandatory: true
     filters:
-      project: apollo
+      product: apollo
+      project: demo
       build: evt
     scope_label: null
     expect_refusal: true
     question: apollo evt 版本的 PMIC 上 VBAT 网络是否连接到 U0902？
     forbidden_scope:
-      project: apollo
+      product: apollo
+      project: demo
       build: evt
-    expected_answer: 当前索引无 apollo 项目任何文档，应拒答。
+    expected_answer: 当前索引无 apollo/demo 项目任何文档，应拒答。
     required_sources: []
     must_not_contain:
       - U0902
@@ -372,6 +395,7 @@ cases:
     category: stability
     mandatory: true
     filters:
+      product: global
       project: global
       build: global
     scope_label: global
@@ -391,7 +415,8 @@ cases:
     category: stability
     mandatory: false
     filters:
-      project: kingboo
+      product: kingboo
+      project: common
       build: common
     scope_label: common
     question: LPCD 脉冲频率是多少？
@@ -409,6 +434,7 @@ cases:
     category: stability
     mandatory: false
     filters:
+      product: global
       project: global
       build: global
     scope_label: global
@@ -429,6 +455,7 @@ cases:
     category: schematic
     mandatory: true
     filters:
+      product: iphone
       project: logan
       build: p1
     scope_label: build
@@ -439,13 +466,14 @@ cases:
       - U14
       - "3"
     required_sources:
-      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
 
   - id: Q-024
     title: STM32 3.3V 供电
     category: datasheet
     mandatory: true
     filters:
+      product: global
       project: global
       build: global
     scope_label: global
@@ -462,6 +490,7 @@ cases:
     category: fa
     mandatory: false
     filters:
+      product: global
       project: global
       build: global
     scope_label: global
@@ -479,6 +508,7 @@ cases:
     category: schematic
     mandatory: false
     filters:
+      product: iphone
       project: logan
       build: p1
     scope_label: build
@@ -490,13 +520,14 @@ cases:
       - U14
       - "3"
     required_sources:
-      - data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
 
   - id: Q-027
     title: STM32 Figure 58 内容
     category: datasheet
     mandatory: false
     filters:
+      product: global
       project: global
       build: global
     scope_label: global
@@ -514,6 +545,7 @@ cases:
     category: datasheet
     mandatory: false
     filters:
+      product: global
       project: global
       build: global
     scope_label: global

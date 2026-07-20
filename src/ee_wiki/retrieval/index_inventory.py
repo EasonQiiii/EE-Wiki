@@ -16,7 +16,10 @@ _PROJECT_COUNT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(有多少|多少个|有几个|几个).{0,12}(project|项目)", re.IGNORECASE),
     re.compile(r"(有哪些|哪些).{0,12}(project|项目)", re.IGNORECASE),
     re.compile(r"(list|how many|what|which).{0,24}projects?\b", re.IGNORECASE),
-    re.compile(r"知识库.{0,24}(有哪些|有多少|多少个|有几个|几个).{0,12}(project|项目)", re.IGNORECASE),
+    re.compile(
+        r"知识库.{0,24}(有哪些|有多少|多少个|有几个|几个).{0,12}(project|项目)",
+        re.IGNORECASE,
+    ),
     re.compile(r"(当前|本).{0,8}知识库.{0,24}(project|项目)", re.IGNORECASE),
     re.compile(r"(indexed|index).{0,24}projects?\b", re.IGNORECASE),
 )
@@ -40,8 +43,9 @@ class InventoryRequest:
 
 @dataclass(frozen=True)
 class ProjectInventoryEntry:
-    """One indexed project path with build breakdown."""
+    """One indexed ``(product, project)`` path with build breakdown."""
 
+    product: str
     project: str
     builds: tuple[str, ...]
     chunk_count: int
@@ -127,54 +131,69 @@ def build_index_inventory(
     chunks: Iterable[Any],
     layout: DataLayoutConfig,
 ) -> IndexInventory:
-    """Aggregate ``(project, build)`` counts from indexed chunks.
+    """Aggregate ``(product, project, build)`` counts from indexed chunks.
 
     Args:
         chunks: Hybrid chunks or metadata dicts.
         layout: Data layout configuration for enterprise/common labels.
 
     Returns:
-        Inventory with per-project builds and chunk counts.
+        Inventory with per-``(product, project)`` builds and chunk counts.
     """
-    enterprise = layout.enterprise_project
-    common = layout.project_shared_build
-    pair_counts: Counter[tuple[str, str]] = Counter()
-    project_counts: Counter[str] = Counter()
+    enterprise = layout.global_segment
+    common = layout.common_segment
+    triple_counts: Counter[tuple[str, str, str]] = Counter()
+    scope_counts: Counter[tuple[str, str]] = Counter()
 
     for chunk in chunks:
         if isinstance(chunk, dict):
             metadata = chunk
         else:
             metadata = getattr(chunk, "metadata", None) or {}
+        product = str(metadata.get("product", "") or "").strip()
         project = str(metadata.get("project", "") or "").strip()
         build = str(metadata.get("build", "") or "").strip()
-        if not project or not build:
+        if not product or not project or not build:
             continue
-        pair_counts[(project, build)] += 1
-        project_counts[project] += 1
+        triple_counts[(product, project, build)] += 1
+        scope_counts[(product, project)] += 1
 
     projects: list[ProjectInventoryEntry] = []
-    for project, chunk_count in sorted(project_counts.items()):
+    for (product, project), chunk_count in sorted(scope_counts.items()):
         builds = tuple(
-            sorted(build for (proj, build) in pair_counts if proj == project)
+            sorted(
+                build
+                for (prod, proj, build) in triple_counts
+                if prod == product and proj == project
+            )
         )
         projects.append(
             ProjectInventoryEntry(
+                product=product,
                 project=project,
                 builds=builds,
                 chunk_count=chunk_count,
-                is_enterprise=(project == enterprise),
+                is_enterprise=(product == enterprise),
             )
         )
 
-    product_count = sum(1 for entry in projects if not entry.is_enterprise)
+    product_count = len(
+        {entry.product for entry in projects if not entry.is_enterprise}
+    )
     return IndexInventory(
-        chunk_count=sum(project_counts.values()),
+        chunk_count=sum(scope_counts.values()),
         projects=tuple(projects),
         product_count=product_count,
         enterprise_project=enterprise,
         project_shared_build=common,
     )
+
+
+def _entry_label(entry: ProjectInventoryEntry) -> str:
+    """Human-facing scope path label for one inventory entry."""
+    if entry.is_enterprise:
+        return entry.product
+    return f"{entry.product}/{entry.project}"
 
 
 def _find_project(
@@ -183,7 +202,7 @@ def _find_project(
 ) -> ProjectInventoryEntry | None:
     needle = project.casefold()
     for entry in inventory.projects:
-        if entry.project.casefold() == needle:
+        if entry.project.casefold() == needle or entry.product.casefold() == needle:
             return entry
     return None
 
@@ -203,7 +222,9 @@ def format_project_builds_answer(
     """
     entry = _find_project(inventory, project)
     if entry is None:
-        known = "、".join(f"**{item.project}**" for item in inventory.projects) or "(无)"
+        known = "、".join(
+            f"**{_entry_label(item)}**" for item in inventory.projects
+        ) or "(无)"
         return (
             f"索引中未找到 project **{project}**。\n\n"
             f"当前已索引的 project：{known}。"
@@ -214,7 +235,7 @@ def format_project_builds_answer(
     has_common = common in entry.builds
 
     lines: list[str] = [
-        f"**{entry.project}** 在当前索引中共有 **{len(entry.builds)}** 个 build 路径"
+        f"**{_entry_label(entry)}** 在当前索引中共有 **{len(entry.builds)}** 个 build 路径"
         f"（{entry.chunk_count} chunks）：",
         "",
     ]
@@ -247,7 +268,7 @@ def format_builds_overview_answer(inventory: IndexInventory) -> str:
     for entry in inventory.projects:
         builds = ", ".join(f"`{build}`" for build in entry.builds) or "(none)"
         lines.append(
-            f"- **{entry.project}**：{builds}（{entry.chunk_count} chunks）"
+            f"- **{_entry_label(entry)}**：{builds}（{entry.chunk_count} chunks）"
         )
     lines.append("")
     lines.append(
@@ -291,18 +312,20 @@ def format_inventory_answer(
         else:
             kind = "产品 project"
         lines.append(
-            f"{index}. **{entry.project}**（{kind}）："
+            f"{index}. **{_entry_label(entry)}**（{kind}）："
             f"{entry.chunk_count} chunks — builds: `{builds}`"
         )
 
-    product_names = [e.project for e in inventory.projects if not e.is_enterprise]
+    product_names = sorted(
+        {e.product for e in inventory.projects if not e.is_enterprise}
+    )
     lines.append("")
     if product_names:
         lines.append(
-            f"产品级 project 共 **{inventory.product_count}** 个："
+            f"产品（product）共 **{inventory.product_count}** 个："
             + "、".join(f"**{name}**" for name in product_names)
             + f"。`{inventory.enterprise_project}` 是企业通用知识层，"
-            f"不是某个硬件产品；`{inventory.project_shared_build}` 是项目共享 build，"
+            f"不是某个硬件产品；`{inventory.project_shared_build}` 是共享层，"
             "不是硬件版本号。"
         )
     else:
@@ -321,6 +344,7 @@ def inventory_to_dict(inventory: IndexInventory) -> dict[str, Any]:
         "project_shared_build": inventory.project_shared_build,
         "projects": [
             {
+                "product": entry.product,
                 "project": entry.project,
                 "builds": list(entry.builds),
                 "chunk_count": entry.chunk_count,

@@ -107,7 +107,9 @@ Schema (conceptual):
 
 ### Follow-ups
 
-- KiCad `.net` / `.kicad_sch` parsers behind `CadNetlistParser` protocol
+- ~~KiCad `.net` / `.kicad_sch` parsers behind `CadNetlistParser` protocol~~ — superseded by [ADR 0009](0009-multi-source-schematic-map.md) (`ConnectivityCompanionParser` + multi-source merge; KiCad/Altium still stubbed)
 - Optional wire-graph phase 2 for non-connector nets
 - MCP `connector_pins` / `module_nets` reading the connectivity sidecar
 - Feed `cad_netlist` bindings into V3 graph build as first-class edges
+
+**Superseded for companion scope:** document-level PDF + BoardView `.brd` + netlist complementary map — see [ADR 0009](0009-multi-source-schematic-map.md). Page-level PDF geometry / OCR spatial rules in this ADR remain in force.

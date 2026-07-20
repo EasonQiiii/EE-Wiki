@@ -16,16 +16,18 @@ def _chunk(
     document_type: str = "schematic",
     major_components: list[str] | None = None,
     keywords: list[str] | None = None,
+    product: str = "iphone",
     project: str = "logan",
     build: str = "p1",
 ) -> Chunk:
     metadata = Metadata(
+        product=product,
         project=project,
         build=build,
         document_type=document_type,
         title="board",
-        source_file="data/raw/logan/p1/sch/board.pdf",
-        target_file="data/processed/logan/p1/sch/board.md",
+        source_file="data/raw/iphone/logan/p1/sch/board.pdf",
+        target_file="data/processed/iphone/logan/p1/sch/board.md",
         major_components=major_components,
         keywords=keywords or [],
     )
@@ -50,6 +52,7 @@ def test_build_component_index_indexes_designators_and_part_numbers() -> None:
             document_type="datasheet",
             major_components=None,
             keywords=["STM32F407VGT6", "168MHZ"],
+            product="global",
             project="global",
             build="global",
         ),

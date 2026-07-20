@@ -9,8 +9,9 @@ import logging
 import sys
 
 from ee_wiki.common.config import load_config
-from ee_wiki.common.errors import EEWikiError
+from ee_wiki.common.errors import EEWikiError, ScopeValidationError
 from ee_wiki.common.logging import get_logger
+from ee_wiki.common.project_aliases import canonicalize_scope_filters
 from ee_wiki.generation.service import RagService
 
 logger = get_logger(__name__)
@@ -21,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run EE-Wiki RAG: hybrid retrieval + local LLM answer with citations.",
     )
     parser.add_argument("question", help="User question")
+    parser.add_argument("--product", default=None, help="Metadata filter: product name")
     parser.add_argument("--project", default=None, help="Metadata filter: project name")
     parser.add_argument("--build", default=None, help="Metadata filter: build name")
     parser.add_argument(
@@ -61,16 +63,22 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger("ee_wiki").setLevel(logging.DEBUG)
     try:
         config = load_config()
+        product, project, build = canonicalize_scope_filters(
+            args.product, args.project, args.build,
+            aliases=config.data_layout.project_aliases,
+            require_product=True,
+        )
         service = RagService.from_config(config)
         result = service.answer(
             args.question,
-            target_project=args.project,
-            target_build=args.build,
+            target_product=product,
+            target_project=project,
+            target_build=build,
             document_type=args.document_type,
             top_k_final=args.top_k,
             task=args.task,
         )
-    except (EEWikiError, RuntimeError) as exc:
+    except (EEWikiError, ScopeValidationError, RuntimeError) as exc:
         logger.error("%s", exc)
         return 1
 

@@ -12,11 +12,11 @@ from ee_wiki.api.deps import get_graph_query
 
 def _mock_gq() -> MagicMock:
     gq = MagicMock()
-    gq.resolve_node.side_effect = lambda token, project=None, build=None: (
-        f"component:logan/p1:{token.upper()}" if token.strip() else None
+    gq.resolve_node.side_effect = lambda token, product=None, project=None, build=None: (
+        f"component:iphone/logan/p1:{token.upper()}" if token.strip() else None
     )
     gq.get_node.return_value = {
-        "id": "component:logan/p1:U101",
+        "id": "component:iphone/logan/p1:U101",
         "type": "Component",
         "project": "logan",
         "build": "p1",
@@ -24,7 +24,7 @@ def _mock_gq() -> MagicMock:
     }
     gq.neighbors.return_value = [
         {
-            "id": "net:logan/p1:NET_VCC",
+            "id": "net:iphone/logan/p1:NET_VCC",
             "type": "Net",
             "project": "logan",
             "build": "p1",
@@ -33,13 +33,13 @@ def _mock_gq() -> MagicMock:
         }
     ]
     gq.path.return_value = [
-        {"id": "component:logan/p1:U101", "type": "Component", "scope": "build"},
+        {"id": "component:iphone/logan/p1:U101", "type": "Component", "scope": "build"},
         {"type": "connects_to", "scope": "build"},
-        {"id": "net:logan/p1:NET_VCC", "type": "Net", "scope": "build"},
+        {"id": "net:iphone/logan/p1:NET_VCC", "type": "Net", "scope": "build"},
     ]
     gq.filter_by_scope.return_value = [
         {
-            "id": "component:logan/p1:U101",
+            "id": "component:iphone/logan/p1:U101",
             "type": "Component",
             "project": "logan",
             "build": "p1",
@@ -57,14 +57,14 @@ def test_graph_neighbors_returns_hits() -> None:
 
     response = client.get(
         "/v1/graph/neighbors",
-        params={"q": "U101", "project": "logan", "build": "p1"},
+        params={"q": "U101", "product": "iphone", "project": "logan", "build": "p1"},
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["resolved_id"] == "component:logan/p1:U101"
+    assert payload["resolved_id"] == "component:iphone/logan/p1:U101"
     assert len(payload["neighbors"]) == 1
-    assert payload["neighbors"][0]["id"] == "net:logan/p1:NET_VCC"
+    assert payload["neighbors"][0]["id"] == "net:iphone/logan/p1:NET_VCC"
 
 
 def test_graph_path_found() -> None:
@@ -75,7 +75,13 @@ def test_graph_path_found() -> None:
 
     response = client.get(
         "/v1/graph/path",
-        params={"source": "U101", "target": "NET_VCC", "project": "logan", "build": "p1"},
+        params={
+            "source": "U101",
+            "target": "NET_VCC",
+            "product": "iphone",
+            "project": "logan",
+            "build": "p1",
+        },
     )
 
     assert response.status_code == 200
@@ -92,7 +98,7 @@ def test_graph_nodes_filter() -> None:
 
     response = client.get(
         "/v1/graph/nodes",
-        params={"project": "logan", "build": "p1", "node_types": "Component"},
+        params={"product": "iphone", "project": "logan", "build": "p1", "node_types": "Component"},
     )
 
     assert response.status_code == 200
@@ -110,12 +116,12 @@ def test_graph_node_open() -> None:
 
     response = client.get(
         "/v1/graph/node",
-        params={"q": "U101", "project": "logan", "build": "p1"},
+        params={"q": "U101", "product": "iphone", "project": "logan", "build": "p1"},
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["node"]["id"] == "component:logan/p1:U101"
+    assert payload["node"]["id"] == "component:iphone/logan/p1:U101"
 
 
 def test_graph_unavailable_returns_503() -> None:

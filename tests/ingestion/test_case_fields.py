@@ -101,11 +101,12 @@ Body text.
     doc = StandardDocument(
         content=content,
         metadata=Metadata(
+            product="acme",
             project="demo",
             build="p1",
             document_type="failure_analysis",
             title="Title",
-            source_file="data/raw/demo/p1/fa/case-9.md",
+            source_file="data/raw/acme/demo/p1/fa/case-9.md",
         ),
         source_ref="/tmp/case-9.md",
     )
@@ -120,11 +121,12 @@ def test_enrich_skips_non_fa_documents() -> None:
     doc = StandardDocument(
         content="## Symptom\n\nNo boot\n",
         metadata=Metadata(
+            product="acme",
             project="demo",
             build="p1",
             document_type="sop",
             title="SOP",
-            source_file="data/raw/demo/p1/sop/x.md",
+            source_file="data/raw/acme/demo/p1/sop/x.md",
         ),
         source_ref="/tmp/x.md",
     )

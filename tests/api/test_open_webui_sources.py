@@ -9,18 +9,18 @@ from ee_wiki.common.types import Citation
 def test_citations_to_open_webui_sources_maps_urls_and_excerpts() -> None:
     citations = [
         Citation(
-            source_file="data/raw/logan/p1/note/iPadManual.md",
+            source_file="data/raw/iphone/logan/p1/note/iPadManual.md",
             chunk_id="manual__sysdiagnose",
             page=0,
             excerpt="Run sysdiagnose on the DUT.",
-            url="http://localhost:8080/v1/sources/logan/p1/note/iPadManual.md#sysdiagnose",
+            url="http://localhost:8080/v1/sources/iphone/logan/p1/note/iPadManual.md#sysdiagnose",
         ),
         Citation(
-            source_file="data/raw/logan/p1/note/iPadManual.md",
+            source_file="data/raw/iphone/logan/p1/note/iPadManual.md",
             chunk_id="manual__rsync",
             page=0,
             excerpt="rsync logs from the DUT.",
-            url="http://localhost:8080/v1/sources/logan/p1/note/iPadManual.md#rsync",
+            url="http://localhost:8080/v1/sources/iphone/logan/p1/note/iPadManual.md#rsync",
         ),
     ]
 

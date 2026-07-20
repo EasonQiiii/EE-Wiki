@@ -4,17 +4,17 @@ EE-Wiki serves as the backend for Open WebUI. This document tracks the HTTP surf
 
 **Status:** V3 — knowledge graph, debug cases, power tree, engineering rules, graph HTTP/MCP suite (see [Long-term Roadmap](#long-term-roadmap) in README).
 
-## Scope filters (`project` / `build`)
+## Scope filters (`product` / `project` / `build`)
 
-Strongly recommended for engineering questions.
+Strongly recommended for engineering questions. `product` is required whenever `project` or `build` is set.
 
 | Field | Meaning |
 |-------|---------|
-| `project` | Product/program (e.g. `logan`) |
+| `product` | Product line (e.g. `iphone`) |
+| `project` | Program within the product (e.g. `logan`) |
 | `build` | Hardware revision (e.g. `p1`) or `common` for project-wide-only queries |
 
-When both are set with `retrieval.scope_inheritance: true` (default), search expands to `{project}/{build}` → `{project}/common` → `global`. Answers must label conclusions by scope (`build`, project `common`, `global`). Omitting both fields searches the entire index.
-
+When all three are set with `retrieval.scope_inheritance: true` (default), search expands to `{product}/{project}/{build}` → `{product}/{project}/common` → `{product}/common` → `global`. Answers must label conclusions by scope (`build`, project `common`, product `common`, `global`). Omitting scope fields searches the entire index.
 ## Implemented endpoints (V1)
 
 | Method | Path | Purpose |
@@ -31,7 +31,7 @@ When both are set with `retrieval.scope_inheritance: true` (default), search exp
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/v1/components/search` | Part number / designator lookup against `data/indexes/components.json` |
-| `GET` | `/v1/projects` | Indexed project/build inventory (chunk counts; `global` flagged as enterprise) |
+| `GET` | `/v1/projects` | Indexed product/project/build inventory (chunk counts; `global` flagged as enterprise) |
 | `POST` | `/v1/ingest` | Trigger document ingestion and optional index build (admin; sync by default, or `async: true` → 202) |
 | `GET` | `/v1/ingest/jobs/{job_id}` | Poll async ingest job status (`queued` / `running` / `succeeded` / `failed`) |
 
@@ -46,7 +46,21 @@ When both are set with `retrieval.scope_inheritance: true` (default), search exp
 | `GET` | `/v1/graph/node` | Resolve and open one graph node (P5) |
 | `GET` | `/v1/graph/neighbors` | Neighbor nodes within N hops (P5) |
 | `GET` | `/v1/graph/path` | Shortest path between two nodes (P5) |
-| `GET` | `/v1/graph/nodes` | Filter nodes by project/build scope (P5) |
+| `GET` | `/v1/graph/nodes` | Filter nodes by product/project/build scope (P5) |
+| `GET` | `/v1/schematic/connectivity/net` | Trace pins on a net from `*.connectivity.json` (ADR 0009) |
+| `GET` | `/v1/schematic/connectivity/pins` | Pin↔net list for a designator / connector |
+| `GET` | `/v1/schematic/connectivity/module-nets` | Nets for a page module zone label |
+
+## FA session artifacts (ADR 0010)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/v1/exports/{path}` | Download under `data/exports/` (e.g. `fa/{radar_id}/FA_summary.key`) |
+| `GET` | `/v1/cache/{path}` | Download under `data/cache/` (e.g. Flames logs `fa/{radar_id}/*.log`) |
+
+Orchestration helpers live in `ee_wiki.integrations.session` (`start_fa_checkin`, `generate_fa_summary`, confirm-gated Radar writes). Open WebUI chat intent wiring lands with the FA supervisor (ADR 0008 + 0010). Set `api.public_base_url` so assistant markdown links are browser-reachable.
+
+See [fa-session.md](fa-session.md), [integrations-radar.md](integrations-radar.md), [integrations-flames.md](integrations-flames.md).
 
 Query params for `GET /v1/components/search`: `q` (required), optional `project`, `build`, `limit` (default 20).
 
@@ -66,6 +80,12 @@ Query params for `GET /v1/graph/path`: `source` and `target` (required), optiona
 
 Query params for `GET /v1/graph/nodes`: optional `project`, `build`, `node_types` (comma-separated), `limit` (default 200). Scope inheritance follows `graph.scope_inheritance`.
 
+Query params for `GET /v1/schematic/connectivity/net`: `q` (required — net name), optional `project`, `build`, `source_file` (path substring). Returns pin bindings with `evidence` tags (`cad_netlist` / `boardview` / …). **Authoritative-only gate (ADR 0009 §5):** with `connectivity.require_authority_for_trace` (default `true`), a trace is returned only when grounded on `cad_netlist` / `boardview`; if only geometry/OCR evidence exists the route returns **409** (`authority: "insufficient"`) and lists suppressed data under `advisory_pins`. Requires re-ingested schematic sidecars; 503 if none loaded, 404 if net not found in any tier. Response adds `authoritative` (bool), `authority` (`authoritative` / `advisory` / `insufficient` / `not_found`), `advisory_pins`, `advisory_connectors`, `note`.
+
+Query params for `GET /v1/schematic/connectivity/pins`: `q` (required — designator), optional `project`, `build`, `source_file`. Returns `pins` from document-level parts (authoritative) plus optional page-level `connectors` (advisory). Same authoritative-only gate as `/net` (409 when only advisory evidence).
+
+Query params for `GET /v1/schematic/connectivity/module-nets`: `q` (required — module zone label), optional `project`, `build`, `source_file`, `page` (1-based). Returns page-scoped `module_nets` from the sidecar. Module zone labels are geometric **locators**, not verified traces — always tagged `authority: "advisory"`.
+
 Optional RAG enrichment: set `retrieval.graph_enrichment: true` to attach a compact `[graph]` neighborhood block to chat/query context (default **false**; generation still never opens the store).
 
 Chat inventory questions such as “当前知识库有多少 project” are answered from the same index metadata (deterministic text; no document RAG).
@@ -78,8 +98,9 @@ Request (all fields optional):
 
 ```json
 {
-  "path": "logan/p1/fa/rma-report.md",
+  "path": "iphone/logan/p1/fa/rma-report.md",
   "paths": null,
+  "product": "iphone",
   "project": "logan",
   "build": "p1",
   "force": false,
@@ -93,7 +114,7 @@ Request (all fields optional):
 |-------|---------|
 | `path` | Single file or directory under `data/raw/` (relative, `data/raw/...`, or absolute under raw dir) |
 | `paths` | List of paths (mutually exclusive with `path`) |
-| `project` / `build` | When no path given, scope to `data/raw/{project}/` or `data/raw/{project}/{build}/` |
+| `product` / `project` / `build` | When no path given, scope under `data/raw/{product}/…` |
 | `force` | Re-ingest and rebuild even when fingerprints match |
 | `ingest_only` | Skip index build (like `scripts/sync.py --ingest-only`) |
 | `index_only` | Skip ingest (like `scripts/sync.py --index-only`) |
@@ -108,7 +129,7 @@ When all path filters are omitted, the entire `data/raw/` tree is processed.
   "ingested": 2,
   "skipped": 5,
   "removed": 0,
-  "ingested_files": ["data/processed/logan/p1/fa/rma-report.md"],
+  "ingested_files": ["data/processed/iphone/logan/p1/fa/rma-report.md"],
   "removed_files": [],
   "indexed_documents": 2,
   "skipped_documents": 5,
@@ -253,6 +274,7 @@ Request:
 ```json
 {
   "query": "RMII 连接了哪些器件？",
+  "product": "iphone",
   "project": "logan",
   "build": "p1",
   "document_type": null,
@@ -271,13 +293,13 @@ Response:
   "insufficient_context": false,
   "citations": [
     {
-      "source_file": "data/raw/acme/p2/sch/board.pdf",
+      "source_file": "data/raw/acme/demo/p2/sch/board.pdf",
       "chunk_id": "board__p001",
       "page": 1,
       "excerpt": "...",
-      "url": "http://localhost:8080/v1/sources/acme/p2/sch/board.md#p001",
+      "url": "http://localhost:8080/v1/sources/acme/demo/p2/sch/board.md#p001",
       "images": [
-        "http://localhost:8080/v1/assets/acme/p2/sch/images/board_p001_crop_0.png"
+        "http://localhost:8080/v1/assets/acme/demo/p2/sch/images/board_p001_crop_0.png"
       ]
     }
   ]
@@ -287,6 +309,8 @@ Response:
 ## `POST /v1/chat/completions`
 
 OpenAI-compatible request with EE-Wiki metadata filters.
+
+When `agents.enabled` is true (default), the request is routed by the V4 Supervisor (ADR 0008): FA check-in → authoritative connectivity → keyword-scored specialists (`fa`/`hw`/`power`/`pcb`/`si`/`mfg`) → hybrid RAG passthrough. See [docs/usage/agents.md](../usage/agents.md). Set `agents.enabled: false` to use the legacy FA/trace/RAG cascade only.
 
 Set `"stream": true` to receive Server-Sent Events: retrieval status updates during search, then token chunks in OpenAI `chat.completion.chunk` shape. Cancellation is supported when the client disconnects.
 
@@ -373,13 +397,16 @@ python scripts/mcp_serve.py
 | `open_graph_node_tool` | Resolve/open one graph node | `GET /v1/graph/node` |
 | `graph_neighbors_tool` | Graph neighbors within N hops | `GET /v1/graph/neighbors` |
 | `graph_path_tool` | Shortest path between two nodes | `GET /v1/graph/path` |
-| `graph_filter_tool` | Filter nodes by project/build scope | `GET /v1/graph/nodes` |
+| `graph_filter_tool` | Filter nodes by product/project/build scope | `GET /v1/graph/nodes` |
 | `query_schematic_tool` | Hybrid retrieval scoped to `document_type=schematic` | `POST /v1/query` (filter schematic) |
 | `search_datasheet_tool` | Hybrid retrieval scoped to `document_type=datasheet` | `POST /v1/query` (filter datasheet) |
 | `engineering_search_tool` | General hybrid retrieval with optional `document_type` | `POST /v1/query` |
-| `list_projects_tool` | Indexed project/build inventory | `GET /v1/projects` |
+| `list_projects_tool` | Indexed product/project/build inventory | `GET /v1/projects` |
+| `trace_net_tool` | Pins on a net from connectivity sidecars | `GET /v1/schematic/connectivity/net` |
+| `connector_pins_tool` | Pin↔net for a designator | `GET /v1/schematic/connectivity/pins` |
+| `module_nets_tool` | Module zone → nets | `GET /v1/schematic/connectivity/module-nets` |
 
-All tools accept optional `project` and `build` filters and honor `retrieval.scope_inheritance` (graph tools honor `graph.scope_inheritance`). Results are JSON with `scope` labels (`build`, `common`, `global`). Graph tools require `python scripts/build_graph.py`.
+All tools accept optional `project` and `build` filters and honor `retrieval.scope_inheritance` (graph tools honor `graph.scope_inheritance`). Results are JSON with `scope` labels (`build`, `common`, `global`). Graph tools require `python scripts/build_graph.py`. Connectivity tools require `*.connectivity.json` from schematic ingest (ADR 0009). `trace_net_tool` / `connector_pins_tool` enforce the authoritative-only gate: `authority: "insufficient"` (no `cad_netlist` / `boardview` evidence) returns a refusal rather than a geometry/OCR guess.
 
 Example Cursor MCP config:
 

@@ -7,11 +7,13 @@ from pathlib import Path
 import pytest
 
 from ee_wiki.common.config import (
+    AgentsConfig,
     ApiConfig,
     AppConfig,
     ChunkingConfig,
     DatasheetPdfConfig,
     ExcelConfig,
+    FaConfig,
     GenerationConfig,
     GraphConfig,
     IndexingConfig,
@@ -44,6 +46,8 @@ def _app_config(
         processed_dir=Path("/repo/data/processed"),
         indexes_dir=Path("/repo/data/indexes"),
         graph_dir=Path("/repo/data/graph"),
+        exports_dir=Path("/repo/data/exports"),
+        cache_dir=Path("/repo/data/cache"),
         models=ModelsConfig(
             base_dir=Path("/repo/models"),
             llm_mlx_model=llm_mlx_model,
@@ -59,6 +63,8 @@ def _app_config(
         indexing=IndexingConfig(),
         graph=GraphConfig(),
         rules=RulesConfig(),
+        fa=FaConfig(),
+        agents=AgentsConfig(),
         retrieval=RetrievalConfig(
             top_k_embed=20,
             top_k_bm25=20,

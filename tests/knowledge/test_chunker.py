@@ -21,12 +21,13 @@ def _record(
     page: int = 0,
 ) -> ProcessedRecord:
     metadata = Metadata(
+        product="logan",
         project="logan",
         build="p1",
         document_type=document_type,
         title=stem,
-        source_file=f"data/raw/logan/p1/note/{stem}.md",
-        target_file=f"data/processed/logan/p1/note/{stem}.md",
+        source_file=f"data/raw/iphone/logan/p1/note/{stem}.md",
+        target_file=f"data/processed/iphone/logan/p1/note/{stem}.md",
         page=page,
     )
     return ProcessedRecord(
@@ -78,12 +79,13 @@ def test_schematic_page_metadata_applied_per_chunk() -> None:
         "U102 on page two"
     )
     metadata = Metadata(
+        product="logan",
         project="logan",
         build="p1",
         document_type="schematic",
         title="board",
-        source_file="data/raw/logan/p1/sch/board.pdf",
-        target_file="data/processed/logan/p1/sch/board.md",
+        source_file="data/raw/iphone/logan/p1/sch/board.pdf",
+        target_file="data/processed/iphone/logan/p1/sch/board.md",
         major_components=["U101", "U102"],
         nets=["VBAT", "GND"],
         interfaces=["RMII"],

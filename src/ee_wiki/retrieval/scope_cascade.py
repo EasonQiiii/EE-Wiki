@@ -1,10 +1,11 @@
 """Hardcoded scope-tier cascade retrieval helpers.
 
 Tier priority (lower number = higher priority):
-  build (0) > project_common (1) > global (2)
+  build (0) > project_common (1) > product_common (2) > global (3)
 
-No project or build names appear here — tiers are derived from metadata pairs
-and :class:`DataLayoutConfig` reserved segments only.
+No product, project, or build names appear here — tiers are derived from
+``(product, project, build)`` metadata triples and :class:`DataLayoutConfig`
+reserved segments only.
 """
 
 from __future__ import annotations
@@ -19,7 +20,15 @@ from ee_wiki.common.types import DataLayoutConfig
 
 SCOPE_TIER_BUILD = 0
 SCOPE_TIER_PROJECT_COMMON = 1
-SCOPE_TIER_GLOBAL = 2
+SCOPE_TIER_PRODUCT_COMMON = 2
+SCOPE_TIER_GLOBAL = 3
+
+_ALL_TIERS = (
+    SCOPE_TIER_BUILD,
+    SCOPE_TIER_PROJECT_COMMON,
+    SCOPE_TIER_PRODUCT_COMMON,
+    SCOPE_TIER_GLOBAL,
+)
 
 DEFAULT_QUOTA_BUILD = 6
 DEFAULT_QUOTA_COMMON = 2
@@ -28,15 +37,19 @@ DEFAULT_QUOTA_GLOBAL = 2
 
 @dataclass(frozen=True)
 class CascadePhase:
-    """One cascade search phase covering scope pairs at the same tier."""
+    """One cascade search phase covering scope triples at the same tier."""
 
     tier: int
-    scope_pairs: frozenset[tuple[str, str]]
+    scope_triples: frozenset[tuple[str, str, str]]
 
 
 @dataclass(frozen=True)
 class ScopeQuotas:
-    """Per-tier slot caps for mixed context assembly."""
+    """Per-tier slot caps for mixed context assembly.
+
+    Both shared tiers (project common and product common) draw from the
+    ``common`` quota so config keys stay unchanged.
+    """
 
     build: int = DEFAULT_QUOTA_BUILD
     common: int = DEFAULT_QUOTA_COMMON
@@ -46,50 +59,55 @@ class ScopeQuotas:
         """Return the configured slot cap for ``tier``."""
         if tier == SCOPE_TIER_BUILD:
             return self.build
-        if tier == SCOPE_TIER_PROJECT_COMMON:
+        if tier in (SCOPE_TIER_PROJECT_COMMON, SCOPE_TIER_PRODUCT_COMMON):
             return self.common
         return self.global_
 
 
-def scope_tier(project: str, build: str, layout: DataLayoutConfig) -> int:
-    """Classify a ``(project, build)`` metadata pair into a cascade tier.
+def scope_tier(product: str, project: str, build: str, layout: DataLayoutConfig) -> int:
+    """Classify a ``(product, project, build)`` metadata triple into a cascade tier.
 
     Args:
+        product: Metadata product segment.
         project: Metadata project segment.
         build: Metadata build segment.
         layout: Path naming configuration.
 
     Returns:
-        ``SCOPE_TIER_BUILD``, ``SCOPE_TIER_PROJECT_COMMON``, or ``SCOPE_TIER_GLOBAL``.
+        ``SCOPE_TIER_BUILD``, ``SCOPE_TIER_PROJECT_COMMON``,
+        ``SCOPE_TIER_PRODUCT_COMMON``, or ``SCOPE_TIER_GLOBAL``.
     """
     enterprise = layout.enterprise_project
     common = layout.project_shared_build
-    if project == enterprise and build == enterprise:
+    if product == enterprise:
         return SCOPE_TIER_GLOBAL
+    if project == common:
+        return SCOPE_TIER_PRODUCT_COMMON
     if build == common:
         return SCOPE_TIER_PROJECT_COMMON
     return SCOPE_TIER_BUILD
 
 
 def build_cascade_phases_from_ranks(
-    scope_ranks: dict[tuple[str, str], int],
+    scope_ranks: dict[tuple[str, str, str], int],
     layout: DataLayoutConfig,
 ) -> list[CascadePhase]:
-    """Group scope rank pairs into ordered cascade phases by tier.
+    """Group scope rank triples into ordered cascade phases by tier.
 
     Args:
-        scope_ranks: ``(project, build)`` pairs allowed for this query.
+        scope_ranks: ``(product, project, build)`` triples allowed for this query.
         layout: Path naming configuration.
 
     Returns:
-        Phases sorted by tier (build first, then common, then global).
+        Phases sorted by tier (build first, then project common, product
+        common, then global).
     """
-    by_tier: dict[int, set[tuple[str, str]]] = {}
-    for pair in scope_ranks:
-        tier = scope_tier(pair[0], pair[1], layout)
-        by_tier.setdefault(tier, set()).add(pair)
+    by_tier: dict[int, set[tuple[str, str, str]]] = {}
+    for triple in scope_ranks:
+        tier = scope_tier(triple[0], triple[1], triple[2], layout)
+        by_tier.setdefault(tier, set()).add(triple)
     return [
-        CascadePhase(tier=tier, scope_pairs=frozenset(by_tier[tier]))
+        CascadePhase(tier=tier, scope_triples=frozenset(by_tier[tier]))
         for tier in sorted(by_tier)
     ]
 
@@ -98,15 +116,15 @@ def should_run_scope_cascade(
     *,
     scope_inheritance: bool,
     scope_cascade: bool,
-    target_project: str | None,
-    scope_ranks: dict[tuple[str, str], int] | None,
+    target_product: str | None,
+    scope_ranks: dict[tuple[str, str, str], int] | None,
 ) -> bool:
     """Return whether tier cascade retrieval should run for this query."""
     if not scope_inheritance or not scope_cascade:
         return False
     if scope_ranks:
         return True
-    return target_project is not None
+    return target_product is not None
 
 
 def effective_primary_quota(
@@ -126,7 +144,7 @@ def effective_primary_quota(
         return base
     lower_reserve = sum(
         quotas.for_tier(other)
-        for other in (SCOPE_TIER_BUILD, SCOPE_TIER_PROJECT_COMMON, SCOPE_TIER_GLOBAL)
+        for other in _ALL_TIERS
         if other > tier
     )
     return min(final_k, max(base, final_k - lower_reserve))
@@ -152,11 +170,7 @@ def assemble_mixed_quota(
     """
     selected: list[Any] = []
     seen: set[str] = set()
-    tier_used: dict[int, int] = {
-        SCOPE_TIER_BUILD: 0,
-        SCOPE_TIER_PROJECT_COMMON: 0,
-        SCOPE_TIER_GLOBAL: 0,
-    }
+    tier_used: dict[int, int] = {tier: 0 for tier in _ALL_TIERS}
 
     def _add_from_tier(tier: int, max_for_tier: int) -> None:
         for score, chunk in reranked_by_tier.get(tier, []):

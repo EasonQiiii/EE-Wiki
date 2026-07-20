@@ -5,7 +5,7 @@
 > **版本**：v1.0  
 > **机器可读源**：[`qa.yaml`](qa.yaml)（`config/schema/qa_eval.schema.json` 校验；`ee_wiki.common.eval_qa.load_qa_dataset()` 加载）  
 > **语料快照**：`data/indexes/manifest.json` — **4,676** chunks，built_at `2026-07-11T08:37:00Z`（Phase A force sync 后；此前 12,554 chunks）  
-> **覆盖范围**：global（datasheet 现仅 STM32F407ZGT6 / sop / note / fa）+ `kingboo/common` + `logan/p1`（Explorer schematic）
+> **覆盖范围**：global + `kingboo/common`（product common）+ `iphone/logan/p1`（Explorer schematic；ADR 0011）
 
 ---
 
@@ -148,7 +148,7 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 - 参考时钟：**25 MHz** 晶振
 
 **required_sources**：
-- `data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
+- `data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
 
 **must_not_contain**：`千兆`（文档写的是千兆以太网功能描述，PHY 为 LAN8720A 百兆 RMII 方案；若回答「千兆 PHY 芯片型号」且无依据则扣分）
 
@@ -172,7 +172,7 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 - 可选补充：PHONE / SPEAKER / LINE_IN / MIC 等模拟输出接口
 
 **required_sources**：
-- `data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
+- `data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
 
 ---
 
@@ -191,7 +191,7 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 **期望答案**：**ETH_MDIO**（同属 RMII 以太网相关网络）
 
 **required_sources**：
-- `data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
+- `data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
 
 ---
 
@@ -395,7 +395,7 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 - 可补充 global LAN8720A datasheet 作器件参考，但**不得用 datasheet 替代原理图作为板级结论来源**
 
 **required_sources**（至少命中 build 源）：
-- `data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
+- `data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
 
 **must_not_contain**：将答案仅归因于 `kingboo` 或无关项目
 
@@ -418,7 +418,7 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 - 检索 top-k **不得**命中 `kingboo/common/note/mahi_info.md`
 
 **required_sources**：
-- `data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
+- `data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
 
 **forbidden_sources**：
 - `data/processed/kingboo/common/note/mahi_info.md`
@@ -576,7 +576,7 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 **期望答案**：**Page 3**（第 3 页）；U14 与以太网/音频模块同页。
 
 **required_sources**：
-- `data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
+- `data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
 
 **验证 V2**：chunk 级 `pages` 侧车 + component index（U14 → page 3 chunk）
 
@@ -639,7 +639,7 @@ python scripts/ask.py "问题文本" --project kingboo --build common
 **期望答案**：是；均在 **Page 3**。
 
 **required_sources**：
-- `data/processed/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
+- `data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md`
 
 **验证 V2**：component index 多 designator 命中同一 page chunk
 

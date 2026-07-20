@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="List rules instead of evaluating",
     )
+    parser.add_argument("--product", default=None, help="Metadata filter: product name")
     parser.add_argument("--project", default=None, help="Optional project filter")
     parser.add_argument("--build", default=None, help="Optional build filter")
     parser.add_argument(
@@ -106,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = engine.evaluate_summary(
         rule_ids=args.rules,
+        product=args.product,
         project=args.project,
         build=args.build,
         include_disabled=args.include_disabled,

@@ -285,7 +285,7 @@ def ingest_config(app_config: AppConfig, tmp_path: Path) -> AppConfig:
 
 def test_parse_prose_pdf_extracts_images(ingest_config: AppConfig) -> None:
     """End-to-end: images are extracted, described, and referenced in markdown."""
-    raw_path = ingest_config.raw_dir / "logan/p1/note/report.pdf"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/note/report.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
 
@@ -328,7 +328,7 @@ def test_parse_prose_pdf_extracts_images(ingest_config: AppConfig) -> None:
 
 
 def test_parse_prose_pdf_skips_images_when_disabled(ingest_config: AppConfig) -> None:
-    raw_path = ingest_config.raw_dir / "logan/p1/note/noimages.pdf"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/note/noimages.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
 
@@ -354,12 +354,12 @@ def test_parse_prose_pdf_skips_images_when_disabled(ingest_config: AppConfig) ->
 
 def test_re_ingest_clears_stale_images(ingest_config: AppConfig) -> None:
     """Re-ingesting a PDF removes old images before saving new ones."""
-    raw_path = ingest_config.raw_dir / "logan/p1/note/refresh.pdf"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/note/refresh.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
 
     images_dir = (
-        ingest_config.processed_dir / "logan/p1/note/images/refresh"
+        ingest_config.processed_dir / "iphone/logan/p1/note/images/refresh"
     )
     images_dir.mkdir(parents=True)
     stale = images_dir / "refresh_p3_img2.png"

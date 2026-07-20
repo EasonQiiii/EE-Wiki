@@ -15,12 +15,14 @@ class _FakeEngine:
             chunk_count=3,
             projects=(
                 ProjectInventoryEntry(
+                    product="global",
                     project="global",
                     builds=("global",),
                     chunk_count=1,
                     is_enterprise=True,
                 ),
                 ProjectInventoryEntry(
+                    product="iphone",
                     project="logan",
                     builds=("p1",),
                     chunk_count=2,

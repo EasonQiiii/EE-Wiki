@@ -17,20 +17,27 @@ See [ingest.md](ingest.md) for the ingest pipeline.
 ## Quick decision: where does this document go?
 
 ```
-Is it shared by ALL projects (tools, industry terms, generic datasheets)?
+Is it shared by ALL products (tools, industry terms, generic datasheets)?
   └─ YES → data/raw/global/{type}/<file>
-  └─ NO  → Is it shared by ALL builds in ONE project?
-            └─ YES → data/raw/{project}/common/{type}/<file>
-            └─ NO  → data/raw/{project}/{build}/{type}/<file>
+  └─ NO  → Is it shared by ALL projects in ONE product?
+            └─ YES → data/raw/{product}/common/{type}/<file>
+            └─ NO  → Is it shared by ALL builds in ONE project?
+                      └─ YES → data/raw/{product}/{project}/common/{type}/<file>
+                      └─ NO  → data/raw/{product}/{project}/{build}/{type}/<file>
 ```
 
-| Layer | Path | `project` / `build` metadata | What belongs here |
-|-------|------|------------------------------|-------------------|
-| **Global** | `global/{type}/` | `global` / `global` | Industry background, company-wide acronym glossaries, generic tool usage, common component datasheets, enterprise FA methods — **not** board-specific wiring |
-| **Project common** | `{project}/common/{type}/` | `{project}` / `common` | That product's architecture, naming rules, shared IP description, cross-build bring-up — **not** pin/net facts for one revision |
-| **Build** | `{project}/{build}/{type}/` | `{project}` / `{build}` | Schematics, build-specific SOPs, debug notes, BOM context for **one hardware revision** |
+| Layer | Path | `product` / `project` / `build` | What belongs here |
+|-------|------|----------------------------------|-------------------|
+| **Global** | `global/{type}/` | `global` / `global` / `global` | Industry background, company-wide acronym glossaries, generic tool usage, common component datasheets, enterprise FA methods — **not** board-specific wiring |
+| **Product common** | `{product}/common/{type}/` | `{product}` / `common` / `common` | Platform architecture, naming rules, shared IP across programs in the product |
+| **Project common** | `{product}/{project}/common/{type}/` | `{product}` / `{project}` / `common` | That program's architecture and cross-build bring-up — **not** pin/net facts for one revision |
+| **Build** | `{product}/{project}/{build}/{type}/` | `{product}` / `{project}` / `{build}` | Schematics, build-specific SOPs, debug notes, BOM context for **one hardware revision** |
 
 **Do not** put large factual knowledge in `prompts/` — prompts hold *how to answer* rules; facts belong in `data/raw/` and are retrieved on demand (only relevant chunks enter the LLM context).
+
+If you still have legacy two-level trees (`data/raw/{project}/...`), migrate with
+`scripts/migrate_raw_layout.py` before authoring new docs — see
+[ingest.md — ADR 0011 layout migration](ingest.md#adr-0011-layout-migration).
 
 ---
 
@@ -40,7 +47,7 @@ Is it shared by ALL projects (tools, industry terms, generic datasheets)?
 |--------|-----------------|---------|
 | `note/` | `engineering_note` | Notes, glossaries, background, debug write-ups, architecture prose |
 | `sop/` | `sop` | Procedures, checklists, bring-up flows |
-| `sch/` | `schematic` | Schematic PDFs (VLM ingest) |
+| `sch/` | `schematic` | Schematic PDFs (default `ocr_only` ingest; optional `vlm_plus_ocr`) |
 | `datasheet/` | `datasheet` | Component datasheet PDFs (VLM ingest under `datasheet/`) |
 | `fa/` | `failure_analysis` | RMA reports, 8D, FA summaries, defect analysis write-ups — prefer structured debug-case fields (below) |
 
@@ -61,7 +68,7 @@ steps:
   - Check EN assertion timing
 root_cause: Open solder joint on U101 pin 3
 citations:
-  - logan/p1/sch/power.md
+  - iphone/logan/p1/sch/power.md
 ---
 
 # RMA-2024-001 No-boot FA
@@ -75,8 +82,10 @@ Heading aliases also work (`## Symptom`, `## Suspected Nets`, `## Suspected Part
 
 ## Path and filename rules
 
-- Path must match: `data/raw/{project}/{build}/{type}/<filename>`
-- Use lowercase project/build segments (e.g. `logan`, `p1`, `common`, `global`).
+- Path must match: `data/raw/{product}/{project}/{build}/{type}/<filename>` (or the
+  `global` / `common` reserved forms in the table above)
+- Use lowercase product/project/build segments (e.g. `iphone`, `logan`, `p1`).
+  Reserved words `global` and `common` are only valid in their reserved positions.
 - Prefer descriptive filenames: `acronym-glossary-networking.md`, not `notes1.md`.
 - One main topic per file when possible — helps chunking and retrieval.
 - Supported text formats: `.md`, `.markdown`, `.txt`, `.pdf`, `.xlsx`, `.doc`, `.docx`.
@@ -86,9 +95,10 @@ Examples:
 ```text
 data/raw/global/note/product-lifecycle-builds.md
 data/raw/global/note/acronym-glossary-power.md
-data/raw/logan/common/note/naming-conventions.md
-data/raw/logan/p1/note/comm-interface-bringup.md
-data/raw/logan/p1/sch/main-board.pdf
+data/raw/iphone/common/note/naming-conventions.md
+data/raw/iphone/logan/common/note/bringup-shared.md
+data/raw/iphone/logan/p1/note/comm-interface-bringup.md
+data/raw/iphone/logan/p1/sch/main-board.pdf
 data/raw/global/datasheet/LAN8720A.pdf
 ```
 
@@ -144,7 +154,7 @@ EE-Wiki chunks by headings (`#`, `##`) with a target of ~1500 characters per chu
 ```markdown
 # {Short title}
 
-**Scope:** global | logan / common | logan / p1  
+**Scope:** global | iphone / common | iphone / logan / common | iphone / logan / p1  
 **Last updated:** YYYY-MM-DD  
 **Owner:** team or name (optional)
 
@@ -164,7 +174,7 @@ The `**Scope:**` line is for human readers; ingestion derives scope from the **f
 ```markdown
 # {Procedure name}
 
-**Applies to:** logan / p1 (or logan / common, or global)
+**Applies to:** iphone / logan / p1 (or project/product common, or global)
 
 ## Prerequisites
 
@@ -191,8 +201,8 @@ Put here (as separate Markdown files):
 
 Do **not** put here:
 
-- Board-specific net names, pin maps, or schematic facts → `{project}/{build}/`
-- One product line's internal codenames only that team uses → `{project}/common/`
+- Board-specific net names, pin maps, or schematic facts → `{product}/{project}/{build}/`
+- One program's internal codenames only that team uses → `{product}/{project}/common/`
 
 Retrieval loads only **relevant** chunks into the LLM — a 500-term glossary does not consume context on every question.
 
@@ -202,11 +212,11 @@ Retrieval loads only **relevant** chunks into the LLM — a 500-term glossary do
 
 | User query | What gets searched | How answers should read |
 |------------|-------------------|-------------------------|
-| `project=logan`, `build=p1` | `logan/p1` → `logan/common` → `global` | Build conclusions first; label **project common** and **global** separately |
-| `project=logan`, `build=common` | `logan/common` → `global` only | No p1/p2 build-specific docs |
-| No project/build | Entire index | Answer **by scope**; recommend specifying build for board-level facts |
+| `product=iphone`, `project=logan`, `build=p1` | `iphone/logan/p1` → `iphone/logan/common` → `iphone/common` → `global` | Build conclusions first; label common/global separately |
+| `product=iphone`, `project=logan`, `build=common` | `iphone/logan/common` → `iphone/common` → `global` | No p1/p2 build-specific docs |
+| No product/project/build | Entire index | Answer **by scope**; recommend specifying product+build for board-level facts |
 
-Authors should write build-specific facts only under `{project}/{build}/` so they are not mistaken for global truth.
+Authors should write build-specific facts only under `{product}/{project}/{build}/` so they are not mistaken for global truth.
 
 ---
 

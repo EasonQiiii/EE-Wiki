@@ -28,7 +28,10 @@ EE-Wiki/
 │   ├── architecture/         # System design, data flow, API contracts
 │   │   ├── repository-structure.md
 │   │   ├── data-flow.md      # Ingestion → index → query pipeline
-│   │   └── api-overview.md   # REST endpoints for Open WebUI integration
+│   │   ├── api-overview.md   # REST endpoints for Open WebUI integration
+│   │   ├── fa-session.md     # Radar-keyed FA session (ADR 0010)
+│   │   ├── integrations-radar.md
+│   │   └── integrations-flames.md
 │   └── adr/                  # Architecture Decision Records
 │       └── README.md
 │
@@ -40,6 +43,7 @@ EE-Wiki/
 │   ├── fa/
 │   ├── power/                # V3 P5 — power-tree answers
 │   ├── rules/                # V3 P5 — engineering-rules answers
+│   ├── agents/               # V4 — Supervisor + specialists (ADR 0008; config roles under config/agents/)
 │   └── assistant/
 │
 ├── scripts/                  # CLI entry points for operators and CI
@@ -61,6 +65,9 @@ EE-Wiki/
 │       │
 │       ├── ingestion/          # Parse raw files → StandardDocument (Markdown + metadata)
 │       │   ├── parsers/        # markdown, prose_pdf, schematic_pdf, word, excel
+│       │   │   └── schematic_pdf/connectivity/  # ADR 0009: boardview/, netlist/, merge
+│       │
+│       ├── connectivity/       # Read-only query over *.connectivity.json (trace_net / pins)
 │       │   ├── path_metadata.py
 │       │   └── pipeline.py
 │       │
@@ -81,13 +88,18 @@ EE-Wiki/
 │       │
 │       ├── graph/              # Knowledge graph store/build/query (V3; ADR 0006)
 │       ├── rules/              # Engineering rules engine (V3 P4)
-│       ├── tools/              # MCP / function tools (V2+)
+│       ├── tools/              # MCP / function tools (V2+); ToolBus target for V4
+│       ├── agents/             # Multi-agent orchestration (V4; ADR 0008) — Supervisor + ToolBus
+│       ├── integrations/       # FA external connectors (ADR 0010): radar, flames, report
 │       │
 │       ├── protocols/          # Abstract interfaces (typing.Protocol)
 │       │   ├── llm.py          # LlmBackend
 │       │   ├── parser.py       # DocumentParser
 │       │   ├── retriever.py    # RetrieverBackend
-│       │   └── index_store.py  # IndexStoreBackend
+│       │   ├── index_store.py  # IndexStoreBackend
+│       │   ├── radar.py        # RadarBackend (ADR 0010)
+│       │   ├── flames.py       # FlamesBackend (ADR 0010)
+│       │   └── fa_report.py    # FaReportBackend (ADR 0010)
 │       │
 │       └── common/             # Shared types, config loader, logging, errors
 │           ├── types.py        # StandardDocument, Chunk, Metadata, Citation
@@ -95,11 +107,14 @@ EE-Wiki/
 │           ├── logging.py
 │           └── errors.py
 │
+├── assets/templates/fa/        # Company FA Keynote template (one_page.key)
+│
 └── tests/                      # Mirror src/ee_wiki/ module layout
     ├── ingestion/
     ├── retrieval/
     ├── generation/
     ├── api/
+    ├── integrations/
     └── fixtures/               # Sample markdown, metadata, small PDFs
 ```
 
@@ -115,6 +130,7 @@ EE-Wiki/
 | `tools/` | MCP / function tools for Open WebUI and Cursor | Duplicate retrieval logic from `retrieval/` |
 | `graph/` | Own store + build + query (V3); retrieval may call queries | Generation must not import the graph store |
 | `rules/` | Evaluate config-driven engineering rules over graph/cases (V3 P4) | Generation must not import the graph store |
+| `integrations/` | Radar / Flames / FA Keynote connectors (ADR 0010); stubs by default | Must not write knowledge indexes/graph; Radar writes require confirm |
 
 **V3 graph (P0–P4):**
 
@@ -130,6 +146,7 @@ EE-Wiki/
 | `data/graph/` | Runtime path | On-disk JSONL graph bundle (`manifest.json` + `nodes.jsonl` + `edges.jsonl`); includes Case + Rail nodes |
 | `scripts/build_graph.py` | P1+ | Post-index CLI to rebuild the graph bundle |
 | `scripts/evaluate_rules.py` | P4 | Evaluate / list engineering rules |
+| `scripts/migrate_raw_layout.py` | ADR 0011 | Dry-run-first migration: `raw/{project}` → `raw/{product}/{project}` |
 | `src/ee_wiki/ingestion/case_fields.py` | P2 | FA frontmatter / heading → case metadata |
 | `src/ee_wiki/knowledge/indexer/case_index.py` | P2 | Build/load `cases.json` |
 | `src/ee_wiki/retrieval/case_lookup.py` | P2 | Case search + chunk-id boost for hybrid retrieval |
@@ -176,33 +193,39 @@ models/                   # Local embedding, reranker, and LLM weights
 
 ### Raw layout (`data/raw/`)
 
+Three-level scope — `product` / `project` / `build` ([ADR 0011](../adr/0011-product-project-build-hierarchy.md)):
+
 ```
 data/raw/
-├── global/                         # enterprise-wide shared (project=global, build=global)
-│   └── note/ | sch/ | sop/ | datasheet/
-├── {project}/                      # e.g. logan
-│   ├── common/                     # project-wide shared (build=common)
-│   │   └── note/ | sch/ | sop/
-│   └── {build}/                    # e.g. p1
-│       └── note/ | sch/ | sop/
+├── global/                             # enterprise-wide (product=project=build=global)
+│   └── note/ | sch/ | sop/ | datasheet/ | fa/
+├── {product}/                          # e.g. iphone
+│   ├── common/                         # product common (project=build=common)
+│   │   └── note/ | sch/ | sop/ | fa/
+│   └── {project}/                      # e.g. logan
+│       ├── common/                     # project common (build=common)
+│       │   └── note/ | sch/ | sop/ | fa/
+│       └── {build}/                    # e.g. p1
+│           └── note/ | sch/ | sop/ | fa/
 ```
 
 Reserved names (configured in `config/default.yaml` → `data_layout`):
 
 | Folder | Role |
 |--------|------|
-| `global` | Top-level enterprise library for all projects |
-| `common` | Under a project — shared by every build in that project |
+| `global` | Top-level enterprise library for all products |
+| `common` | Under a product or project — shared tier (not an ordinary slug) |
 
-Ingestion derives `project`, `build`, and `document_type` from the path. `data/processed/` uses the **same relative paths** with `.md` (and optional `.meta.json`) instead of the original extension.
+Ingestion derives `product`, `project`, `build`, and `document_type` from the path. `data/processed/` uses the **same relative paths** with `.md` (and optional `.meta.json`) instead of the original extension.
 
 ### Retrieval scope inheritance
 
-When `retrieval.scope_inheritance` is true (default), a query for `{project}/{build}` searches, in order:
+When `retrieval.scope_inheritance` is true (default), a query for `product=P, project=X, build=Y` searches, in order:
 
-1. `{project}/{build}/`
-2. `{project}/common/`
-3. `global/`
+1. `{product}/{project}/{build}/`
+2. `{product}/{project}/common/`
+3. `{product}/common/`
+4. `global/`
 
 ## Version Mapping
 
@@ -215,7 +238,9 @@ When `retrieval.scope_inheritance` is true (default), a query for `{project}/{bu
 | `src/ee_wiki/graph/` | V3 P1–P3 (store/build/query + power tree; ADR 0006) |
 | `src/ee_wiki/rules/` | V3 P4 (engineering rules engine) |
 | `config/rules/` | V3 P4 (YAML rule pack) |
-| Multi-agent orchestration (future `src/ee_wiki/agents/`) | V4 |
+| Multi-agent orchestration (`src/ee_wiki/agents/`, `config/agents/`, `prompts/agents/`) | V4 ([ADR 0008](../adr/0008-multi-agent-runtime.md), accepted; Day-1 landed) |
+| FA session connectors (`src/ee_wiki/integrations/`, `protocols/{radar,flames,fa_report}.py`) | FA / V4-adjacent ([ADR 0010](../adr/0010-fa-session-external-integrations.md), proposed) |
+| `assets/templates/fa/`, `data/exports/`, `data/cache/` | FA reports + connector cache (ADR 0010) |
 
 ## Adding New Code
 

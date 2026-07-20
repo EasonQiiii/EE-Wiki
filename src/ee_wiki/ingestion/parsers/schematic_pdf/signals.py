@@ -48,6 +48,10 @@ _CAD_MODULE_NOTE = (
     "> 以下网络名来自伴随 CAD/网表解析（evidence=cad_netlist）；"
     "引脚序号请对照原理图 connector。"
 )
+_BOARDVIEW_MODULE_NOTE = (
+    "> 以下网络名来自伴随 BoardView（.brd）引脚表（evidence=boardview）；"
+    "为板级逻辑连通而非铜皮走线；引脚序号请对照原理图 / boardview。"
+)
 
 
 @dataclass(frozen=True)
@@ -390,6 +394,8 @@ def _format_prefix_groups(
 def _note_for_evidence(evidence: str | None, *, has_tokens: bool) -> str:
     if evidence == "cad_netlist":
         return _CAD_MODULE_NOTE
+    if evidence == "boardview":
+        return _BOARDVIEW_MODULE_NOTE
     if evidence == "pdf_geometry":
         return _GEOMETRY_MODULE_NOTE
     if has_tokens:
@@ -463,6 +469,11 @@ def build_page_signal_summary(
         association_hint = (
             "下方“模块：”分组来自伴随 CAD/网表（evidence=cad_netlist）。"
             "引脚序号请对照原理图 connector。"
+        )
+    elif evidence == "boardview":
+        association_hint = (
+            "下方“模块：”分组可对照文档级 BoardView 引脚表（evidence=boardview）；"
+            "页内模块区仍以 PDF/OCR 为准。BoardView 为逻辑连通而非铜皮确认。"
         )
     elif evidence == "pdf_geometry":
         association_hint = (

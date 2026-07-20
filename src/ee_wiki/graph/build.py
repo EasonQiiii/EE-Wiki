@@ -71,13 +71,14 @@ def _add_cases_to_graph(
     asm: GraphAssembler,
     case_index: CaseIndex,
     *,
-    enterprise_project: str,
+    global_segment: str,
 ) -> None:
     """Add Case nodes and mentions / caused_by / related_to edges."""
     for record in case_index.cases:
         if not record.case_id or not record.source_file:
             continue
         doc = asm.ensure_document(
+            product=record.product,
             project=record.project,
             build=record.build,
             source_file=record.source_file,
@@ -85,6 +86,7 @@ def _add_cases_to_graph(
             title=record.title,
         )
         case_node = asm.ensure_case(
+            product=record.product,
             project=record.project,
             build=record.build,
             case_id=record.case_id,
@@ -99,6 +101,7 @@ def _add_cases_to_graph(
 
         for net_name in record.suspected_nets:
             net = asm.ensure_net(
+                product=record.product,
                 project=record.project,
                 build=record.build,
                 net_name=net_name,
@@ -110,6 +113,7 @@ def _add_cases_to_graph(
                     source=case_node.id,
                     target=net.id,
                     type=EDGE_MENTIONS,
+                    product=record.product,
                     project=record.project,
                     build=record.build,
                 )
@@ -121,6 +125,7 @@ def _add_cases_to_graph(
                 continue
             if is_designator(cleaned):
                 target = asm.ensure_designator(
+                    product=record.product,
                     project=record.project,
                     build=record.build,
                     designator=cleaned,
@@ -130,16 +135,18 @@ def _add_cases_to_graph(
             else:
                 target = asm.ensure_part(
                     part_number=cleaned,
+                    product=record.product,
                     project=record.project,
                     build=record.build,
                     doc_id=doc.id,
-                    enterprise_project=enterprise_project,
+                    global_segment=global_segment,
                 )
             asm.add_edge(
                 GraphEdge(
                     source=case_node.id,
                     target=target.id,
                     type=EDGE_MENTIONS,
+                    product=record.product,
                     project=record.project,
                     build=record.build,
                 )
@@ -155,6 +162,7 @@ def _add_cases_to_graph(
             for token in cause_tokens:
                 if is_designator(token):
                     target = asm.ensure_designator(
+                        product=record.product,
                         project=record.project,
                         build=record.build,
                         designator=token,
@@ -164,16 +172,18 @@ def _add_cases_to_graph(
                 else:
                     target = asm.ensure_part(
                         part_number=token,
+                        product=record.product,
                         project=record.project,
                         build=record.build,
                         doc_id=doc.id,
-                        enterprise_project=enterprise_project,
+                        global_segment=global_segment,
                     )
                 asm.add_edge(
                     GraphEdge(
                         source=case_node.id,
                         target=target.id,
                         type=EDGE_CAUSED_BY,
+                        product=record.product,
                         project=record.project,
                         build=record.build,
                     )
@@ -184,8 +194,9 @@ def _add_cases_to_graph(
             if not cite_path:
                 continue
             # Citation may be a relative path; still create a Document node under
-            # the case's project/build so related_to remains queryable.
+            # the case's product/project/build so related_to remains queryable.
             related = asm.ensure_document(
+                product=record.product,
                 project=record.project,
                 build=record.build,
                 source_file=cite_path,
@@ -197,6 +208,7 @@ def _add_cases_to_graph(
                     source=case_node.id,
                     target=related.id,
                     type=EDGE_RELATED_TO,
+                    product=record.product,
                     project=record.project,
                     build=record.build,
                 )
@@ -214,8 +226,8 @@ def build_graph_from_chunks(
 ) -> KnowledgeGraph:
     """Build an in-memory knowledge graph from indexed chunks.
 
-    Derives Component / Net / Document / Project / Build nodes from chunk
-    metadata and schematic page fields. Adds ``connects_to`` (component↔net
+    Derives Component / Net / Document / Product / Project / Build nodes from
+    chunk metadata and schematic page fields. Adds ``connects_to`` (component↔net
     co-occurrence on a page), ``appears_in``, and ``same_as`` (designator↔part).
     When ``case_index`` is provided, also adds Case nodes with ``mentions``,
     ``caused_by``, and ``related_to`` edges. When ``power_tree`` is true,
@@ -233,12 +245,13 @@ def build_graph_from_chunks(
         Populated :class:`KnowledgeGraph`.
     """
     asm = GraphAssembler(source_fingerprints)
-    enterprise = layout.enterprise_project
+    global_segment = layout.global_segment
 
     if component_index is not None:
         for key, hits in component_index.entries.items():
             for hit in hits:
                 doc = asm.ensure_document(
+                    product=hit.product,
                     project=hit.project,
                     build=hit.build,
                     source_file=hit.source_file,
@@ -247,6 +260,7 @@ def build_graph_from_chunks(
                 )
                 if hit.kind == "designator":
                     asm.ensure_designator(
+                        product=hit.product,
                         project=hit.project,
                         build=hit.build,
                         designator=key,
@@ -256,17 +270,19 @@ def build_graph_from_chunks(
                 else:
                     asm.ensure_part(
                         part_number=key,
+                        product=hit.product,
                         project=hit.project,
                         build=hit.build,
                         doc_id=doc.id,
-                        enterprise_project=enterprise,
+                        global_segment=global_segment,
                     )
 
     for chunk in chunks:
         meta = chunk.metadata
-        if not meta.project or not meta.source_file:
+        if not meta.product or not meta.source_file:
             continue
         doc = asm.ensure_document(
+            product=meta.product,
             project=meta.project,
             build=meta.build,
             source_file=meta.source_file,
@@ -281,6 +297,7 @@ def build_graph_from_chunks(
 
         component_nodes = [
             asm.ensure_designator(
+                product=meta.product,
                 project=meta.project,
                 build=meta.build,
                 designator=designator,
@@ -291,6 +308,7 @@ def build_graph_from_chunks(
         ]
         net_nodes = [
             asm.ensure_net(
+                product=meta.product,
                 project=meta.project,
                 build=meta.build,
                 net_name=net_name,
@@ -302,10 +320,11 @@ def build_graph_from_chunks(
         part_nodes = [
             asm.ensure_part(
                 part_number=part,
+                product=meta.product,
                 project=meta.project,
                 build=meta.build,
                 doc_id=doc.id,
-                enterprise_project=enterprise,
+                global_segment=global_segment,
             )
             for part in parts
         ]
@@ -317,6 +336,7 @@ def build_graph_from_chunks(
                         source=component.id,
                         target=net.id,
                         type=EDGE_CONNECTS_TO,
+                        product=meta.product,
                         project=meta.project,
                         build=meta.build,
                         attributes={"page": page},
@@ -330,20 +350,21 @@ def build_graph_from_chunks(
                         source=component.id,
                         target=part.id,
                         type=EDGE_SAME_AS,
+                        product=meta.product,
                         project=meta.project,
                         build=meta.build,
                     )
                 )
 
     if case_index is not None:
-        _add_cases_to_graph(asm, case_index, enterprise_project=enterprise)
+        _add_cases_to_graph(asm, case_index, global_segment=global_segment)
 
     power_stats = None
     if power_tree:
         power_stats = add_power_semantics(
             asm,
             chunks,
-            enterprise_project=enterprise,
+            layout=layout,
         )
         if power_stats is not None:
             asm.graph.source_fingerprints = {

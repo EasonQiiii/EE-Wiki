@@ -30,19 +30,19 @@ def cleanup_config(app_config, tmp_path: Path) -> AppConfig:
 
 def test_raw_path_from_source_file(cleanup_config: AppConfig) -> None:
     raw = raw_path_from_source_file(
-        "data/raw/logan/p1/note/sample.md",
+        "data/raw/iphone/logan/p1/note/sample.md",
         cleanup_config.data_layout,
     )
-    assert raw == cleanup_config.raw_dir / "logan/p1/note/sample.md"
+    assert raw == cleanup_config.raw_dir / "iphone/logan/p1/note/sample.md"
 
 
 def test_cleanup_removes_processed_when_raw_deleted(cleanup_config: AppConfig) -> None:
-    raw_path = cleanup_config.raw_dir / "logan/p1/note/sample.md"
+    raw_path = cleanup_config.raw_dir / "iphone/logan/p1/note/sample.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("# hello\n", encoding="utf-8")
     ingest_file(raw_path, cleanup_config)
 
-    content_path = cleanup_config.processed_dir / "logan/p1/note/sample.md"
+    content_path = cleanup_config.processed_dir / "iphone/logan/p1/note/sample.md"
     meta_path = content_path.with_suffix(".md.meta.json")
     assert content_path.is_file()
     assert meta_path.is_file()
@@ -58,18 +58,19 @@ def test_cleanup_removes_processed_when_raw_deleted(cleanup_config: AppConfig) -
 
 
 def test_cleanup_scoped_to_subdirectory(cleanup_config: AppConfig) -> None:
-    note_raw = cleanup_config.raw_dir / "logan/p1/note/keep.md"
-    sch_raw = cleanup_config.raw_dir / "logan/p1/sch/old.pdf"
+    note_raw = cleanup_config.raw_dir / "iphone/logan/p1/note/keep.md"
+    sch_raw = cleanup_config.raw_dir / "iphone/logan/p1/sch/old.pdf"
     note_raw.parent.mkdir(parents=True)
     sch_raw.parent.mkdir(parents=True)
     note_raw.write_text("# keep\n", encoding="utf-8")
     sch_raw.write_bytes(b"%PDF-1.4")
 
     for path, source in (
-        (note_raw, "data/raw/logan/p1/note/keep.md"),
-        (sch_raw, "data/raw/logan/p1/sch/old.pdf"),
+        (note_raw, "data/raw/iphone/logan/p1/note/keep.md"),
+        (sch_raw, "data/raw/iphone/logan/p1/sch/old.pdf"),
     ):
         metadata = Metadata(
+            product="logan",
             project="logan",
             build="p1",
             document_type="engineering_note",
@@ -88,23 +89,23 @@ def test_cleanup_scoped_to_subdirectory(cleanup_config: AppConfig) -> None:
 
     removed = cleanup_orphaned_processed(
         cleanup_config.data_layout,
-        raw_scope=cleanup_config.raw_dir / "logan/p1/sch",
+        raw_scope=cleanup_config.raw_dir / "iphone/logan/p1/sch",
     )
     assert len(removed) == 0
-    assert (cleanup_config.processed_dir / "logan/p1/note/keep.md").is_file()
+    assert (cleanup_config.processed_dir / "iphone/logan/p1/note/keep.md").is_file()
 
     removed_all = cleanup_orphaned_processed(
         cleanup_config.data_layout,
         raw_scope=cleanup_config.raw_dir,
     )
     assert len(removed_all) == 1
-    assert not (cleanup_config.processed_dir / "logan/p1/note/keep.md").is_file()
-    assert (cleanup_config.processed_dir / "logan/p1/sch/old.md").is_file()
+    assert not (cleanup_config.processed_dir / "iphone/logan/p1/note/keep.md").is_file()
+    assert (cleanup_config.processed_dir / "iphone/logan/p1/sch/old.md").is_file()
 
 
 def test_single_file_ingest_skips_cleanup(cleanup_config: AppConfig) -> None:
-    orphan_raw = cleanup_config.raw_dir / "logan/p1/note/orphan.md"
-    active_raw = cleanup_config.raw_dir / "logan/p1/note/active.md"
+    orphan_raw = cleanup_config.raw_dir / "iphone/logan/p1/note/orphan.md"
+    active_raw = cleanup_config.raw_dir / "iphone/logan/p1/note/active.md"
     orphan_raw.parent.mkdir(parents=True)
     orphan_raw.write_text("# orphan\n", encoding="utf-8")
     ingest_file(orphan_raw, cleanup_config)
@@ -113,15 +114,15 @@ def test_single_file_ingest_skips_cleanup(cleanup_config: AppConfig) -> None:
     active_raw.write_text("# active\n", encoding="utf-8")
     run = ingest_path(active_raw, cleanup_config)
     assert len(run.removed) == 0
-    assert (cleanup_config.processed_dir / "logan/p1/note/orphan.md").is_file()
+    assert (cleanup_config.processed_dir / "iphone/logan/p1/note/orphan.md").is_file()
 
     full_run = ingest_path(cleanup_config.raw_dir, cleanup_config)
     assert len(full_run.removed) == 1
-    assert not (cleanup_config.processed_dir / "logan/p1/note/orphan.md").is_file()
+    assert not (cleanup_config.processed_dir / "iphone/logan/p1/note/orphan.md").is_file()
 
 
 def test_single_file_ingest_still_works(cleanup_config: AppConfig) -> None:
-    raw_path = cleanup_config.raw_dir / "logan/p1/note/sample.md"
+    raw_path = cleanup_config.raw_dir / "iphone/logan/p1/note/sample.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("# hello\n", encoding="utf-8")
 
@@ -132,12 +133,12 @@ def test_single_file_ingest_still_works(cleanup_config: AppConfig) -> None:
 
 def test_cleanup_removes_images_directory(cleanup_config: AppConfig) -> None:
     """When a raw PDF is deleted, its images/ subdirectory is also removed."""
-    raw_path = cleanup_config.raw_dir / "logan/p1/note/report.md"
+    raw_path = cleanup_config.raw_dir / "iphone/logan/p1/note/report.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("# report\n", encoding="utf-8")
     ingest_file(raw_path, cleanup_config)
 
-    content_path = cleanup_config.processed_dir / "logan/p1/note/report.md"
+    content_path = cleanup_config.processed_dir / "iphone/logan/p1/note/report.md"
     images_dir = content_path.parent / "images" / "report"
     images_dir.mkdir(parents=True)
     (images_dir / "report_p1_img0.png").write_bytes(b"PNG")
@@ -158,12 +159,12 @@ def test_cleanup_removes_images_directory(cleanup_config: AppConfig) -> None:
 
 def test_cleanup_prunes_empty_images_parent(cleanup_config: AppConfig) -> None:
     """The ``images/`` parent directory itself is pruned when empty."""
-    raw_path = cleanup_config.raw_dir / "logan/p1/note/only.md"
+    raw_path = cleanup_config.raw_dir / "iphone/logan/p1/note/only.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("# only\n", encoding="utf-8")
     ingest_file(raw_path, cleanup_config)
 
-    content_path = cleanup_config.processed_dir / "logan/p1/note/only.md"
+    content_path = cleanup_config.processed_dir / "iphone/logan/p1/note/only.md"
     images_parent = content_path.parent / "images"
     images_dir = images_parent / "only"
     images_dir.mkdir(parents=True)

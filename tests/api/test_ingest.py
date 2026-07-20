@@ -80,7 +80,7 @@ def test_ingest_full_sync_returns_counts(tmp_path: Path) -> None:
             RemovedProcessed(
                 content_path=tmp_path / "data/processed/acme/p1/note/stale.md",
                 metadata_path=tmp_path / "data/processed/acme/p1/note/stale.meta.json",
-                source_file="data/raw/acme/p1/note/stale.md",
+                source_file="data/raw/acme/demo/p1/note/stale.md",
             )
         ],
     )
@@ -110,7 +110,7 @@ def test_ingest_full_sync_returns_counts(tmp_path: Path) -> None:
     ):
         response = client.post(
             "/v1/ingest",
-            json={"project": "acme", "build": "p1", "force": True},
+            json={"product": "phone", "project": "acme", "build": "p1", "force": True},
         )
 
     assert response.status_code == 200
@@ -121,7 +121,7 @@ def test_ingest_full_sync_returns_counts(tmp_path: Path) -> None:
     assert payload["indexed_documents"] == 1
     assert payload["chunk_count"] == 3
     mock_ingest.assert_called_once_with(
-        config.raw_dir / "acme" / "p1",
+        config.raw_dir / "phone" / "acme" / "p1",
         config,
         force=True,
     )
@@ -262,7 +262,7 @@ def test_async_ingest_accepts_and_polls_until_done(tmp_path: Path) -> None:
     ):
         response = client.post(
             "/v1/ingest",
-            json={"project": "acme", "async": True},
+            json={"product": "phone", "project": "acme", "async": True},
         )
         assert response.status_code == 202
         accepted = response.json()

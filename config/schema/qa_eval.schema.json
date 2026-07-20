@@ -81,8 +81,9 @@
         { "type": "null" },
         {
           "type": "object",
-          "required": ["project", "build"],
+          "required": ["product", "project", "build"],
           "properties": {
+            "product": { "type": "string", "minLength": 1 },
             "project": { "type": "string", "minLength": 1 },
             "build": { "type": "string", "minLength": 1 }
           },
@@ -117,7 +118,7 @@
             { "type": "null" },
             {
               "type": "string",
-              "enum": ["build", "common", "global"]
+              "enum": ["build", "common", "product_common", "global"]
             }
           ]
         },

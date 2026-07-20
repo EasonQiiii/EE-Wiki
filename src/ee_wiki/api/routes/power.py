@@ -6,8 +6,9 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ee_wiki.api.deps import get_power_tree_query
+from ee_wiki.api.deps import get_config, get_power_tree_query
 from ee_wiki.api.models import PowerTreeResponse
+from ee_wiki.api.scope_params import resolve_request_scope
 from ee_wiki.graph.power_tree import PowerTreeQuery
 
 router = APIRouter(prefix="/v1", tags=["power"])
@@ -25,12 +26,15 @@ async def query_power_tree(
         default="tree",
         description="feeds | powers | tree | flags",
     ),
+    product: str | None = Query(default=None),
     project: str | None = Query(default=None),
     build: str | None = Query(default=None),
     max_depth: int = Query(default=4, ge=1, le=12),
     power: PowerTreeQuery | None = Depends(get_power_tree_query),
+    config=Depends(get_config),
 ) -> PowerTreeResponse:
     """Query the heuristic power tree (rails / supplies / derived_from)."""
+    product, project, build = resolve_request_scope(config, product, project, build)
     if power is None:
         raise HTTPException(
             status_code=503,
@@ -47,6 +51,7 @@ async def query_power_tree(
     result = power.query(
         q,
         direction=direction,
+        product=product,
         project=project,
         build=build,
         max_depth=max_depth,
@@ -54,6 +59,7 @@ async def query_power_tree(
     return PowerTreeResponse(
         query=str(result.get("query", q)),
         direction=str(result.get("direction", direction)),
+        product=product,
         project=project,
         build=build,
         resolved_id=result.get("resolved_id"),

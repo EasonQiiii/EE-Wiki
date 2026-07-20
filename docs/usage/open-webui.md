@@ -79,22 +79,24 @@ Images are served via `GET /v1/assets/{path}` from `data/processed/`.
 2. Use model name `ee-wiki` (or any name accepted by your Open WebUI version)
 3. EE-Wiki reads the request `model` field but does not require a specific weight name
 
-## Scope filters (project / build)
+## Scope filters (product / project / build)
 
-**Strongly recommended** for engineering questions. Answers distinguish `project` / `build` and knowledge layer (`build` vs project `common` vs `global`).
+**Strongly recommended** for engineering questions. Answers distinguish `product` / `project` / `build` and knowledge layer (`build` vs project/product `common` vs `global`).
 
 | Layer | Path | Role in answers |
 |-------|------|-----------------|
-| Build | `{project}/{build}/` | Default for pin, net, and BOM conclusions |
-| Project common | `{project}/common/` | Project-wide guidance — label explicitly |
+| Build | `{product}/{project}/{build}/` | Default for pin, net, and BOM conclusions |
+| Project common | `{product}/{project}/common/` | Project-wide guidance — label explicitly |
+| Product common | `{product}/common/` | Product-wide guidance — label explicitly |
 | Global | `global/` | Enterprise/industry background — not board wiring unless build agrees |
 
-V1 passes retrieval scope through extra JSON fields on chat requests:
+Passes retrieval scope through extra JSON fields on chat requests (`product` required when `project`/`build` set):
 
 ```json
 {
   "model": "ee-wiki",
   "messages": [{"role": "user", "content": "RMII 接口说明"}],
+  "product": "iphone",
   "project": "logan",
   "build": "p1"
 }
@@ -103,10 +105,10 @@ V1 passes retrieval scope through extra JSON fields on chat requests:
 If your Open WebUI build cannot send custom fields on chat requests, use `POST /v1/query` directly or the CLI:
 
 ```bash
-python scripts/ask.py "RMII 接口说明" --project logan --build p1
+python scripts/ask.py "RMII 接口说明" --product iphone --project logan --build p1
 ```
 
-Without `project` / `build`, EE-Wiki can **infer scope from the question** when `generation.scope_inference` is enabled (default: `true`). Examples:
+Without scope fields, EE-Wiki can **infer scope from the question** when `generation.scope_inference` is enabled (default: `true`). Examples:
 
 - `Logan p1 lcd的pin有哪些` → product `logan`, revision `p1`, build-layer retrieval
 - `logan common 架构` → project-wide `common` knowledge for `logan`

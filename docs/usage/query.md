@@ -29,24 +29,25 @@ Requires local models configured in `config/default.yaml`:
 - `reranker_model` — cross-encoder rerank (e.g. `bge-reranker-v2-m3`)
 - `llm_mlx_model` or `llm_transformers_model` — for RAG answers (see below)
 
-## Project / build scope (recommended)
+## Product / project / build scope (recommended)
 
 | Layer | Path | Use in answers |
 |-------|------|----------------|
-| **Build** | `{project}/{build}/` | Board-level truth — default for engineering conclusions |
-| **Project common** | `{project}/common/` | That project's cross-build knowledge — label explicitly |
-| **Global** | `global/` | All-project tools, industry practices, generic datasheets — background only |
+| **Build** | `{product}/{project}/{build}/` | Board-level truth — default for engineering conclusions |
+| **Project common** | `{product}/{project}/common/` | That project's cross-build knowledge — label explicitly |
+| **Product common** | `{product}/common/` | Product-wide knowledge across programs — label explicitly |
+| **Global** | `global/` | All-product tools, industry practices, generic datasheets — background only |
 
-Always pass `--project` and `--build` when you know the target hardware revision. Without them, retrieval searches the **full index**; RAG answers should still **label each conclusion by scope**.
+Always pass `--product`, `--project`, and `--build` when you know the target hardware revision. Without them, retrieval searches the **full index**; RAG answers should still **label each conclusion by scope**.
 
 ## Retrieval only (`scripts/query.py`)
 
 Run hybrid retrieval without calling an LLM:
 
 ```bash
-python scripts/query.py "RMII 接口" --project logan --build p1
-python scripts/query.py "iPad 充电" --project logan --build p1 --top-k 5
-python scripts/query.py "ETH_MDIO" --project logan --build p1 --document-type schematic
+python scripts/query.py "RMII 接口" --product iphone --project logan --build p1
+python scripts/query.py "iPad 充电" --product iphone --project logan --build p1 --top-k 5
+python scripts/query.py "ETH_MDIO" --product iphone --project logan --build p1 --document-type schematic
 ```
 
 Output includes for each chunk:
@@ -62,8 +63,8 @@ Output includes for each chunk:
 After `models.llm_mlx_model` (or `models.llm_transformers_model`) is configured, generate an answer with citations:
 
 ```bash
-python scripts/ask.py "board 的 COMM 接口有哪些信号？" --project acme --build p2
-python scripts/ask.py "VBAT 连接了哪些器件？" --project logan --build p1 --task debug
+python scripts/ask.py "board 的 COMM 接口有哪些信号？" --product acme --project demo --build p2
+python scripts/ask.py "VBAT 连接了哪些器件？" --product iphone --project logan --build p1 --task debug
 ```
 
 Use `--task` to select a prompt template from `prompts/{task}/default.md`:
@@ -91,7 +92,7 @@ Example query:
 ```bash
 curl -X POST http://localhost:8080/v1/query \
   -H 'Content-Type: application/json' \
-  -d '{"query":"iPad manual","project":"logan","build":"p1","task":"wiki"}'
+  -d '{"query":"iPad manual","product":"iphone","project":"logan","build":"p1","task":"wiki"}'
 ```
 
 ### V2 endpoints
@@ -99,7 +100,7 @@ curl -X POST http://localhost:8080/v1/query \
 **Component lookup** (exact designator / part number):
 
 ```bash
-curl "http://localhost:8080/v1/components/search?q=U101&project=logan&build=p1"
+curl "http://localhost:8080/v1/components/search?q=U101&product=iphone&project=logan&build=p1"
 ```
 
 **Ingest + index (admin):**

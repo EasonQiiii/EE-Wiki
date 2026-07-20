@@ -31,17 +31,18 @@ python scripts/serve.py
 Example:
 
 ```bash
-curl "http://localhost:8080/v1/components/search?q=U101&project=logan&build=p1"
+curl "http://localhost:8080/v1/components/search?q=U101&product=iphone&project=logan&build=p1"
 ```
 
 | Param | Meaning |
 |-------|---------|
 | `q` | Designator or part number (required) |
+| `product` | Optional product filter (required when project/build set) |
 | `project` | Optional project filter |
 | `build` | Optional build filter |
 | `limit` | Max hits (default 20) |
 
-Scope follows `retrieval.scope_inheritance` (build → `common` → `global`). Response hits include `scope` (`build`, `common`, `global`), `chunk_id`, `source_file`, `page`, and `excerpt`.
+Scope follows `retrieval.scope_inheritance` (build → project `common` → product `common` → `global`). Response hits include `scope` (`build`, `common`, `global`), `chunk_id`, `source_file`, `page`, and `excerpt`.
 
 The component index is built automatically during `scripts/index.py` / `scripts/sync.py`. Re-index after schematic or datasheet ingest so new `major_components` / part-number keywords appear in `components.json`.
 
@@ -57,7 +58,7 @@ Triggers the same pipeline as `scripts/sync.py` (ingest raw → processed, then 
 curl -X POST http://localhost:8080/v1/ingest \
   -H 'Content-Type: application/json' \
   -H 'X-API-Key: '"$EE_WIKI_INGEST_API_KEY" \
-  -d '{"project":"logan","build":"p1","force":true}'
+  -d '{"product":"iphone","project":"logan","build":"p1","force":true}'
 ```
 
 **Async** (202 + poll — preferred for large VLM batches):
@@ -67,7 +68,7 @@ curl -X POST http://localhost:8080/v1/ingest \
 curl -X POST http://localhost:8080/v1/ingest \
   -H 'Content-Type: application/json' \
   -H 'X-API-Key: '"$EE_WIKI_INGEST_API_KEY" \
-  -d '{"project":"logan","build":"p1","force":true,"async":true}'
+  -d '{"product":"iphone","project":"logan","build":"p1","force":true,"async":true}'
 # → {"job_id":"...","status":"queued","status_url":"/v1/ingest/jobs/..."}
 
 # Poll until succeeded|failed
@@ -79,7 +80,7 @@ curl -H 'X-API-Key: '"$EE_WIKI_INGEST_API_KEY" \
 |-------|---------|
 | `path` | Single file or directory under `data/raw/` |
 | `paths` | List of paths (mutually exclusive with `path`) |
-| `project` / `build` | Scope when no path given |
+| `product` / `project` / `build` | Scope when no path given |
 | `force` | Re-ingest/rebuild even when fingerprints match |
 | `ingest_only` | Skip index build |
 | `index_only` | Skip ingest |
@@ -114,13 +115,16 @@ python scripts/mcp_serve.py
 | `open_graph_node_tool` | Resolve/open one graph node |
 | `graph_neighbors_tool` | Graph neighbors within N hops |
 | `graph_path_tool` | Shortest path between two nodes |
-| `graph_filter_tool` | Filter nodes by project/build scope |
+| `graph_filter_tool` | Filter nodes by product/project/build scope |
 | `query_schematic_tool` | Hybrid retrieval, `document_type=schematic` |
 | `search_datasheet_tool` | Hybrid retrieval, `document_type=datasheet` |
 | `engineering_search_tool` | General hybrid retrieval |
-| `list_projects_tool` | Indexed project/build inventory and chunk counts |
+| `list_projects_tool` | Indexed product/project/build inventory and chunk counts |
+| `trace_net_tool` | Trace pins on a net (`*.connectivity.json` sidecars) |
+| `connector_pins_tool` | Pin↔net list for a designator / connector |
+| `module_nets_tool` | Nets for a schematic page module zone |
 
-All retrieval tools accept optional `project`, `build`, and return JSON with `scope` labels (`build`, `common`, `global`). Scope follows `retrieval.scope_inheritance`. Power-tree, rules, and graph queries require `python scripts/build_graph.py` and honor `graph.scope_inheritance` / `graph.power_tree` / `rules.enabled`. Optional RAG graph enrichment is separate (`retrieval.graph_enrichment`, default off).
+All retrieval tools accept optional `product`, `project`, `build`, and return JSON with `scope` labels (`build`, `project_common`, `product_common`, `global`). Scope follows `retrieval.scope_inheritance`. Power-tree, rules, and graph queries require `python scripts/build_graph.py` and honor `graph.scope_inheritance` / `graph.power_tree` / `rules.enabled`. Connectivity tools (`trace_net_tool`, …) require re-ingested `sch/` sidecars (`*.connectivity.json`, ADR 0009); missing sidecars return a JSON `error` (HTTP 503 on REST). `trace_net_tool` / `connector_pins_tool` are **authoritative-only** (ADR 0009 §5): a trace is returned only when grounded on `cad_netlist` / `boardview` evidence; advisory geometry/OCR-only results are refused (`authority: "insufficient"`) instead of guessed, so agents (including any FA flow) never build conclusions on unverified connectivity. Optional RAG graph enrichment is separate (`retrieval.graph_enrichment`, default off).
 
 The MCP process loads indexes from the same config paths as `serve.py` (`data/indexes/` by default). Run it from the EE-Wiki checkout (or with the same `EE_WIKI_*` / config overrides) so it sees the indexes you built.
 
@@ -165,7 +169,7 @@ REST ↔ tool mapping and mcpo steps: [open-webui.md](open-webui.md#mcp--enginee
 |-------|-------|
 | `ImportError` / missing `mcp` | `pip install -e ".[tools]"` in the interpreter used by the client |
 | Empty results | Indexes built; MCP process sees the same `data/indexes` as `serve.py` |
-| Wrong project/build | Pass `project` / `build` on the tool call; inheritance still searches `common` + `global` |
+| Wrong product/project/build | Pass `product` / `project` / `build` on the tool call; inheritance still searches common tiers + `global` |
 | Open WebUI Docker + stdio config | Will not work — use REST or mcpo on the host |
 
 ---

@@ -11,6 +11,7 @@ from ee_wiki.graph.ids import (
     document_node_id,
     net_node_id,
     part_node_id,
+    product_node_id,
     project_node_id,
     rail_node_id,
 )
@@ -21,6 +22,7 @@ from ee_wiki.graph.models import (
     NODE_COMPONENT,
     NODE_DOCUMENT,
     NODE_NET,
+    NODE_PRODUCT,
     NODE_PROJECT,
     NODE_RAIL,
     GraphEdge,
@@ -49,12 +51,23 @@ class GraphAssembler:
         self._seen_edges.add(key)
         self.graph.add_edge(edge)
 
-    def ensure_scope(self, project: str, build: str) -> None:
-        """Ensure Project and Build nodes exist with Build → Project appears_in."""
+    def ensure_scope(self, product: str, project: str, build: str) -> None:
+        """Ensure Product, Project, and Build nodes exist with appears_in chain."""
         self.graph.add_node(
             GraphNode(
-                id=project_node_id(project),
+                id=product_node_id(product),
+                type=NODE_PRODUCT,
+                product=product,
+                project=product,
+                build=product,
+                attributes={"name": product},
+            )
+        )
+        self.graph.add_node(
+            GraphNode(
+                id=project_node_id(product, project),
                 type=NODE_PROJECT,
+                product=product,
                 project=project,
                 build=project,
                 attributes={"name": project},
@@ -62,8 +75,9 @@ class GraphAssembler:
         )
         self.graph.add_node(
             GraphNode(
-                id=build_node_id(project, build),
+                id=build_node_id(product, project, build),
                 type=NODE_BUILD,
+                product=product,
                 project=project,
                 build=build,
                 attributes={"name": build},
@@ -71,9 +85,19 @@ class GraphAssembler:
         )
         self.add_edge(
             GraphEdge(
-                source=build_node_id(project, build),
-                target=project_node_id(project),
+                source=project_node_id(product, project),
+                target=product_node_id(product),
                 type=EDGE_APPEARS_IN,
+                product=product,
+                project=project,
+            )
+        )
+        self.add_edge(
+            GraphEdge(
+                source=build_node_id(product, project, build),
+                target=project_node_id(product, project),
+                type=EDGE_APPEARS_IN,
+                product=product,
                 project=project,
                 build=build,
             )
@@ -82,6 +106,7 @@ class GraphAssembler:
     def ensure_document(
         self,
         *,
+        product: str,
         project: str,
         build: str,
         source_file: str,
@@ -89,11 +114,12 @@ class GraphAssembler:
         title: str,
     ) -> GraphNode:
         """Upsert Document + scope and Document → Build appears_in."""
-        self.ensure_scope(project, build)
+        self.ensure_scope(product, project, build)
         doc = self.graph.add_node(
             GraphNode(
-                id=document_node_id(project, build, source_file),
+                id=document_node_id(product, project, build, source_file),
                 type=NODE_DOCUMENT,
+                product=product,
                 project=project,
                 build=build,
                 attributes={
@@ -106,8 +132,9 @@ class GraphAssembler:
         self.add_edge(
             GraphEdge(
                 source=doc.id,
-                target=build_node_id(project, build),
+                target=build_node_id(product, project, build),
                 type=EDGE_APPEARS_IN,
+                product=product,
                 project=project,
                 build=build,
             )
@@ -117,6 +144,7 @@ class GraphAssembler:
     def ensure_designator(
         self,
         *,
+        product: str,
         project: str,
         build: str,
         designator: str,
@@ -126,8 +154,9 @@ class GraphAssembler:
         """Upsert a designator Component and Component → Document appears_in."""
         node = self.graph.add_node(
             GraphNode(
-                id=component_node_id(project, build, designator),
+                id=component_node_id(product, project, build, designator),
                 type=NODE_COMPONENT,
+                product=product,
                 project=project,
                 build=build,
                 attributes={
@@ -142,6 +171,7 @@ class GraphAssembler:
                 source=node.id,
                 target=doc_id,
                 type=EDGE_APPEARS_IN,
+                product=product,
                 project=project,
                 build=build,
                 attributes={"page": page},
@@ -152,6 +182,7 @@ class GraphAssembler:
     def ensure_net(
         self,
         *,
+        product: str,
         project: str,
         build: str,
         net_name: str,
@@ -161,8 +192,9 @@ class GraphAssembler:
         """Upsert a Net and Net → Document appears_in."""
         node = self.graph.add_node(
             GraphNode(
-                id=net_node_id(project, build, net_name),
+                id=net_node_id(product, project, build, net_name),
                 type=NODE_NET,
+                product=product,
                 project=project,
                 build=build,
                 attributes={"name": net_name.strip().upper(), "page": page},
@@ -173,6 +205,7 @@ class GraphAssembler:
                 source=node.id,
                 target=doc_id,
                 type=EDGE_APPEARS_IN,
+                product=product,
                 project=project,
                 build=build,
                 attributes={"page": page},
@@ -184,23 +217,25 @@ class GraphAssembler:
         self,
         *,
         part_number: str,
+        product: str,
         project: str,
         build: str,
         doc_id: str,
-        enterprise_project: str,
+        global_segment: str,
     ) -> GraphNode:
         """Upsert a cross-scope part-number Component and link it to the document.
 
         Part identity nodes live under the enterprise ``global`` scope so
         scope-inheritance queries always include them; ``appears_in`` edges keep
-        the sighting's project/build.
+        the sighting's product/project/build.
         """
         node = self.graph.add_node(
             GraphNode(
                 id=part_node_id(part_number),
                 type=NODE_COMPONENT,
-                project=enterprise_project,
-                build=enterprise_project,
+                product=global_segment,
+                project=global_segment,
+                build=global_segment,
                 attributes={
                     "key": part_number.strip().upper(),
                     "kind": "part_number",
@@ -212,6 +247,7 @@ class GraphAssembler:
                 source=node.id,
                 target=doc_id,
                 type=EDGE_APPEARS_IN,
+                product=product,
                 project=project,
                 build=build,
             )
@@ -221,6 +257,7 @@ class GraphAssembler:
     def ensure_case(
         self,
         *,
+        product: str,
         project: str,
         build: str,
         case_id: str,
@@ -249,8 +286,9 @@ class GraphAssembler:
             attributes["steps"] = list(steps)
         node = self.graph.add_node(
             GraphNode(
-                id=case_node_id(project, build, case_id),
+                id=case_node_id(product, project, build, case_id),
                 type=NODE_CASE,
+                product=product,
                 project=project,
                 build=build,
                 attributes=attributes,
@@ -261,6 +299,7 @@ class GraphAssembler:
                 source=node.id,
                 target=doc_id,
                 type=EDGE_APPEARS_IN,
+                product=product,
                 project=project,
                 build=build,
             )
@@ -270,6 +309,7 @@ class GraphAssembler:
     def ensure_rail(
         self,
         *,
+        product: str,
         project: str,
         build: str,
         rail_name: str,
@@ -281,6 +321,7 @@ class GraphAssembler:
         """Upsert a Rail node and Rail → Document appears_in.
 
         Args:
+            product: Product scope.
             project: Project scope.
             build: Build scope.
             rail_name: Canonical rail / net name (e.g. ``3V3``, ``VBAT``).
@@ -302,8 +343,9 @@ class GraphAssembler:
             attributes["role"] = role
         node = self.graph.add_node(
             GraphNode(
-                id=rail_node_id(project, build, rail_name),
+                id=rail_node_id(product, project, build, rail_name),
                 type=NODE_RAIL,
+                product=product,
                 project=project,
                 build=build,
                 attributes=attributes,
@@ -314,6 +356,7 @@ class GraphAssembler:
                 source=node.id,
                 target=doc_id,
                 type=EDGE_APPEARS_IN,
+                product=product,
                 project=project,
                 build=build,
                 attributes={"page": page},

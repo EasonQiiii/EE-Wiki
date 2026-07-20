@@ -31,6 +31,7 @@ class RetrievalEngine(Protocol):
         self,
         query: str,
         *,
+        target_product: str | None = None,
         target_project: str | None = None,
         target_build: str | None = None,
         document_type: str | None = None,
@@ -47,6 +48,7 @@ class RagAnswerEngine(Protocol):
         self,
         question: str,
         *,
+        target_product: str | None = None,
         target_project: str | None = None,
         target_build: str | None = None,
         document_type: str | None = None,
@@ -452,10 +454,14 @@ def _negative_forbidden_scope(
     if forbidden_scope is None:
         return False
     for chunk in chunks:
+        product = chunk.metadata.get("product")
         project = chunk.metadata.get("project")
         build = chunk.metadata.get("build")
-        if project == forbidden_scope.project and build == forbidden_scope.build:
-            return True
+        if project != forbidden_scope.project or build != forbidden_scope.build:
+            continue
+        if forbidden_scope.product and product != forbidden_scope.product:
+            continue
+        return True
     return False
 
 
@@ -534,7 +540,10 @@ def _citation_forbidden_scope(
 ) -> bool:
     if filters is None:
         return False
-    marker = f"{filters.project}/{filters.build}"
+    if filters.product:
+        marker = f"{filters.product}/{filters.project}/{filters.build}"
+    else:
+        marker = f"{filters.project}/{filters.build}"
     for citation in citations:
         for candidate in _citation_paths(citation):
             if marker in candidate:
@@ -835,6 +844,7 @@ def run_eval(
 
         for query in case.all_questions():
             filters = case.filters
+            product = (filters.product or None) if filters else None
             project = filters.project if filters else None
             build = filters.build if filters else None
 
@@ -843,6 +853,7 @@ def run_eval(
                 assert retrieval_engine is not None
                 retrieval = retrieval_engine.retrieve(
                     query,
+                    target_product=product,
                     target_project=project,
                     target_build=build,
                     top_k_final=top_k,
@@ -861,6 +872,7 @@ def run_eval(
                 assert rag_service is not None
                 answer = rag_service.answer(
                     query,
+                    target_product=product,
                     target_project=project,
                     target_build=build,
                     top_k_final=top_k,

@@ -9,6 +9,7 @@ import pytest
 from ee_wiki.generation.classify import (
     VALID_TASKS,
     _parse_task_label,
+    classify_agent_route,
     classify_task,
 )
 
@@ -139,3 +140,75 @@ class TestClassifyTask:
         llm.generate_stream = _fake_stream
         result = classify_task("原理图审查", llm=llm, repo_root=repo_root)
         assert result == "design_review"
+
+
+class TestClassifyAgentRoute:
+    """Shared Supervisor task-and-role semantic routing."""
+
+    @pytest.fixture()
+    def repo_root(self):
+        from pathlib import Path
+
+        return Path(__file__).resolve().parents[2]
+
+    def test_returns_task_and_multiple_roles(self, repo_root) -> None:
+        llm = MagicMock()
+        llm.generate_stream = None
+        llm.generate.return_value = "TASK: design_review\nROLES: pcb, si"
+
+        route = classify_agent_route(
+            "检查 DDR layout 和眼图风险",
+            llm=llm,
+            repo_root=repo_root,
+            valid_roles=frozenset({"hw", "fa", "pcb", "si", "mfg", "power"}),
+        )
+
+        assert route is not None
+        assert route.task == "design_review"
+        assert route.roles == ("pcb", "si")
+
+    def test_none_roles_is_valid_passthrough(self, repo_root) -> None:
+        llm = MagicMock()
+        llm.generate_stream = None
+        llm.generate.return_value = "TASK: translate\nROLES: none"
+
+        route = classify_agent_route(
+            "translate the previous answer",
+            llm=llm,
+            repo_root=repo_root,
+            valid_roles=frozenset({"hw", "fa"}),
+        )
+
+        assert route is not None
+        assert route.task == "translate"
+        assert route.roles == ()
+
+    def test_malformed_output_requests_fallback(self, repo_root) -> None:
+        llm = MagicMock()
+        llm.generate_stream = None
+        llm.generate.return_value = "pcb"
+
+        route = classify_agent_route(
+            "review layout",
+            llm=llm,
+            repo_root=repo_root,
+            valid_roles=frozenset({"pcb"}),
+        )
+
+        assert route is None
+
+    def test_truncates_to_max_roles(self, repo_root) -> None:
+        llm = MagicMock()
+        llm.generate_stream = None
+        llm.generate.return_value = "TASK: design_review\nROLES: pcb, si, power, mfg"
+
+        route = classify_agent_route(
+            "审查 layout、SI 和电源风险",
+            llm=llm,
+            repo_root=repo_root,
+            valid_roles=frozenset({"hw", "fa", "pcb", "si", "mfg", "power"}),
+            max_roles=3,
+        )
+
+        assert route is not None
+        assert route.roles == ("pcb", "si", "power")

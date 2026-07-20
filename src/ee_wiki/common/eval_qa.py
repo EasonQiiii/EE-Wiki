@@ -24,7 +24,7 @@ EvalCategory = Literal[
     "stability",
 ]
 
-ScopeLabel = Literal["build", "common", "global"]
+ScopeLabel = Literal["build", "common", "product_common", "global"]
 
 DEFAULT_QA_PATH = Path("docs/eval/qa.yaml")
 DEFAULT_SCHEMA_PATH = Path("config/schema/qa_eval.schema.json")
@@ -36,6 +36,7 @@ class EvalFilters:
 
     project: str
     build: str
+    product: str = ""
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,11 @@ class EvalDataset:
 def _parse_filters(raw: dict[str, Any] | None) -> EvalFilters | None:
     if raw is None:
         return None
-    return EvalFilters(project=str(raw["project"]), build=str(raw["build"]))
+    return EvalFilters(
+        project=str(raw["project"]),
+        build=str(raw["build"]),
+        product=str(raw.get("product", "") or ""),
+    )
 
 
 def _parse_case(raw: dict[str, Any]) -> EvalCase:

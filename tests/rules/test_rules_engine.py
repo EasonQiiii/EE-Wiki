@@ -31,6 +31,7 @@ def _layout(tmp_path: Path) -> DataLayoutConfig:
 def _sch_chunk(
     *,
     chunk_id: str,
+    product: str = "acme",
     project: str,
     build: str,
     source_file: str,
@@ -42,6 +43,7 @@ def _sch_chunk(
         chunk_id=chunk_id,
         content="schematic page",
         metadata=Metadata(
+            product=product,
             project=project,
             build=build,
             document_type="schematic",
@@ -140,7 +142,7 @@ def test_rail_presence_pass_and_interface_naming(tmp_path: Path) -> None:
         ],
     )
     engine = open_rule_engine(gq, pack_dir, power_query=power)
-    results = {r.rule_id: r for r in engine.evaluate(project="demo", build="p1")}
+    results = {r.rule_id: r for r in engine.evaluate(product="acme", project="demo", build="p1")}
 
     assert results["rail_presence"].status == "pass"
     assert results["interface_naming"].status == "pass"
@@ -179,7 +181,9 @@ def test_interface_naming_fails_bare_prefix(tmp_path: Path) -> None:
         ],
     )
     engine = open_rule_engine(gq, pack_dir)
-    result = engine.evaluate(rule_ids=["interface_naming"], project="demo", build="p1")[0]
+    result = engine.evaluate(
+        rule_ids=["interface_naming"], product="acme", project="demo", build="p1",
+    )[0]
     assert result.status == "fail"
     assert any("I2C" in (c.excerpt or "") for c in result.citations)
 
@@ -214,7 +218,9 @@ def test_power_tree_flags_surfaces_missing_supplier(tmp_path: Path) -> None:
         ],
     )
     engine = open_rule_engine(gq, pack_dir, power_query=power)
-    result = engine.evaluate(rule_ids=["power_tree_flags"], project="demo", build="p1")[0]
+    result = engine.evaluate(
+        rule_ids=["power_tree_flags"], product="acme", project="demo", build="p1",
+    )[0]
     assert result.status == "fail"
     assert result.details.get("flag_count", 0) >= 1
 
@@ -239,6 +245,7 @@ def test_fa_recurrence_across_builds(tmp_path: Path) -> None:
         cases=(
             DebugCaseRecord(
                 case_id="RMA-1",
+                product="acme",
                 project="demo",
                 build="p1",
                 title="No boot p1",
@@ -250,6 +257,7 @@ def test_fa_recurrence_across_builds(tmp_path: Path) -> None:
             ),
             DebugCaseRecord(
                 case_id="RMA-2",
+                product="acme",
                 project="demo",
                 build="p2",
                 title="No boot p2",
@@ -278,7 +286,7 @@ def test_fa_recurrence_across_builds(tmp_path: Path) -> None:
         ],
     )
     engine = open_rule_engine(gq, pack_dir, case_index=cases)
-    result = engine.evaluate(rule_ids=["fa_recurrence"], project="demo")[0]
+    result = engine.evaluate(rule_ids=["fa_recurrence"], product="acme", project="demo")[0]
     assert result.status == "fail"
     assert any(c.kind == "case" for c in result.citations)
 
@@ -308,7 +316,9 @@ def test_fa_recurrence_insufficient_without_cases(tmp_path: Path) -> None:
         ],
     )
     engine = open_rule_engine(gq, pack_dir, case_index=None)
-    result = engine.evaluate(rule_ids=["fa_recurrence"], project="demo", build="p1")[0]
+    result = engine.evaluate(
+        rule_ids=["fa_recurrence"], product="acme", project="demo", build="p1",
+    )[0]
     assert result.status == "insufficient"
 
 
@@ -345,7 +355,7 @@ def test_evaluate_summary_counts(tmp_path: Path) -> None:
         )
     )
     engine = RuleEngine(pack, gq)
-    summary = engine.evaluate_summary(project="demo", build="p1")
+    summary = engine.evaluate_summary(product="acme", project="demo", build="p1")
     assert summary["counts"]["insufficient"] == 1
     assert summary["results"][0]["status"] == "insufficient"
 

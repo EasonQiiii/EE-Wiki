@@ -52,18 +52,21 @@ def test_answer_inventory_question_uses_index_metadata(rag_service) -> None:
         chunk_count=83,
         projects=(
             ProjectInventoryEntry(
+                product="global",
                 project="global",
                 builds=("global",),
                 chunk_count=10,
                 is_enterprise=True,
             ),
             ProjectInventoryEntry(
-                project="kingboo",
+                product="kingboo",
+                project="common",
                 builds=("common",),
                 chunk_count=3,
                 is_enterprise=False,
             ),
             ProjectInventoryEntry(
+                product="iphone",
                 project="logan",
                 builds=("p1",),
                 chunk_count=70,
@@ -90,13 +93,15 @@ def test_answer_named_project_build_question(rag_service) -> None:
         chunk_count=83,
         projects=(
             ProjectInventoryEntry(
+                product="iphone",
                 project="logan",
                 builds=("p1",),
                 chunk_count=70,
                 is_enterprise=False,
             ),
             ProjectInventoryEntry(
-                project="kingboo",
+                product="kingboo",
+                project="common",
                 builds=("common",),
                 chunk_count=13,
                 is_enterprise=False,
@@ -121,13 +126,15 @@ def test_answer_named_project_build_with_中(rag_service) -> None:
         chunk_count=70,
         projects=(
             ProjectInventoryEntry(
+                product="iphone",
                 project="logan",
                 builds=("p1",),
                 chunk_count=70,
                 is_enterprise=False,
             ),
             ProjectInventoryEntry(
-                project="kingboo",
+                product="kingboo",
+                project="common",
                 builds=("common",),
                 chunk_count=13,
                 is_enterprise=False,
@@ -153,10 +160,10 @@ def test_answer_generates_from_retrieved_chunks(rag_service, repo_root) -> None:
             "build": "p1",
             "document_type": "engineering_note",
             "title": "note",
-            "target_file": "data/processed/logan/p1/note/note.md",
+            "target_file": "data/processed/iphone/logan/p1/note/note.md",
         },
         citation={
-            "source_file": "data/raw/logan/p1/note/note.md",
+            "source_file": "data/raw/iphone/logan/p1/note/note.md",
             "chunk_id": "note__power",
             "page": 0,
             "excerpt": "VBAT",
@@ -177,7 +184,7 @@ def test_answer_generates_from_retrieved_chunks(rag_service, repo_root) -> None:
     assert "VBAT" in result.answer
     assert len(result.citations) == 1
     assert result.citations[0].chunk_id == "note__power"
-    assert result.citations[0].url.endswith("/v1/raw/logan/p1/note/note.md")
+    assert result.citations[0].url.endswith("/v1/raw/iphone/logan/p1/note/note.md")
     assert "[1]" in result.answer
     assert "<a href=" not in result.answer
     assert "**引用 / References**" not in result.answer
@@ -195,10 +202,10 @@ def test_answer_uses_debug_task_prompt(rag_service, repo_root) -> None:
             "build": "p1",
             "document_type": "engineering_note",
             "title": "note",
-            "target_file": "data/processed/logan/p1/note/note.md",
+            "target_file": "data/processed/iphone/logan/p1/note/note.md",
         },
         citation={
-            "source_file": "data/raw/logan/p1/note/note.md",
+            "source_file": "data/raw/iphone/logan/p1/note/note.md",
             "chunk_id": "note__power",
             "page": 0,
             "excerpt": "UART",
@@ -229,7 +236,10 @@ def test_stream_answer_yields_llm_fragments_directly(rag_service) -> None:
         chunk_id="note__power",
         content="VBAT connects to PMIC.",
         metadata={"project": "logan", "build": "p1", "document_type": "engineering_note"},
-        citation={"source_file": "data/raw/logan/p1/note/note.md", "chunk_id": "note__power"},
+        citation={
+            "source_file": "data/raw/iphone/logan/p1/note/note.md",
+            "chunk_id": "note__power",
+        },
     )
     rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[chunk], top_rerank_score=1.0)
 
@@ -337,7 +347,9 @@ def test_strong_retrieval_prevents_assistant_fallback(rag_service, app_config) -
     assert len(result.citations) == 1
 
 
-def test_answer_omits_history_for_unrelated_question_in_same_session(rag_service, app_config) -> None:
+def test_answer_omits_history_for_unrelated_question_in_same_session(
+    rag_service, app_config,
+) -> None:
     rag_service.config = replace(
         app_config,
         generation=_generation_config(app_config, assistant_fallback=False, query_rewrite=False),
@@ -346,7 +358,10 @@ def test_answer_omits_history_for_unrelated_question_in_same_session(rag_service
         chunk_id="note__power",
         content="VBAT connects to PMIC.",
         metadata={"project": "logan", "build": "p1", "document_type": "engineering_note"},
-        citation={"source_file": "data/raw/logan/p1/note/note.md", "chunk_id": "note__power"},
+        citation={
+            "source_file": "data/raw/iphone/logan/p1/note/note.md",
+            "chunk_id": "note__power",
+        },
     )
     rag_service.engine.retrieve.return_value = RetrievalResult(chunks=[chunk], top_rerank_score=1.0)
 
@@ -436,7 +451,7 @@ def test_finalize_appends_image_block_when_citations_have_images(
     from dataclasses import replace as _replace
 
     processed = tmp_path / "processed"
-    sch_images = processed / "logan/p1/sch/images/board"
+    sch_images = processed / "iphone/logan/p1/sch/images/board"
     sch_images.mkdir(parents=True)
     (sch_images / "board_p1_page.png").write_bytes(b"PNG")
 
@@ -458,10 +473,10 @@ def test_finalize_appends_image_block_when_citations_have_images(
             "build": "p1",
             "document_type": "schematic",
             "title": "board",
-            "target_file": str(processed / "logan/p1/sch/board.md"),
+            "target_file": str(processed / "iphone/logan/p1/sch/board.md"),
         },
         citation={
-            "source_file": "data/raw/logan/p1/sch/board.pdf",
+            "source_file": "data/raw/iphone/logan/p1/sch/board.pdf",
             "chunk_id": "board__p001",
             "page": 1,
             "excerpt": "POWER SWITCH",
@@ -504,10 +519,10 @@ def _make_chunk() -> HybridChunk:
             "build": "p1",
             "document_type": "engineering_note",
             "title": "note",
-            "target_file": "data/processed/logan/p1/note/note.md",
+            "target_file": "data/processed/iphone/logan/p1/note/note.md",
         },
         citation={
-            "source_file": "data/raw/logan/p1/note/note.md",
+            "source_file": "data/raw/iphone/logan/p1/note/note.md",
             "chunk_id": "note__power",
             "page": 0,
             "excerpt": "VBAT",
@@ -614,7 +629,7 @@ def test_scope_inference_resolves_logan_p1_from_question(
     rag_service, app_config, data_layout,
 ) -> None:
     catalog = ScopeCatalog(
-        products={"logan": frozenset({"p1", "p2"})},
+        products={"iphone": {"logan": frozenset({"p1", "p2"})}},
         enterprise_segment=data_layout.enterprise_project,
         project_shared_segment=data_layout.project_shared_build,
     )
@@ -639,7 +654,7 @@ def test_scope_inference_resolves_logan_p1_from_question(
             "title": "Explorer STM32F4_V2.2_SCH",
         },
         citation={
-            "source_file": "data/raw/logan/p1/sch/Explorer STM32F4_V2.2_SCH.pdf",
+            "source_file": "data/raw/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.pdf",
             "chunk_id": "Explorer STM32F4_V2.2_SCH__p002",
         },
     )
@@ -653,9 +668,10 @@ def test_scope_inference_resolves_logan_p1_from_question(
 
     rag_service.llm.generate_stream = _fake_stream
 
-    rag_service.answer("Logan p1 lcd的pin有哪些")
+    rag_service.answer("iPhone Logan p1 lcd的pin有哪些")
     rag_service.engine.retrieve.assert_called_once()
     call_args = rag_service.engine.retrieve.call_args
+    assert call_args.kwargs["target_product"] == "iphone"
     assert call_args.kwargs["target_project"] == "logan"
     assert call_args.kwargs["target_build"] == "p1"
     assert call_args.kwargs["scope_ranks_override"] is not None
@@ -664,7 +680,7 @@ def test_scope_inference_resolves_logan_p1_from_question(
 
 
 def test_weak_retrieval_classifies_before_retrieval_not_after(rag_service, app_config) -> None:
-    """Separate prepare mode classifies once before retrieval; assistant fallback skips a second pass."""
+    """Separate prepare classifies once before retrieval; fallback skips a second pass."""
     rag_service.config = replace(
         app_config,
         generation=_generation_config(

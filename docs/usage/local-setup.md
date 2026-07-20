@@ -51,7 +51,7 @@ Place models under `EE_WIKI_MODELS_DIR`. Names match [`config/default.yaml`](../
 | `llm_mlx_model` | `Qwen3.5-9B-MLX-4bit` | RAG / chat (`generation.llm_backend: mlx`) |
 | `visual_model` | `Qwen3-VL-4B-Instruct` | Schematic PDF ingest only |
 
-On **48 GB** memory the default 9B MLX LLM plus embed + rerank runs comfortably. For schematic ingest, prefer running `scripts/ingest.py` when `serve.py` is stopped — VLM load peaks memory briefly.
+On **48 GB** memory the default 9B MLX LLM plus embed + rerank runs comfortably. Schematic ingest defaults to `ocr_only` (no VLM). If you set `fidelity_mode: vlm_plus_ocr`, prefer running `scripts/ingest.py` when `serve.py` is stopped — VLM load peaks memory briefly.
 
 ## Recommended config (48 GB)
 
@@ -149,16 +149,16 @@ Open WebUI still connects to `http://<host>:8080/v1` — no frontend change.
 ## Operator workflow
 
 ```bash
-# 1. Place documents under data/raw/{project}/{build}/{type}/
+# 1. Place documents under data/raw/{product}/{project}/{build}/{type}/
 
 # 2. Ingest + index
 python scripts/sync.py
 
 # 3. Smoke test (retrieval only)
-python scripts/query.py "test query" --project <project> --build <build>
+python scripts/query.py "test query" --product <product> --project <project> --build <build>
 
 # 4. Smoke test (RAG + citations)
-python scripts/ask.py "test question" --project <project> --build <build> --json
+python scripts/ask.py "test question" --product <product> --project <project> --build <build> --json
 
 # 5. API server
 python scripts/serve.py
@@ -188,11 +188,11 @@ Run on real engineering documents before declaring V1 complete:
 - [ ] Engineering note (`note/`): headings chunk correctly; procedures stay intact
 - [ ] Prose PDF (`sop/` or `datasheet/`): text or OCR content searchable
 - [ ] Schematic PDF (`sch/`): page-level chunks; citations include `page` and image URLs
-- [ ] Scope inheritance: query `project=X, build=Y` finds `X/common/` and `global/` content
+- [ ] Scope inheritance: query `product=P, project=X, build=Y` finds `P/X/common/`, `P/common/`, and `global/` content
 - [ ] Deletion sync: remove a raw file → `sync.py` → chunk gone from index
 - [ ] Insufficient context: unrelated question returns explicit message, no fabrication
 - [ ] `ask.py --json` returns `citations[]` with `source_file`, `chunk_id`, `excerpt`
-- [ ] RAG answers label `project` / `build` and distinguish build vs project common vs global
+- [ ] RAG answers label `product` / `project` / `build` and distinguish build vs project/product common vs global
 - [ ] `serve.py` + Open WebUI: `[1]` markers link to processed documents
 - [ ] `pytest` and `ruff check src tests` pass
 

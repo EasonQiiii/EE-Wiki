@@ -16,10 +16,11 @@ def _index() -> ComponentIndex:
                     key="U101",
                     kind="designator",
                     chunk_id="board__p001",
+                    product="iphone",
                     project="logan",
                     build="p1",
                     document_type="schematic",
-                    source_file="data/raw/logan/p1/sch/board.pdf",
+                    source_file="data/raw/iphone/logan/p1/sch/board.pdf",
                     page=1,
                     title="board",
                     excerpt="U101 PHY",
@@ -30,6 +31,7 @@ def _index() -> ComponentIndex:
                     key="STM32F407VGT6",
                     kind="part_number",
                     chunk_id="stm32__p001",
+                    product="global",
                     project="global",
                     build="global",
                     document_type="datasheet",
@@ -48,6 +50,7 @@ def test_lookup_tokens_respects_scope(app_config) -> None:
         _index(),
         ["U101"],
         layout=app_config.data_layout,
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
         scope_inheritance=True,
@@ -61,7 +64,23 @@ def test_lookup_tokens_excludes_out_of_scope_build(app_config) -> None:
         _index(),
         ["U101"],
         layout=app_config.data_layout,
-        target_project="kingboo",
+        target_product="kingboo",
+        target_project="logan",
+        target_build="p1",
+        scope_inheritance=True,
+    )
+
+    assert chunk_ids == set()
+
+
+def test_lookup_tokens_excludes_same_slugs_other_product(app_config) -> None:
+    """logan/p1 under another product must not see iphone/logan/p1 hits."""
+    chunk_ids = lookup_tokens(
+        _index(),
+        ["U101"],
+        layout=app_config.data_layout,
+        target_product="ipad",
+        target_project="logan",
         target_build="p1",
         scope_inheritance=True,
     )
@@ -74,6 +93,7 @@ def test_search_components_returns_hits(app_config) -> None:
         _index(),
         "STM32F407VGT6",
         layout=app_config.data_layout,
+        target_product="global",
         target_project="global",
         target_build="global",
     )

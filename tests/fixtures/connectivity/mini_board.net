@@ -1,0 +1,5 @@
+# fixture netlist
+EDP_AUXP U1 A12
+EDP_AUXP R1 1
+GND U1 B1
+PP3V3_S0 U1 A1

@@ -39,6 +39,7 @@ def _layout(tmp_path: Path) -> DataLayoutConfig:
 def _sch_chunk(
     *,
     chunk_id: str,
+    product: str = "acme",
     project: str,
     build: str,
     source_file: str,
@@ -51,6 +52,7 @@ def _sch_chunk(
         chunk_id=chunk_id,
         content="power page",
         metadata=Metadata(
+            product=product,
             project=project,
             build=build,
             document_type="schematic",
@@ -101,10 +103,10 @@ def test_build_extracts_rails_and_supplies(tmp_path: Path) -> None:
     ]
     graph = build_graph_from_chunks(chunks, layout=layout, power_tree=True)
 
-    rail_3v3 = rail_node_id("demo", "p1", "3V3")
-    rail_vin = rail_node_id("demo", "p1", "VIN")
-    u1 = component_node_id("demo", "p1", "U1")
-    u101 = component_node_id("demo", "p1", "U101")
+    rail_3v3 = rail_node_id("acme", "demo", "p1", "3V3")
+    rail_vin = rail_node_id("acme", "demo", "p1", "VIN")
+    u1 = component_node_id("acme", "demo", "p1", "U1")
+    u101 = component_node_id("acme", "demo", "p1", "U101")
 
     assert rail_3v3 in graph.nodes
     assert graph.nodes[rail_3v3].type == NODE_RAIL
@@ -141,24 +143,24 @@ def test_power_tree_queries(tmp_path: Path) -> None:
     gq = open_query(graph, layout=layout, scope_inheritance=True)
     power = open_power_query(gq)
 
-    feeds = power.what_feeds("3V3", project="demo", build="p1")
+    feeds = power.what_feeds("3V3", product="acme", project="demo", build="p1")
     feed_ids = {item["id"] for item in feeds}
-    assert component_node_id("demo", "p1", "U1") in feed_ids
-    assert rail_node_id("demo", "p1", "VIN") in feed_ids
+    assert component_node_id("acme", "demo", "p1", "U1") in feed_ids
+    assert rail_node_id("acme", "demo", "p1", "VIN") in feed_ids
 
-    powered = power.what_powers("3V3", project="demo", build="p1")
-    assert any(item["id"] == component_node_id("demo", "p1", "U101") for item in powered)
+    powered = power.what_powers("3V3", product="acme", project="demo", build="p1")
+    assert any(item["id"] == component_node_id("acme", "demo", "p1", "U101") for item in powered)
 
-    tree = power.serialize_tree("U1", project="demo", build="p1")
+    tree = power.serialize_tree("U1", product="acme", project="demo", build="p1")
     assert "Rail:3V3" in tree or "3V3" in tree
 
-    flags = power.flags(project="demo", build="p1")
+    flags = power.flags(product="acme", project="demo", build="p1")
     codes = {f.code for f in flags}
     # VIN may flag missing_supplier (battery/connector unknown) — acceptable
-    assert "multi_supplier" not in codes or True
+    assert "multi_supplier" not in codes
 
-    result = power.query("3V3", direction="tree", project="demo", build="p1")
-    assert result["resolved_id"] == rail_node_id("demo", "p1", "3V3")
+    result = power.query("3V3", direction="tree", product="acme", project="demo", build="p1")
+    assert result["resolved_id"] == rail_node_id("acme", "demo", "p1", "3V3")
     assert result["tree"]
 
 
@@ -176,7 +178,8 @@ def test_datasheet_supply_links_part(tmp_path: Path) -> None:
         chunk_id="d1",
         content="Supply voltage 3.3V",
         metadata=Metadata(
-            project="demo",
+            product="acme",
+            project="common",
             build="common",
             document_type="datasheet",
             title="MCU",
@@ -191,7 +194,7 @@ def test_datasheet_supply_links_part(tmp_path: Path) -> None:
         ),
     )
     graph = build_graph_from_chunks([sch, ds], layout=layout)
-    rail = rail_node_id("demo", "p1", "3V3")
+    rail = rail_node_id("acme", "demo", "p1", "3V3")
     from ee_wiki.graph.ids import part_node_id
 
     part = part_node_id("STM32F407VGT6")

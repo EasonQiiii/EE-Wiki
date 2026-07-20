@@ -111,7 +111,7 @@ def test_extract_page_text_falls_back_to_ocr_when_sparse() -> None:
 
 
 def test_parse_prose_pdf_builds_page_sections(ingest_config: AppConfig) -> None:
-    raw_path = ingest_config.raw_dir / "logan/p1/sop/bringup.pdf"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/sop/bringup.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
 
@@ -141,6 +141,7 @@ def test_parse_prose_pdf_accepts_external_path_with_metadata(
     pdf_path = tmp_path / "converted.pdf"
     pdf_path.write_bytes(b"%PDF-1.4")
     metadata = Metadata(
+        product="global",
         project="global",
         build="global",
         document_type="datasheet",
@@ -188,7 +189,7 @@ def test_ingest_file_prose_pdf_end_to_end(ingest_config: AppConfig) -> None:
 
 
 def test_parse_prose_pdf_rejects_schematic_path(ingest_config: AppConfig) -> None:
-    raw_path = ingest_config.raw_dir / "logan/p1/sch/board.pdf"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/sch/board.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
     with pytest.raises(ProsePdfParserError, match="sch/"):
@@ -196,7 +197,7 @@ def test_parse_prose_pdf_rejects_schematic_path(ingest_config: AppConfig) -> Non
 
 
 def test_sync_treats_prose_pdf_as_ingestible(ingest_config: AppConfig) -> None:
-    raw_path = ingest_config.raw_dir / "logan/p1/note/scan.pdf"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/note/scan.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
 
@@ -206,7 +207,7 @@ def test_sync_treats_prose_pdf_as_ingestible(ingest_config: AppConfig) -> None:
 
 
 def test_parse_prose_pdf_raises_when_no_text(ingest_config: AppConfig) -> None:
-    raw_path = ingest_config.raw_dir / "logan/p1/note/empty.pdf"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/note/empty.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
 

@@ -24,6 +24,7 @@ async def list_projects(
         project_shared_build=inventory.project_shared_build,
         projects=[
             ProjectInventoryEntryModel(
+                product=entry.product,
                 project=entry.project,
                 builds=list(entry.builds),
                 chunk_count=entry.chunk_count,

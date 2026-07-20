@@ -67,7 +67,7 @@ def resolve_ingest_targets(body: IngestRequest, config: AppConfig) -> list[Path]
     """Map request filters to one or more ingest roots under ``data/raw/``.
 
     Args:
-        body: Ingest request with optional path, paths, project, or build filters.
+        body: Ingest request with optional path, paths, product, project, or build filters.
         config: Application configuration.
 
     Returns:
@@ -86,10 +86,23 @@ def resolve_ingest_targets(body: IngestRequest, config: AppConfig) -> list[Path]
         return [_resolve_one_raw_path(body.path, config)]
 
     raw_dir = config.raw_dir.resolve()
-    if body.project:
+    if body.project or body.build:
+        if not body.product:
+            raise IngestionError(
+                "product is required when project or build is set; "
+                "omit product, project, and build to ingest all of data/raw/"
+            )
+    if body.product:
+        if body.project:
+            if body.build:
+                return [raw_dir / body.product / body.project / body.build]
+            return [raw_dir / body.product / body.project]
         if body.build:
-            return [raw_dir / body.project / body.build]
-        return [raw_dir / body.project]
+            raise IngestionError(
+                "build requires product and project "
+                "(data/raw/{product}/{project}/{build}/)"
+            )
+        return [raw_dir / body.product]
 
     return [raw_dir]
 

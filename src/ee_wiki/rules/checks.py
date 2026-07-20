@@ -26,6 +26,7 @@ def check_rail_presence(
     rule: RuleDefinition,
     *,
     graph_query: GraphQuery,
+    product: str | None = None,
     project: str | None,
     build: str | None,
 ) -> RuleResult:
@@ -33,17 +34,20 @@ def check_rail_presence(
     params = rule.params
     skip_ground = bool(params.get("skip_ground", True))
     nets = graph_query.filter_by_scope(
+        product=product,
         project=project,
         build=build,
         node_types={NODE_NET},
     )
     rails = graph_query.filter_by_scope(
+        product=product,
         project=project,
         build=build,
         node_types={NODE_RAIL},
     )
     rail_keys = {
         (
+            str(r.get("product", "")),
             str(r.get("project", "")),
             str(r.get("build", "")),
             _normalize_token(_net_name(r.get("attributes") or {}, str(r.get("id", "")))),
@@ -63,7 +67,7 @@ def check_rail_presence(
         if rail is None or net is None or rail.type != NODE_RAIL:
             continue
         name = _normalize_token(_net_name(rail.attributes, rail.id))
-        rail_keys.add((rail.project, rail.build, name))
+        rail_keys.add((rail.product, rail.project, rail.build, name))
 
     candidates: list[dict[str, Any]] = []
     for net in nets:
@@ -90,6 +94,7 @@ def check_rail_presence(
         attrs = net.get("attributes") or {}
         name = _net_name(attrs if isinstance(attrs, dict) else {}, str(net.get("id", "")))
         key = (
+            str(net.get("product", "")),
             str(net.get("project", "")),
             str(net.get("build", "")),
             _normalize_token(name),
@@ -99,6 +104,7 @@ def check_rail_presence(
                 RuleCitation(
                     kind="graph_node",
                     ref=str(net.get("id", "")),
+                    product=str(net.get("product", "")),
                     project=str(net.get("project", "")),
                     build=str(net.get("build", "")),
                     excerpt=f"Rail-like net {name!r} has no matching Rail node",
@@ -136,6 +142,7 @@ def check_power_tree_flags(
     rule: RuleDefinition,
     *,
     power_query: PowerTreeQuery | None,
+    product: str | None = None,
     project: str | None,
     build: str | None,
 ) -> RuleResult:
@@ -155,10 +162,11 @@ def check_power_tree_flags(
     else:
         fail_codes = {"missing_supplier", "multi_supplier", "missing_parent_rail"}
 
-    flags = power_query.flags(project=project, build=build)
+    flags = power_query.flags(product=product, project=project, build=build)
     matching = [f for f in flags if f.code in fail_codes]
 
     rails = power_query.graph_query.filter_by_scope(
+        product=product,
         project=project,
         build=build,
         node_types={NODE_RAIL},
@@ -178,6 +186,7 @@ def check_power_tree_flags(
             RuleCitation(
                 kind="graph_node",
                 ref=nid,
+                product=flag.product,
                 project=flag.project,
                 build=flag.build,
                 excerpt=f"{flag.code}: {flag.message}",
@@ -213,6 +222,7 @@ def check_interface_naming(
     rule: RuleDefinition,
     *,
     graph_query: GraphQuery,
+    product: str | None = None,
     project: str | None,
     build: str | None,
 ) -> RuleResult:
@@ -225,6 +235,7 @@ def check_interface_naming(
     require_suffix = bool(rule.params.get("require_suffix", True))
 
     nets = graph_query.filter_by_scope(
+        product=product,
         project=project,
         build=build,
         node_types={NODE_NET},
@@ -269,6 +280,7 @@ def check_interface_naming(
                 RuleCitation(
                     kind="graph_node",
                     ref=str(net.get("id", "")),
+                    product=str(net.get("product", "")),
                     project=str(net.get("project", "")),
                     build=str(net.get("build", "")),
                     excerpt=(
@@ -307,12 +319,15 @@ def check_interface_naming(
 def _case_in_scope(
     case: DebugCaseRecord,
     *,
+    product: str | None,
     project: str | None,
     build: str | None,
-    allowed: set[tuple[str, str]] | None,
+    allowed: set[tuple[str, str, str]] | None,
 ) -> bool:
     if allowed is not None:
-        return (case.project, case.build) in allowed
+        return (case.product, case.project, case.build) in allowed
+    if product and case.product != product:
+        return False
     if project and case.project != project:
         return False
     if build and case.build != build:
@@ -324,24 +339,34 @@ def _cases_in_scope(
     cases: tuple[DebugCaseRecord, ...] | list[DebugCaseRecord],
     *,
     graph_query: GraphQuery,
+    product: str | None,
     project: str | None,
     build: str | None,
 ) -> list[DebugCaseRecord]:
-    """Filter cases by project/build with graph-compatible inheritance.
+    """Filter cases by product/project/build with graph-compatible inheritance.
 
-    When only ``project`` is set, include all builds of that project (not just
-    ``common``). When ``project`` and ``build`` are both set, use the same
-    scope expansion as graph queries.
+    When only ``product`` (and optionally ``project``) is set, include all
+    builds of that scope. When the full triple is set, use the same scope
+    expansion as graph queries.
     """
-    if not project and not build:
+    if not product and not project and not build:
         return list(cases)
-    if project and not build:
-        return [c for c in cases if c.project == project]
-    allowed = graph_query._allowed_scopes(project=project, build=build)
+    if not build:
+        return [
+            c
+            for c in cases
+            if (not product or c.product == product)
+            and (not project or c.project == project)
+        ]
+    allowed = graph_query._allowed_scopes(
+        product=product, project=project, build=build
+    )
     return [
         c
         for c in cases
-        if _case_in_scope(c, project=project, build=build, allowed=allowed)
+        if _case_in_scope(
+            c, product=product, project=project, build=build, allowed=allowed
+        )
     ]
 
 
@@ -350,6 +375,7 @@ def check_fa_recurrence(
     *,
     case_index: CaseIndex | None,
     graph_query: GraphQuery,
+    product: str | None = None,
     project: str | None,
     build: str | None,
 ) -> RuleResult:
@@ -373,6 +399,7 @@ def check_fa_recurrence(
     scoped = _cases_in_scope(
         case_index.cases,
         graph_query=graph_query,
+        product=product,
         project=project,
         build=build,
     )
@@ -387,27 +414,34 @@ def check_fa_recurrence(
         )
 
     # Recurrence needs cross-build visibility: when a single build is requested,
-    # still scan the whole project for matching signals.
+    # still scan the whole project (never across products) for matching signals.
     if project:
-        pool = [c for c in case_index.cases if c.project == project]
+        pool = [
+            c
+            for c in case_index.cases
+            if c.project == project and (not product or c.product == product)
+        ]
+    elif product:
+        pool = [c for c in case_index.cases if c.product == product]
     else:
         pool = list(scoped)
 
-    groups: dict[tuple[str, str], list[DebugCaseRecord]] = defaultdict(list)
+    # Group per product so identical symptoms in unrelated products never mix.
+    groups: dict[tuple[str, str, str], list[DebugCaseRecord]] = defaultdict(list)
 
     for case in pool:
         if "symptom" in match_on and case.symptom.strip():
-            key = ("symptom", _normalize_token(case.symptom))
+            key = (case.product, "symptom", _normalize_token(case.symptom))
             groups[key].append(case)
         if "suspected_parts" in match_on:
             for part in case.suspected_parts:
                 token = _normalize_token(part)
                 if token:
-                    groups[("suspected_parts", token)].append(case)
+                    groups[(case.product, "suspected_parts", token)].append(case)
 
     recurrent: list[tuple[str, str, list[DebugCaseRecord]]] = []
-    for (kind, token), cases in groups.items():
-        builds = {c.build for c in cases}
+    for (_case_product, kind, token), cases in groups.items():
+        builds = {(c.project, c.build) for c in cases}
         if len(builds) >= min_builds:
             # Deduplicate cases by case_id+source
             unique: dict[str, DebugCaseRecord] = {}
@@ -445,6 +479,7 @@ def check_fa_recurrence(
                 RuleCitation(
                     kind="case",
                     ref=case.case_id,
+                    product=case.product,
                     project=case.project,
                     build=case.build,
                     excerpt=(
@@ -458,6 +493,7 @@ def check_fa_recurrence(
                     RuleCitation(
                         kind="chunk",
                         ref=chunk_id,
+                        product=case.product,
                         project=case.project,
                         build=case.build,
                         excerpt=case.source_file,

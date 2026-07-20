@@ -63,7 +63,7 @@ def _patch_engine_for_query(engine: HybridRagEngine) -> None:
 
 
 def test_rag_smoke_raw_to_answer_with_citation(smoke_config: AppConfig) -> None:
-    raw_path = smoke_config.raw_dir / "logan/p1/note/power.md"
+    raw_path = smoke_config.raw_dir / "iphone/logan/p1/note/power.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text(
         "# Power\n\nVBAT connects to PMIC U0902.\n",
@@ -95,7 +95,7 @@ def test_rag_smoke_raw_to_answer_with_citation(smoke_config: AppConfig) -> None:
 
     assert not result.insufficient_context
     assert len(result.citations) >= 1
-    assert "data/raw/logan/p1/note/power.md" in result.citations[0].source_file
+    assert "data/raw/iphone/logan/p1/note/power.md" in result.citations[0].source_file
     assert "[1]" in result.answer
 
     mock_llm.generate.assert_not_called()

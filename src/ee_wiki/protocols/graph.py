@@ -50,14 +50,16 @@ class GraphStoreBackend(Protocol):
 class GraphQueryBackend(Protocol):
     """Scope-aware neighbor and path queries over a loaded knowledge graph.
 
-    Implementations must honor project/build/common/global scope inheritance
-    consistent with retrieval (see ADR 0006 and ``retrieval.scope_inheritance``).
+    Implementations must honor product/project/build/common/global scope
+    inheritance consistent with retrieval (see ADR 0006, ADR 0011, and
+    ``retrieval.scope_inheritance``).
     """
 
     def neighbors(
         self,
         node_id: str,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
         edge_types: list[str] | None = None,
@@ -67,6 +69,7 @@ class GraphQueryBackend(Protocol):
 
         Args:
             node_id: Starting node identifier.
+            product: Optional product scope filter.
             project: Optional project scope filter.
             build: Optional build scope filter (expands to common/global when
                 scope inheritance is enabled).
@@ -75,8 +78,8 @@ class GraphQueryBackend(Protocol):
 
         Returns:
             Neighbor records with at least ``id``, ``type``, and scope fields
-            (``project``, ``build``, and preferably ``scope``:
-            ``build`` | ``common`` | ``global``).
+            (``product``, ``project``, ``build``, and preferably ``scope``:
+            ``build`` | ``common`` | ``product_common`` | ``global``).
         """
         ...
 
@@ -85,6 +88,7 @@ class GraphQueryBackend(Protocol):
         source_id: str,
         target_id: str,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
         edge_types: list[str] | None = None,
@@ -95,6 +99,7 @@ class GraphQueryBackend(Protocol):
         Args:
             source_id: Start node identifier.
             target_id: End node identifier.
+            product: Optional product scope filter.
             project: Optional project scope filter.
             build: Optional build scope filter (with scope inheritance).
             edge_types: Optional edge-type allowlist.
@@ -109,17 +114,19 @@ class GraphQueryBackend(Protocol):
     def filter_by_scope(
         self,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
         node_types: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Return nodes matching project/build scope (with inheritance).
+        """Return nodes matching product/project/build scope (with inheritance).
 
         Args:
-            project: Optional project filter; ``None`` may mean all projects
+            product: Optional product filter; ``None`` may mean all products
                 (implementation-defined).
+            project: Optional project filter.
             build: Optional build filter; when set with inheritance, include
-                ``{project}/common`` and ``global``.
+                shared ``common`` tiers and ``global``.
             node_types: Optional node-type allowlist.
 
         Returns:

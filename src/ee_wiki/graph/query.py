@@ -14,14 +14,14 @@ from ee_wiki.graph.ids import (
     rail_node_id,
 )
 from ee_wiki.graph.models import KnowledgeGraph, scope_label
-from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
+from ee_wiki.ingestion.path_metadata import allowed_scope_triples
 
-_SCOPE_RANK = {"build": 0, "common": 1, "global": 2}
+_SCOPE_RANK = {"build": 0, "common": 1, "product_common": 2, "global": 3}
 
 
-def _scope_rank(project: str, build: str, layout: DataLayoutConfig) -> int:
-    """Rank build-specific evidence above common above global."""
-    return _SCOPE_RANK[scope_label(project, build, layout)]
+def _scope_rank(product: str, project: str, build: str, layout: DataLayoutConfig) -> int:
+    """Rank build > project common > product common > global."""
+    return _SCOPE_RANK[scope_label(product, project, build, layout)]
 
 
 class GraphQuery:
@@ -48,31 +48,33 @@ class GraphQuery:
     def _allowed_scopes(
         self,
         *,
+        product: str | None,
         project: str | None,
         build: str | None,
-    ) -> set[tuple[str, str]] | None:
-        """Return allowed ``(project, build)`` pairs, or ``None`` for no filter."""
-        if not project and not build:
-            return None
-        proj = project or self.layout.enterprise_project
-        bld = build or self.layout.project_shared_build
-        if not self.scope_inheritance:
-            return {(proj, bld)}
-        return set(expand_retrieval_scope(proj, bld, self.layout))
+    ) -> set[tuple[str, str, str]] | None:
+        """Return allowed ``(product, project, build)`` triples, or ``None`` for no filter."""
+        return allowed_scope_triples(
+            self.layout,
+            product=product,
+            project=project,
+            build=build,
+            scope_inheritance=self.scope_inheritance,
+        )
 
     def _node_in_scope(
         self,
         node_id: str,
-        allowed: set[tuple[str, str]] | None,
+        allowed: set[tuple[str, str, str]] | None,
     ) -> bool:
         if allowed is None:
             return True
         node = self.graph.nodes.get(node_id)
         if node is None:
             return False
-        # Cross-scope part nodes use the project/build of first sighting;
-        # still filter by that pair when inheritance is on.
-        return (node.project, node.build) in allowed
+        # Part identity nodes live under the enterprise scope; concrete nodes
+        # are filtered by the full triple so identical project/build slugs in
+        # another product can never leak in.
+        return (node.product, node.project, node.build) in allowed
 
     def _edge_allowed(
         self,
@@ -85,23 +87,28 @@ class GraphQuery:
 
     def _sort_key(self, node_id: str) -> tuple[int, str]:
         node = self.graph.nodes[node_id]
-        return (_scope_rank(node.project, node.build, self.layout), node_id)
+        return (
+            _scope_rank(node.product, node.project, node.build, self.layout),
+            node_id,
+        )
 
     def resolve_node(
         self,
         token: str,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
     ) -> str | None:
         """Resolve a user token to a graph node id within optional scope.
 
         Accepts a full node id, or a designator / net / rail / case / part
-        token. When ``project`` and ``build`` are set, scoped id forms are
-        tried first.
+        token. When ``product``, ``project``, and ``build`` are set, scoped id
+        forms are tried first.
 
         Args:
             token: Designator, net/rail/case name, part number, or full node id.
+            product: Preferred product for scoped id construction.
             project: Preferred project for scoped id construction.
             build: Preferred build for scoped id construction.
 
@@ -114,21 +121,22 @@ class GraphQuery:
         if cleaned in self.graph.nodes:
             return cleaned
 
+        prod = product or ""
         proj = project or ""
         bld = build or ""
         candidates: list[str] = []
-        if proj and bld:
+        if prod and proj and bld:
             candidates.extend(
                 [
-                    rail_node_id(proj, bld, cleaned),
-                    net_node_id(proj, bld, cleaned),
-                    component_node_id(proj, bld, cleaned),
-                    case_node_id(proj, bld, cleaned),
+                    rail_node_id(prod, proj, bld, cleaned),
+                    net_node_id(prod, proj, bld, cleaned),
+                    component_node_id(prod, proj, bld, cleaned),
+                    case_node_id(prod, proj, bld, cleaned),
                 ]
             )
         candidates.append(part_node_id(cleaned))
 
-        allowed = self._allowed_scopes(project=project, build=build)
+        allowed = self._allowed_scopes(product=product, project=project, build=build)
         for candidate in candidates:
             if candidate in self.graph.nodes and self._node_in_scope(candidate, allowed):
                 return candidate
@@ -155,6 +163,7 @@ class GraphQuery:
         self,
         node_id: str,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
     ) -> dict[str, Any] | None:
@@ -162,6 +171,7 @@ class GraphQuery:
 
         Args:
             node_id: Exact node identifier (resolve tokens via :meth:`resolve_node`).
+            product: Optional product scope filter.
             project: Optional project scope filter.
             build: Optional build scope filter.
 
@@ -170,7 +180,7 @@ class GraphQuery:
         """
         if node_id not in self.graph.nodes:
             return None
-        allowed = self._allowed_scopes(project=project, build=build)
+        allowed = self._allowed_scopes(product=product, project=project, build=build)
         if not self._node_in_scope(node_id, allowed):
             return None
         return self.graph.nodes[node_id].with_scope(self.layout)
@@ -179,6 +189,7 @@ class GraphQuery:
         self,
         node_id: str,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
         edge_types: list[str] | None = None,
@@ -188,19 +199,20 @@ class GraphQuery:
 
         Args:
             node_id: Starting node identifier.
+            product: Optional product scope filter.
             project: Optional project scope filter.
             build: Optional build scope filter (expands when inheritance is on).
             edge_types: Optional edge-type allowlist; ``None`` means all types.
             max_hops: Maximum traversal depth (default 1).
 
         Returns:
-            Neighbor records with ``id``, ``type``, ``project``, ``build``,
-            ``scope``, and ``hops``. Ordered build > common > global.
+            Neighbor records with ``id``, ``type``, ``product``, ``project``,
+            ``build``, ``scope``, and ``hops``. Ordered build > common > global.
         """
         if node_id not in self.graph.nodes or max_hops < 1:
             return []
 
-        allowed = self._allowed_scopes(project=project, build=build)
+        allowed = self._allowed_scopes(product=product, project=project, build=build)
         visited: set[str] = {node_id}
         # (node_id, hops)
         frontier: deque[tuple[str, int]] = deque([(node_id, 0)])
@@ -235,6 +247,7 @@ class GraphQuery:
         source_id: str,
         target_id: str,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
         edge_types: list[str] | None = None,
@@ -245,6 +258,7 @@ class GraphQuery:
         Args:
             source_id: Start node identifier.
             target_id: End node identifier.
+            product: Optional product scope filter.
             project: Optional project scope filter.
             build: Optional build scope filter (with scope inheritance).
             edge_types: Optional edge-type allowlist.
@@ -259,7 +273,7 @@ class GraphQuery:
         if source_id == target_id:
             return [self.graph.nodes[source_id].with_scope(self.layout)]
 
-        allowed = self._allowed_scopes(project=project, build=build)
+        allowed = self._allowed_scopes(product=product, project=project, build=build)
         if not self._node_in_scope(source_id, allowed) or not self._node_in_scope(
             target_id, allowed
         ):
@@ -312,22 +326,24 @@ class GraphQuery:
     def filter_by_scope(
         self,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
         node_types: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Return nodes matching project/build scope (with inheritance).
+        """Return nodes matching product/project/build scope (with inheritance).
 
         Args:
-            project: Optional project filter; ``None`` with no build means all.
+            product: Optional product filter; ``None`` with no project/build means all.
+            project: Optional project filter.
             build: Optional build filter; expands to common/global when enabled.
             node_types: Optional node-type allowlist.
 
         Returns:
             Matching node records with explicit scope labels, ranked build >
-            common > global.
+            project common > product common > global.
         """
-        allowed = self._allowed_scopes(project=project, build=build)
+        allowed = self._allowed_scopes(product=product, project=project, build=build)
         results: list[dict[str, Any]] = []
         for node_id, node in self.graph.nodes.items():
             if node_types is not None and node.type not in node_types:
@@ -337,7 +353,12 @@ class GraphQuery:
             results.append(node.with_scope(self.layout))
         results.sort(
             key=lambda item: (
-                _scope_rank(str(item["project"]), str(item["build"]), self.layout),
+                _scope_rank(
+                    str(item.get("product", "")),
+                    str(item["project"]),
+                    str(item["build"]),
+                    self.layout,
+                ),
                 str(item["id"]),
             )
         )

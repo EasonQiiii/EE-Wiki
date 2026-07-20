@@ -14,7 +14,7 @@ from typing import Any
 
 from ee_wiki.common.logging import get_logger
 from ee_wiki.common.serialization import DATASHEET_DOCUMENT_TYPE, SCHEMATIC_DOCUMENT_TYPE
-from ee_wiki.common.types import Chunk
+from ee_wiki.common.types import Chunk, DataLayoutConfig
 from ee_wiki.graph.assemble import GraphAssembler
 from ee_wiki.graph.ids import (
     component_node_id,
@@ -273,7 +273,7 @@ def add_power_semantics(
     asm: GraphAssembler,
     chunks: list[Chunk],
     *,
-    enterprise_project: str,
+    layout: DataLayoutConfig,
 ) -> PowerExtractionStats:
     """Add Rail nodes and ``supplies`` / ``derived_from`` edges from chunk metadata.
 
@@ -285,25 +285,27 @@ def add_power_semantics(
     input.
 
     Datasheet chunks: part-number components with ``supply_voltage`` link to
-    matching Rail nodes in the same project/build when a voltage hint matches.
+    matching Rail nodes in the same product/project when a voltage hint matches.
 
     Args:
         asm: Graph assembler already populated with components/nets/documents.
         chunks: Indexed chunks (schematic + datasheet).
-        enterprise_project: Enterprise segment for part-number node scope.
+        layout: Path naming configuration (reserved segments for scope rules).
 
     Returns:
         Extraction statistics for logging / fingerprints.
     """
+    global_segment = layout.global_segment
+    common_segment = layout.common_segment
     rail_count = 0
     supplies_count = 0
     derived_count = 0
-    # Track rails created per (project, build, name) for datasheet linking.
+    # Track rails created per (product, project, build, name) for datasheet linking.
     seen_rails: set[str] = set()
 
     for chunk in chunks:
         meta = chunk.metadata
-        if not meta.project or not meta.source_file:
+        if not meta.product or not meta.source_file:
             continue
         if meta.document_type != SCHEMATIC_DOCUMENT_TYPE:
             continue
@@ -311,7 +313,7 @@ def add_power_semantics(
             continue
 
         page = chunk.citation.page or meta.page
-        doc_id = document_node_id(meta.project, meta.build, meta.source_file)
+        doc_id = document_node_id(meta.product, meta.project, meta.build, meta.source_file)
         if doc_id not in asm.graph.nodes:
             continue
 
@@ -339,6 +341,7 @@ def add_power_semantics(
             role = rail_role(net_name)
             hint = voltage_hint_from_name(net_name)
             rail = asm.ensure_rail(
+                product=meta.product,
                 project=meta.project,
                 build=meta.build,
                 rail_name=net_name,
@@ -352,6 +355,7 @@ def add_power_semantics(
                 rail_count += 1
             # Ensure Net exists (build pass usually created it) then link identity.
             net = asm.ensure_net(
+                product=meta.product,
                 project=meta.project,
                 build=meta.build,
                 net_name=net_name,
@@ -364,6 +368,7 @@ def add_power_semantics(
                     source=rail.id,
                     target=net.id,
                     type=EDGE_DERIVED_FROM,
+                    product=meta.product,
                     project=meta.project,
                     build=meta.build,
                     attributes={"kind": "rail_of_net", "page": page},
@@ -393,7 +398,7 @@ def add_power_semantics(
             ]
 
         for reg in regulators:
-            reg_id = component_node_id(meta.project, meta.build, reg)
+            reg_id = component_node_id(meta.product, meta.project, meta.build, reg)
             if reg_id not in asm.graph.nodes:
                 continue
             targets = output_rails or [
@@ -406,6 +411,7 @@ def add_power_semantics(
                         source=reg_id,
                         target=rail.id,
                         type=EDGE_SUPPLIES,
+                        product=meta.product,
                         project=meta.project,
                         build=meta.build,
                         attributes={
@@ -420,11 +426,11 @@ def add_power_semantics(
 
         for _name, rail in output_rails:
             for load in loads:
-                load_id = component_node_id(meta.project, meta.build, load)
+                load_id = component_node_id(meta.product, meta.project, meta.build, load)
                 if load_id not in asm.graph.nodes:
                     continue
                 # Prefer pages where component already connects_to the net.
-                net_id = net_node_id(meta.project, meta.build, _name)
+                net_id = net_node_id(meta.product, meta.project, meta.build, _name)
                 co_connected = any(
                     e.type == "connects_to"
                     and (
@@ -443,6 +449,7 @@ def add_power_semantics(
                         source=rail.id,
                         target=load_id,
                         type=EDGE_SUPPLIES,
+                        product=meta.product,
                         project=meta.project,
                         build=meta.build,
                         attributes={
@@ -467,6 +474,7 @@ def add_power_semantics(
                             source=out_rail.id,
                             target=in_rail.id,
                             type=EDGE_DERIVED_FROM,
+                            product=meta.product,
                             project=meta.project,
                             build=meta.build,
                             attributes={
@@ -491,24 +499,31 @@ def add_power_semantics(
         parts = [t for t in meta.keywords if is_part_number_keyword(t)]
         if not parts:
             continue
-        # Match against rails already in the same project (any build under scope).
+        # Match against rails in the same product only (never across products).
+        # A product-common datasheet (project == common) may match any project's
+        # rails within that product; a project-scoped datasheet stays in its project.
         candidate_rails = [
             node
             for node in asm.graph.nodes.values()
-            if node.type == "Rail" and node.project == meta.project
+            if node.type == "Rail"
+            and node.product == meta.product
+            and (meta.project == common_segment or node.project == meta.project)
         ]
         for part in parts:
             part_id = part_node_id(part)
             if part_id not in asm.graph.nodes:
-                doc_id = document_node_id(meta.project, meta.build, meta.source_file)
+                doc_id = document_node_id(
+                    meta.product, meta.project, meta.build, meta.source_file
+                )
                 if doc_id not in asm.graph.nodes:
                     continue
                 asm.ensure_part(
                     part_number=part,
+                    product=meta.product,
                     project=meta.project,
                     build=meta.build,
                     doc_id=doc_id,
-                    enterprise_project=enterprise_project,
+                    global_segment=global_segment,
                 )
             for rail in candidate_rails:
                 rail_name = str(rail.attributes.get("name", ""))
@@ -520,6 +535,7 @@ def add_power_semantics(
                         source=rail.id,
                         target=part_id,
                         type=EDGE_SUPPLIES,
+                        product=meta.product,
                         project=meta.project,
                         build=meta.build,
                         attributes={

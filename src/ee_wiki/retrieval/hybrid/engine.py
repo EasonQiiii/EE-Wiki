@@ -14,6 +14,7 @@ import numpy as np
 
 from ee_wiki.common.config import AppConfig
 from ee_wiki.common.logging import get_logger
+from ee_wiki.common.project_aliases import canonicalize_scope_filters
 from ee_wiki.common.serialization import metadata_to_dict
 from ee_wiki.common.types import Chunk
 from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
@@ -53,7 +54,11 @@ from ee_wiki.retrieval.scope_cascade import (
     should_run_scope_cascade,
 )
 from ee_wiki.retrieval.scope_catalog import ScopeCatalog
-from ee_wiki.retrieval.scope_resolve import _inherit_product_scope_ranks
+from ee_wiki.retrieval.scope_resolve import (
+    _ambiguous_build_scope_ranks,
+    _inherit_product_scope_ranks,
+    _inherit_project_scope_ranks,
+)
 from ee_wiki.retrieval.section_expand import build_section_index, expand_retrieved_sections
 from ee_wiki.retrieval.tokenizer import tokenize_hw_text
 
@@ -63,19 +68,23 @@ logger = get_logger(__name__)
 def _is_build_schematic_chunk(
     chunk: HybridChunk,
     *,
+    target_product: str | None,
     target_project: str | None,
     target_build: str | None,
-    enterprise_project: str,
-    project_shared_build: str,
+    global_segment: str,
+    common_segment: str,
 ) -> bool:
     """Return whether ``chunk`` is a build-specific schematic in scope."""
     if chunk.metadata.get("document_type") != "schematic":
         return False
+    product = chunk.metadata.get("product")
     project = chunk.metadata.get("project")
     build = chunk.metadata.get("build")
-    if not project or not build:
+    if not product or not project or not build:
         return False
-    if project == enterprise_project or build == project_shared_build:
+    if product == global_segment or project == common_segment or build == common_segment:
+        return False
+    if target_product and product != target_product:
         return False
     if target_project and project != target_project:
         return False
@@ -88,24 +97,33 @@ def _document_type_rank(
     chunk: HybridChunk,
     *,
     board_pin_query: bool,
-    enterprise_project: str,
-    project_shared_build: str,
+    global_segment: str,
+    common_segment: str,
 ) -> int:
     """Lower is better: prefer build schematics over global datasheets for pin queries."""
     if not board_pin_query:
         return 1
     doc_type = chunk.metadata.get("document_type")
-    project = chunk.metadata.get("project")
+    product = chunk.metadata.get("product")
     build = chunk.metadata.get("build")
     if (
         doc_type == "schematic"
-        and project != enterprise_project
-        and build != project_shared_build
+        and product != global_segment
+        and build != common_segment
     ):
         return 0
-    if doc_type == "datasheet" and project == enterprise_project:
+    if doc_type == "datasheet" and product == global_segment:
         return 2
     return 1
+
+
+def _chunk_scope_triple(chunk: HybridChunk) -> tuple[str, str, str]:
+    """Return the ``(product, project, build)`` metadata triple for ``chunk``."""
+    return (
+        str(chunk.metadata.get("product") or ""),
+        str(chunk.metadata.get("project") or ""),
+        str(chunk.metadata.get("build") or ""),
+    )
 
 
 @dataclass
@@ -326,6 +344,7 @@ class HybridRagEngine:
         filtered: list[HybridChunk],
         search_query: str,
         *,
+        target_product: str | None,
         target_project: str | None,
         target_build: str | None,
         limit: int,
@@ -337,7 +356,7 @@ class HybridRagEngine:
         ``retrieve()``; passing it avoids recomputing ``get_scores`` for the
         same query. Equivalent results, less redundant work.
         """
-        if not is_board_interface_pin_query(search_query) or not target_project:
+        if not is_board_interface_pin_query(search_query) or not target_product:
             return []
         layout = self.config.data_layout
         candidates = [
@@ -345,10 +364,11 @@ class HybridRagEngine:
             for chunk in filtered
             if _is_build_schematic_chunk(
                 chunk,
+                target_product=target_product,
                 target_project=target_project,
                 target_build=target_build,
-                enterprise_project=layout.enterprise_project,
-                project_shared_build=layout.project_shared_build,
+                global_segment=layout.global_segment,
+                common_segment=layout.common_segment,
             )
         ]
         if not candidates or bm25_scores is None:
@@ -368,49 +388,52 @@ class HybridRagEngine:
     def _filter_by_scope(
         self,
         *,
+        target_product: str | None,
         target_project: str | None,
         target_build: str | None,
         document_type: str | None = None,
-        scope_ranks_override: dict[tuple[str, str], int] | None = None,
-    ) -> tuple[list[HybridChunk], dict[tuple[str, str], int]]:
+        scope_ranks_override: dict[tuple[str, str, str], int] | None = None,
+    ) -> tuple[list[HybridChunk], dict[tuple[str, str, str], int]]:
         if scope_ranks_override:
             scope_set = set(scope_ranks_override)
             filtered = [
                 chunk
                 for chunk in self.knowledge_base
-                if (chunk.metadata.get("project"), chunk.metadata.get("build")) in scope_set
+                if _chunk_scope_triple(chunk) in scope_set
             ]
             return (
                 self._apply_document_type_filter(filtered, document_type),
                 scope_ranks_override,
             )
 
-        if not target_project:
+        if not target_product and not target_project and not target_build:
             filtered = self.knowledge_base
             return self._apply_document_type_filter(filtered, document_type), {}
 
-        if self.config.retrieval.scope_inheritance and target_build:
-            scopes = expand_retrieval_scope(
-                target_project,
-                target_build,
-                self.config.data_layout,
+        if self.config.retrieval.scope_inheritance and target_product:
+            scope_ranks = self._resolve_scope_ranks(
+                target_product=target_product,
+                target_project=target_project,
+                target_build=target_build,
+                scope_ranks_override=None,
             )
-            scope_set = set(scopes)
-            scope_ranks = {pair: rank for rank, pair in enumerate(scopes)}
-            filtered = [
-                chunk
-                for chunk in self.knowledge_base
-                if (chunk.metadata.get("project"), chunk.metadata.get("build")) in scope_set
-            ]
-            return (
-                self._apply_document_type_filter(filtered, document_type),
-                scope_ranks,
-            )
+            if scope_ranks:
+                scope_set = set(scope_ranks)
+                filtered = [
+                    chunk
+                    for chunk in self.knowledge_base
+                    if _chunk_scope_triple(chunk) in scope_set
+                ]
+                return (
+                    self._apply_document_type_filter(filtered, document_type),
+                    scope_ranks,
+                )
 
         filtered = [
             chunk
             for chunk in self.knowledge_base
-            if chunk.metadata.get("project") == target_project
+            if (target_product is None or chunk.metadata.get("product") == target_product)
+            and (target_project is None or chunk.metadata.get("project") == target_project)
             and (target_build is None or chunk.metadata.get("build") == target_build)
         ]
         return self._apply_document_type_filter(filtered, document_type), {}
@@ -418,40 +441,50 @@ class HybridRagEngine:
     def _resolve_scope_ranks(
         self,
         *,
+        target_product: str | None,
         target_project: str | None,
         target_build: str | None,
-        scope_ranks_override: dict[tuple[str, str], int] | None,
-    ) -> dict[tuple[str, str], int]:
+        scope_ranks_override: dict[tuple[str, str, str], int] | None,
+    ) -> dict[tuple[str, str, str], int]:
         """Build scope rank map for cascade or flat inherited retrieval."""
         if scope_ranks_override:
             return scope_ranks_override
         layout = self.config.data_layout
-        if not target_project:
+        if not target_product:
             return {}
         if self.config.retrieval.scope_inheritance:
-            if target_build:
+            if target_project and target_build:
                 scopes = expand_retrieval_scope(
+                    target_product,
                     target_project,
                     target_build,
                     layout,
                 )
-                return {pair: rank for rank, pair in enumerate(scopes)}
+                return {triple: rank for rank, triple in enumerate(scopes)}
             catalog = self.get_scope_catalog()
-            return _inherit_product_scope_ranks(target_project, catalog, layout)
-        if target_build:
-            return {(target_project, target_build): 0}
+            if target_project:
+                return _inherit_project_scope_ranks(
+                    target_product, target_project, catalog, layout
+                )
+            if target_build:
+                return _ambiguous_build_scope_ranks(
+                    target_product, target_build, catalog, layout
+                )
+            return _inherit_product_scope_ranks(target_product, catalog, layout)
+        if target_project and target_build:
+            return {(target_product, target_project, target_build): 0}
         return {}
 
-    def _filter_chunks_by_scope_pairs(
+    def _filter_chunks_by_scope_triples(
         self,
-        scope_pairs: set[tuple[str, str]],
+        scope_triples: set[tuple[str, str, str]],
         document_type: str | None,
     ) -> list[HybridChunk]:
-        """Return indexed chunks whose metadata pair is in ``scope_pairs``."""
+        """Return indexed chunks whose metadata triple is in ``scope_triples``."""
         filtered = [
             chunk
             for chunk in self.knowledge_base
-            if (chunk.metadata.get("project"), chunk.metadata.get("build")) in scope_pairs
+            if _chunk_scope_triple(chunk) in scope_triples
         ]
         return self._apply_document_type_filter(filtered, document_type)
 
@@ -581,6 +614,7 @@ class HybridRagEngine:
         all_scores: Any | None,
         dense_k: int,
         sparse_k: int,
+        target_product: str | None,
         target_project: str | None,
         target_build: str | None,
     ) -> list[HybridChunk]:
@@ -596,10 +630,11 @@ class HybridRagEngine:
                 combined.append(chunk)
 
         board_pin_query = is_board_interface_pin_query(search_query)
-        if board_pin_query and target_project:
+        if board_pin_query and target_product:
             schematic_selected = self._recall_build_schematic_chunks(
                 filtered,
                 search_query,
+                target_product=target_product,
                 target_project=target_project,
                 target_build=target_build,
                 limit=dense_k,
@@ -668,15 +703,16 @@ class HybridRagEngine:
         *,
         query: str,
         search_query: str,
-        scope_ranks: dict[tuple[str, str], int],
+        scope_ranks: dict[tuple[str, str, str], int],
+        target_product: str | None = None,
         target_project: str | None = None,
         target_build: str | None = None,
     ) -> list[tuple[float, HybridChunk]]:
         """Sort reranked candidates; lower scope rank and higher logit win."""
 
         def scope_rank(chunk: HybridChunk) -> int:
-            pair = (chunk.metadata.get("project"), chunk.metadata.get("build"))
-            return scope_ranks.get(pair, 0) if scope_ranks else 0
+            triple = _chunk_scope_triple(chunk)
+            return scope_ranks.get(triple, 0) if scope_ranks else 0
 
         boost_tokens = query_boost_tokens(query)
         datasheet_hints = parse_datasheet_query_hints(query)
@@ -686,6 +722,7 @@ class HybridRagEngine:
             self._component_index,
             boost_tokens,
             layout=layout,
+            target_product=target_product,
             target_project=target_project,
             target_build=target_build,
             scope_inheritance=self.config.retrieval.scope_inheritance,
@@ -700,6 +737,7 @@ class HybridRagEngine:
                 self._case_index,
                 boost_tokens,
                 layout=layout,
+                target_product=target_product,
                 target_project=target_project,
                 target_build=target_build,
                 scope_inheritance=self.config.retrieval.scope_inheritance,
@@ -737,8 +775,8 @@ class HybridRagEngine:
                 _document_type_rank(
                     item[1],
                     board_pin_query=board_pin_query,
-                    enterprise_project=layout.enterprise_project,
-                    project_shared_build=layout.project_shared_build,
+                    global_segment=layout.global_segment,
+                    common_segment=layout.common_segment,
                 ),
                 -keyword_boost(item[1]),
                 -float(item[0]),
@@ -755,9 +793,10 @@ class HybridRagEngine:
         all_scores: Any | None,
         dense_k: int,
         sparse_k: int,
+        target_product: str | None,
         target_project: str | None,
         target_build: str | None,
-        scope_ranks: dict[tuple[str, str], int],
+        scope_ranks: dict[tuple[str, str, str], int],
     ) -> tuple[list[tuple[float, HybridChunk]], float | None]:
         """Recall, rerank, and sort candidates from a pre-filtered chunk pool."""
         combined = self._recall_candidates(
@@ -768,6 +807,7 @@ class HybridRagEngine:
             all_scores=all_scores,
             dense_k=dense_k,
             sparse_k=sparse_k,
+            target_product=target_product,
             target_project=target_project,
             target_build=target_build,
         )
@@ -783,6 +823,7 @@ class HybridRagEngine:
             query=query,
             search_query=search_query,
             scope_ranks=scope_ranks,
+            target_product=target_product,
             target_project=target_project,
             target_build=target_build,
         )
@@ -801,15 +842,16 @@ class HybridRagEngine:
         *,
         query: str,
         search_query: str,
+        target_product: str | None,
         target_project: str | None,
         target_build: str | None,
         document_type: str | None,
-        scope_ranks: dict[tuple[str, str], int],
+        scope_ranks: dict[tuple[str, str, str], int],
         dense_k: int,
         sparse_k: int,
         final_k: int,
     ) -> RetrievalResult:
-        """Run tier cascade: build → project_common → global with mixed quotas."""
+        """Run tier cascade: build → project/product common → global with mixed quotas."""
         from ee_wiki.retrieval.scope_cascade import SCOPE_TIER_GLOBAL
 
         layout = self.config.data_layout
@@ -826,8 +868,8 @@ class HybridRagEngine:
         top_rerank_score: float | None = None
 
         for phase in phases:
-            filtered = self._filter_chunks_by_scope_pairs(
-                set(phase.scope_pairs),
+            filtered = self._filter_chunks_by_scope_triples(
+                set(phase.scope_triples),
                 document_type,
             )
             if not filtered:
@@ -841,6 +883,7 @@ class HybridRagEngine:
                 all_scores=all_scores,
                 dense_k=dense_k,
                 sparse_k=sparse_k,
+                target_product=target_product,
                 target_project=target_project,
                 target_build=target_build,
                 scope_ranks=scope_ranks,
@@ -854,9 +897,9 @@ class HybridRagEngine:
                 primary_tier = phase.tier
 
             logger.info(
-                "scope_cascade phase tier=%d pairs=%d hits=%d top_rerank=%s",
+                "scope_cascade phase tier=%d triples=%d hits=%d top_rerank=%s",
                 phase.tier,
-                len(phase.scope_pairs),
+                len(phase.scope_triples),
                 len(scored),
                 f"{phase_top:.3f}" if phase_top is not None else "none",
             )
@@ -875,8 +918,8 @@ class HybridRagEngine:
             for phase in phases:
                 if phase.tier <= primary_tier or phase.tier in reranked_by_tier:
                     continue
-                filtered = self._filter_chunks_by_scope_pairs(
-                    set(phase.scope_pairs),
+                filtered = self._filter_chunks_by_scope_triples(
+                    set(phase.scope_triples),
                     document_type,
                 )
                 if not filtered:
@@ -889,6 +932,7 @@ class HybridRagEngine:
                     all_scores=all_scores,
                     dense_k=dense_k,
                     sparse_k=sparse_k,
+                    target_product=target_product,
                     target_project=target_project,
                     target_build=target_build,
                     scope_ranks=scope_ranks,
@@ -925,17 +969,19 @@ class HybridRagEngine:
         *,
         query: str,
         search_query: str,
+        target_product: str | None,
         target_project: str | None,
         target_build: str | None,
         document_type: str | None,
-        scope_ranks: dict[tuple[str, str], int],
-        scope_ranks_override: dict[tuple[str, str], int] | None,
+        scope_ranks: dict[tuple[str, str, str], int],
+        scope_ranks_override: dict[tuple[str, str, str], int] | None,
         dense_k: int,
         sparse_k: int,
         final_k: int,
     ) -> RetrievalResult:
         """Parallel-pool retrieval (legacy path when cascade is disabled)."""
         filtered, resolved_ranks = self._filter_by_scope(
+            target_product=target_product,
             target_project=target_project,
             target_build=target_build,
             document_type=document_type,
@@ -954,6 +1000,7 @@ class HybridRagEngine:
             all_scores=all_scores,
             dense_k=dense_k,
             sparse_k=sparse_k,
+            target_product=target_product,
             target_project=target_project,
             target_build=target_build,
             scope_ranks=resolved_ranks or scope_ranks,
@@ -968,6 +1015,7 @@ class HybridRagEngine:
         self,
         query: str,
         *,
+        target_product: str | None = None,
         target_project: str | None = None,
         target_build: str | None = None,
         limit: int = 20,
@@ -976,12 +1024,13 @@ class HybridRagEngine:
 
         Args:
             query: Part number or schematic reference designator.
+            target_product: Optional product metadata filter.
             target_project: Optional project metadata filter.
             target_build: Optional build metadata filter.
             limit: Maximum number of hits to return.
 
         Returns:
-            Matching component hits scoped to the requested project/build.
+            Matching component hits scoped to the requested product/project/build.
         """
         from ee_wiki.retrieval.component_lookup import search_components as lookup_components
 
@@ -989,10 +1038,17 @@ class HybridRagEngine:
             self.load_index()
         if self._component_index is None:
             self._component_index = load_component_index(self.config.indexes_dir)
+        target_product, target_project, target_build = canonicalize_scope_filters(
+            target_product,
+            target_project,
+            target_build,
+            aliases=self.config.data_layout.project_aliases,
+        )
         return lookup_components(
             self._component_index,
             query,
             layout=self.config.data_layout,
+            target_product=target_product,
             target_project=target_project,
             target_build=target_build,
             scope_inheritance=self.config.retrieval.scope_inheritance,
@@ -1003,6 +1059,7 @@ class HybridRagEngine:
         self,
         query: str,
         *,
+        target_product: str | None = None,
         target_project: str | None = None,
         target_build: str | None = None,
         limit: int = 20,
@@ -1011,21 +1068,29 @@ class HybridRagEngine:
 
         Args:
             query: Natural language or keyword query.
+            target_product: Optional product metadata filter.
             target_project: Optional project metadata filter.
             target_build: Optional build metadata filter.
             limit: Maximum number of cases to return.
 
         Returns:
-            Matching debug-case records scoped to the requested project/build.
+            Matching debug-case records scoped to the requested product/project/build.
         """
         if not self.knowledge_base:
             self.load_index()
         if self._case_index is None:
             self._case_index = load_case_index(self.config.indexes_dir)
+        target_product, target_project, target_build = canonicalize_scope_filters(
+            target_product,
+            target_project,
+            target_build,
+            aliases=self.config.data_layout.project_aliases,
+        )
         return lookup_cases(
             self._case_index,
             query,
             layout=self.config.data_layout,
+            target_product=target_product,
             target_project=target_project,
             target_build=target_build,
             scope_inheritance=self.config.retrieval.scope_inheritance,
@@ -1036,28 +1101,32 @@ class HybridRagEngine:
         self,
         query: str,
         *,
+        target_product: str | None = None,
         target_project: str | None = None,
         target_build: str | None = None,
         document_type: str | None = None,
         top_k_dense: int | None = None,
         top_k_sparse: int | None = None,
         top_k_final: int | None = None,
-        scope_ranks_override: dict[tuple[str, str], int] | None = None,
+        scope_ranks_override: dict[tuple[str, str, str], int] | None = None,
     ) -> RetrievalResult:
         """Run scope filter → dense + sparse recall → rerank → scope priority.
 
         When ``scope_cascade`` is enabled with scope inheritance, retrieval runs
-        tier phases (build → project_common → global) instead of a single mixed pool.
+        tier phases (build → project common → product common → global) instead
+        of a single mixed pool.
 
         Args:
             query: Natural language or keyword search string.
+            target_product: Optional product metadata filter.
             target_project: Optional project metadata filter.
             target_build: Optional build metadata filter.
             document_type: Optional document type filter (e.g. ``schematic``).
             top_k_dense: Dense recall count override.
             top_k_sparse: Sparse recall count override.
             top_k_final: Final reranked result count override.
-            scope_ranks_override: Optional precomputed scope rank map for multi-pair filters.
+            scope_ranks_override: Optional precomputed scope rank map over
+                ``(product, project, build)`` triples.
 
         Returns:
             Ranked chunks with citation metadata and top rerank score.
@@ -1067,6 +1136,12 @@ class HybridRagEngine:
         if not self.knowledge_base:
             return RetrievalResult(chunks=[], top_rerank_score=None)
 
+        target_product, target_project, target_build = canonicalize_scope_filters(
+            target_product,
+            target_project,
+            target_build,
+            aliases=self.config.data_layout.project_aliases,
+        )
         dense_k = top_k_dense or self.config.retrieval.top_k_dense
         sparse_k = top_k_sparse or self.config.retrieval.top_k_sparse
         final_k = top_k_final or self.config.retrieval.top_k_final
@@ -1076,6 +1151,7 @@ class HybridRagEngine:
 
         resolved_document_type = effective_document_type(query, document_type)
         scope_ranks = self._resolve_scope_ranks(
+            target_product=target_product,
             target_project=target_project,
             target_build=target_build,
             scope_ranks_override=scope_ranks_override,
@@ -1084,12 +1160,13 @@ class HybridRagEngine:
         if should_run_scope_cascade(
             scope_inheritance=self.config.retrieval.scope_inheritance,
             scope_cascade=self.config.retrieval.scope_cascade,
-            target_project=target_project,
+            target_product=target_product,
             scope_ranks=scope_ranks,
         ):
             result = self._retrieve_cascade(
                 query=query,
                 search_query=search_query,
+                target_product=target_product,
                 target_project=target_project,
                 target_build=target_build,
                 document_type=resolved_document_type,
@@ -1102,6 +1179,7 @@ class HybridRagEngine:
             result = self._retrieve_flat(
                 query=query,
                 search_query=search_query,
+                target_product=target_product,
                 target_project=target_project,
                 target_build=target_build,
                 document_type=resolved_document_type,
@@ -1131,6 +1209,7 @@ class HybridRagEngine:
         enrichment = try_graph_enrichment(
             search_query,
             config=self.config,
+            product=target_product,
             project=target_project,
             build=target_build,
         )

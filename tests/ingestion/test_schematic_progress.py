@@ -52,7 +52,7 @@ def test_parse_schematic_pdf_logs_page_progress(
     caplog: pytest.LogCaptureFixture,
     monkeypatch,
 ) -> None:
-    raw_path = schematic_config.raw_dir / "logan/p1/sch/board.pdf"
+    raw_path = schematic_config.raw_dir / "iphone/logan/p1/sch/board.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
 

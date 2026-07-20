@@ -42,7 +42,7 @@ def ingest_config(app_config, tmp_path: Path) -> AppConfig:
 
 
 def test_pdf_in_note_folder_uses_prose_parser(ingest_config: AppConfig) -> None:
-    raw_path = ingest_config.raw_dir / "logan/p1/note/doc.pdf"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/note/doc.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
 
@@ -61,7 +61,7 @@ def test_pdf_in_note_folder_uses_prose_parser(ingest_config: AppConfig) -> None:
 
 
 def test_schematic_pdf_ingest_with_mock_engine(ingest_config: AppConfig, monkeypatch) -> None:
-    raw_path = ingest_config.raw_dir / "logan/p1/sch/board.pdf"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/sch/board.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
 
@@ -102,7 +102,7 @@ def test_schematic_pdf_ingest_with_mock_engine(ingest_config: AppConfig, monkeyp
 
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     assert meta["document_type"] == "schematic"
-    assert meta["target_file"].endswith("logan/p1/sch/board.md")
+    assert meta["target_file"].endswith("iphone/logan/p1/sch/board.md")
     assert meta["major_components"] == ["U0902"]
     assert meta["nets"] == ["VBAT"]
     assert len(meta["pages"]) == 1

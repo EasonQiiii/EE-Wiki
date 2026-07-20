@@ -13,7 +13,7 @@ from ee_wiki.common.config import load_config
 
 def test_sources_and_assets_routes_serve_processed_files(repo_root: Path, tmp_path: Path) -> None:
     processed = tmp_path / "processed"
-    note_dir = processed / "logan/p1/note"
+    note_dir = processed / "iphone/logan/p1/note"
     assets = note_dir / "manual.assets"
     assets.mkdir(parents=True)
     md_path = note_dir / "manual.md"
@@ -30,11 +30,11 @@ def test_sources_and_assets_routes_serve_processed_files(repo_root: Path, tmp_pa
     app.dependency_overrides[get_config] = lambda: config
     client = TestClient(app)
 
-    source = client.get("/v1/sources/logan/p1/note/manual.md")
+    source = client.get("/v1/sources/iphone/logan/p1/note/manual.md")
     assert source.status_code == 200
     assert "Manual" in source.text
 
-    asset = client.get("/v1/assets/logan/p1/note/manual.assets/diag.png")
+    asset = client.get("/v1/assets/iphone/logan/p1/note/manual.assets/diag.png")
     assert asset.status_code == 200
     assert asset.content == b"fakepng"
 
@@ -59,7 +59,7 @@ def test_sources_route_blocks_path_traversal(repo_root: Path, tmp_path: Path) ->
 
 def test_raw_route_serves_original_document(repo_root: Path, tmp_path: Path) -> None:
     raw = tmp_path / "raw"
-    datasheet_dir = raw / "logan/p1/datasheet"
+    datasheet_dir = raw / "iphone/logan/p1/datasheet"
     datasheet_dir.mkdir(parents=True)
     pdf_path = datasheet_dir / "STM32F4.pdf"
     pdf_path.write_bytes(b"%PDF-1.4 fake")
@@ -73,7 +73,7 @@ def test_raw_route_serves_original_document(repo_root: Path, tmp_path: Path) -> 
     app.dependency_overrides[get_config] = lambda: config
     client = TestClient(app)
 
-    raw_doc = client.get("/v1/raw/logan/p1/datasheet/STM32F4.pdf")
+    raw_doc = client.get("/v1/raw/iphone/logan/p1/datasheet/STM32F4.pdf")
     assert raw_doc.status_code == 200
     assert raw_doc.content == b"%PDF-1.4 fake"
 

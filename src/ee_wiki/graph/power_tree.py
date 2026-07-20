@@ -27,7 +27,7 @@ from ee_wiki.graph.models import (
 )
 from ee_wiki.graph.power import is_ground_rail, is_rail_like_net
 from ee_wiki.graph.query import GraphQuery
-from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
+from ee_wiki.ingestion.path_metadata import allowed_scope_triples
 
 PowerDirection = Literal["feeds", "powers", "tree", "flags"]
 
@@ -39,6 +39,7 @@ class PowerFlag:
     code: str
     message: str
     node_ids: list[str] = field(default_factory=list)
+    product: str = ""
     project: str = ""
     build: str = ""
     scope: str = ""
@@ -50,6 +51,8 @@ class PowerFlag:
             "message": self.message,
             "node_ids": list(self.node_ids),
         }
+        if self.product:
+            payload["product"] = self.product
         if self.project:
             payload["project"] = self.project
         if self.build:
@@ -75,15 +78,18 @@ class PowerTreeQuery:
     def _allowed_scopes(
         self,
         *,
+        product: str | None,
         project: str | None,
         build: str | None,
-    ) -> set[tuple[str, str]] | None:
-        return self.graph_query._allowed_scopes(project=project, build=build)
+    ) -> set[tuple[str, str, str]] | None:
+        return self.graph_query._allowed_scopes(
+            product=product, project=project, build=build
+        )
 
     def _node_in_scope(
         self,
         node_id: str,
-        allowed: set[tuple[str, str]] | None,
+        allowed: set[tuple[str, str, str]] | None,
     ) -> bool:
         return self.graph_query._node_in_scope(node_id, allowed)
 
@@ -91,6 +97,7 @@ class PowerTreeQuery:
         self,
         token: str,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
     ) -> str | None:
@@ -98,6 +105,7 @@ class PowerTreeQuery:
 
         Args:
             token: Designator, rail/net name, part number, or full node id.
+            product: Preferred product for scoped id construction.
             project: Preferred project for scoped id construction.
             build: Preferred build for scoped id construction.
 
@@ -110,20 +118,21 @@ class PowerTreeQuery:
         if cleaned in self.graph.nodes:
             return cleaned
 
+        prod = product or ""
         proj = project or ""
         bld = build or ""
         candidates: list[str] = []
-        if proj and bld:
+        if prod and proj and bld:
             candidates.extend(
                 [
-                    rail_node_id(proj, bld, cleaned),
-                    net_node_id(proj, bld, cleaned),
-                    component_node_id(proj, bld, cleaned),
+                    rail_node_id(prod, proj, bld, cleaned),
+                    net_node_id(prod, proj, bld, cleaned),
+                    component_node_id(prod, proj, bld, cleaned),
                 ]
             )
         candidates.append(part_node_id(cleaned))
 
-        allowed = self._allowed_scopes(project=project, build=build)
+        allowed = self._allowed_scopes(product=product, project=project, build=build)
         for candidate in candidates:
             if candidate in self.graph.nodes and self._node_in_scope(candidate, allowed):
                 return candidate
@@ -150,13 +159,14 @@ class PowerTreeQuery:
         *,
         direction: Literal["in", "out"],
         edge_types: set[str],
+        product: str | None,
         project: str | None,
         build: str | None,
     ) -> list[dict[str, Any]]:
         """Return neighbors reached via directed edges of the given types."""
         if node_id not in self.graph.nodes:
             return []
-        allowed = self._allowed_scopes(project=project, build=build)
+        allowed = self._allowed_scopes(product=product, project=project, build=build)
         results: list[dict[str, Any]] = []
         seen: set[str] = set()
 
@@ -192,6 +202,7 @@ class PowerTreeQuery:
         self,
         target: str,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -199,6 +210,7 @@ class PowerTreeQuery:
 
         Args:
             target: Node id or resolvable name (rail, component, net).
+            product: Optional product scope.
             project: Optional project scope.
             build: Optional build scope.
 
@@ -206,13 +218,14 @@ class PowerTreeQuery:
             Neighbor records with ``via_edge`` for each incoming supplies link.
             Also includes parent rails via ``derived_from`` (target derived_from parent).
         """
-        node_id = self.resolve(target, project=project, build=build)
+        node_id = self.resolve(target, product=product, project=project, build=build)
         if node_id is None:
             return []
         feeds = self._directed_neighbors(
             node_id,
             direction="in",
             edge_types={EDGE_SUPPLIES},
+            product=product,
             project=project,
             build=build,
         )
@@ -220,6 +233,7 @@ class PowerTreeQuery:
             node_id,
             direction="out",
             edge_types={EDGE_DERIVED_FROM},
+            product=product,
             project=project,
             build=build,
         )
@@ -237,6 +251,7 @@ class PowerTreeQuery:
         self,
         source: str,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -244,19 +259,21 @@ class PowerTreeQuery:
 
         Args:
             source: Regulator, rail, or resolvable name.
+            product: Optional product scope.
             project: Optional project scope.
             build: Optional build scope.
 
         Returns:
             Neighbor records with ``via_edge`` for each outgoing supplies link.
         """
-        node_id = self.resolve(source, project=project, build=build)
+        node_id = self.resolve(source, product=product, project=project, build=build)
         if node_id is None:
             return []
         return self._directed_neighbors(
             node_id,
             direction="out",
             edge_types={EDGE_SUPPLIES},
+            product=product,
             project=project,
             build=build,
         )
@@ -264,6 +281,7 @@ class PowerTreeQuery:
     def flags(
         self,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
     ) -> list[PowerFlag]:
@@ -279,13 +297,14 @@ class PowerTreeQuery:
         - ``multi_supplier`` — Rail with multiple distinct regulator suppliers
 
         Args:
+            product: Optional product filter.
             project: Optional project filter.
             build: Optional build filter.
 
         Returns:
             List of :class:`PowerFlag` diagnostics.
         """
-        allowed = self._allowed_scopes(project=project, build=build)
+        allowed = self._allowed_scopes(product=product, project=project, build=build)
         flags: list[PowerFlag] = []
 
         rails = [
@@ -311,9 +330,12 @@ class PowerTreeQuery:
                             "incoming supplies edge (regulator unknown or not extracted)"
                         ),
                         node_ids=[rail.id],
+                        product=rail.product,
                         project=rail.project,
                         build=rail.build,
-                        scope=scope_label(rail.project, rail.build, self.layout),
+                        scope=scope_label(
+                            rail.product, rail.project, rail.build, self.layout
+                        ),
                     )
                 )
             else:
@@ -327,9 +349,12 @@ class PowerTreeQuery:
                                 f"{len(sources)} supplier sources (possible conflict)"
                             ),
                             node_ids=[rail.id, *sorted(sources)],
+                            product=rail.product,
                             project=rail.project,
                             build=rail.build,
-                            scope=scope_label(rail.project, rail.build, self.layout),
+                            scope=scope_label(
+                                rail.product, rail.project, rail.build, self.layout
+                            ),
                         )
                     )
 
@@ -345,7 +370,8 @@ class PowerTreeQuery:
             sibling_rails = [
                 r
                 for r in rails
-                if r.project == rail.project
+                if r.product == rail.product
+                and r.project == rail.project
                 and r.build == rail.build
                 and r.id != rail.id
             ]
@@ -362,9 +388,12 @@ class PowerTreeQuery:
                             "derived_from parent rail (input rail unknown)"
                         ),
                         node_ids=[rail.id],
+                        product=rail.product,
                         project=rail.project,
                         build=rail.build,
-                        scope=scope_label(rail.project, rail.build, self.layout),
+                        scope=scope_label(
+                            rail.product, rail.project, rail.build, self.layout
+                        ),
                     )
                 )
 
@@ -374,6 +403,7 @@ class PowerTreeQuery:
         self,
         root: str,
         *,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
         max_depth: int = 4,
@@ -385,6 +415,7 @@ class PowerTreeQuery:
 
         Args:
             root: Rail, regulator, or resolvable name.
+            product: Optional product scope.
             project: Optional project scope.
             build: Optional build scope.
             max_depth: Maximum tree depth.
@@ -392,7 +423,7 @@ class PowerTreeQuery:
         Returns:
             Multi-line text tree, or a short message when root is unresolved.
         """
-        node_id = self.resolve(root, project=project, build=build)
+        node_id = self.resolve(root, product=product, project=project, build=build)
         if node_id is None:
             return f"(unresolved power root: {root!r})"
 
@@ -435,6 +466,7 @@ class PowerTreeQuery:
         q: str,
         *,
         direction: PowerDirection = "tree",
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
         max_depth: int = 4,
@@ -444,6 +476,7 @@ class PowerTreeQuery:
         Args:
             q: Entity name, designator, or node id (ignored for ``flags``).
             direction: ``feeds`` | ``powers`` | ``tree`` | ``flags``.
+            product: Optional product filter.
             project: Optional project filter.
             build: Optional build filter.
             max_depth: Tree serialization depth.
@@ -455,6 +488,7 @@ class PowerTreeQuery:
         base: dict[str, Any] = {
             "query": q,
             "direction": direction,
+            "product": product,
             "project": project,
             "build": build,
             "limitations": (
@@ -465,11 +499,11 @@ class PowerTreeQuery:
         if direction == "flags":
             base["flags"] = [
                 flag.to_dict()
-                for flag in self.flags(project=project, build=build)
+                for flag in self.flags(product=product, project=project, build=build)
             ]
             return base
 
-        resolved = self.resolve(q, project=project, build=build)
+        resolved = self.resolve(q, product=product, project=project, build=build)
         base["resolved_id"] = resolved
         if resolved is None:
             base["hits"] = []
@@ -477,18 +511,27 @@ class PowerTreeQuery:
             return base
 
         if direction == "feeds":
-            base["hits"] = self.what_feeds(resolved, project=project, build=build)
+            base["hits"] = self.what_feeds(
+                resolved, product=product, project=project, build=build
+            )
         elif direction == "powers":
-            base["hits"] = self.what_powers(resolved, project=project, build=build)
+            base["hits"] = self.what_powers(
+                resolved, product=product, project=project, build=build
+            )
         else:
             base["tree"] = self.serialize_tree(
                 resolved,
+                product=product,
                 project=project,
                 build=build,
                 max_depth=max_depth,
             )
-            base["hits"] = self.what_powers(resolved, project=project, build=build)
-            base["feeds"] = self.what_feeds(resolved, project=project, build=build)
+            base["hits"] = self.what_powers(
+                resolved, product=product, project=project, build=build
+            )
+            base["feeds"] = self.what_feeds(
+                resolved, product=product, project=project, build=build
+            )
         return base
 
 
@@ -508,6 +551,7 @@ def list_rails(
     graph: KnowledgeGraph,
     *,
     layout: DataLayoutConfig,
+    product: str | None = None,
     project: str | None = None,
     build: str | None = None,
     scope_inheritance: bool = True,
@@ -517,6 +561,7 @@ def list_rails(
     Args:
         graph: Loaded knowledge graph.
         layout: Path naming configuration.
+        product: Optional product filter.
         project: Optional project filter.
         build: Optional build filter.
         scope_inheritance: Expand like retrieval when true.
@@ -524,20 +569,19 @@ def list_rails(
     Returns:
         Rail node dicts with scope labels.
     """
-    allowed: set[tuple[str, str]] | None = None
-    if project or build:
-        proj = project or layout.enterprise_project
-        bld = build or layout.project_shared_build
-        if scope_inheritance:
-            allowed = set(expand_retrieval_scope(proj, bld, layout))
-        else:
-            allowed = {(proj, bld)}
+    allowed = allowed_scope_triples(
+        layout,
+        product=product,
+        project=project,
+        build=build,
+        scope_inheritance=scope_inheritance,
+    )
 
     results: list[dict[str, Any]] = []
     for node in graph.nodes.values():
         if node.type != NODE_RAIL:
             continue
-        if allowed is not None and (node.project, node.build) not in allowed:
+        if allowed is not None and (node.product, node.project, node.build) not in allowed:
             continue
         if is_ground_rail(str(node.attributes.get("name", ""))):
             continue

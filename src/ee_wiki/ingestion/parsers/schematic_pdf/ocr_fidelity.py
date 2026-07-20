@@ -272,6 +272,8 @@ def _page_summary_block(
     )
 
     if connectivity_enabled:
+        # Document-level netlist/boardview merge into sidecar (ADR 0009);
+        # page Markdown stays PDF geometry / OCR spatial only.
         module_nets_map, evidence, _connectivity = resolve_page_module_nets(
             page=page,
             module_labels=fields.module_labels,
@@ -281,6 +283,7 @@ def _page_summary_block(
             pdf_path=source_pdf,
             cad_extensions=cad_extensions,
             max_connector_distance=max_connector_distance,
+            skip_cad_discovery=True,
         )
     else:
         module_nets_map, evidence = None, None

@@ -69,6 +69,7 @@ def metadata_from_dict(data: dict[str, Any]) -> Metadata:
     is_schematic = document_type == SCHEMATIC_DOCUMENT_TYPE
     is_datasheet = document_type == DATASHEET_DOCUMENT_TYPE
     return Metadata(
+        product=str(data.get("product", "")),
         project=str(data.get("project", "")),
         build=str(data.get("build", "")),
         document_type=document_type,

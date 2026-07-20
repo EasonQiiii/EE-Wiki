@@ -18,13 +18,14 @@ def _record(
     mtime: float = 1.0,
     size: int = 100,
 ) -> ProcessedRecord:
-    target = f"data/processed/logan/p1/note/{stem}.md"
+    target = f"data/processed/iphone/logan/p1/note/{stem}.md"
     metadata = Metadata(
+        product="logan",
         project="logan",
         build="p1",
         document_type="engineering_note",
         title=stem,
-        source_file=f"data/raw/logan/p1/note/{stem}.md",
+        source_file=f"data/raw/iphone/logan/p1/note/{stem}.md",
         target_file=target,
         source_mtime=mtime,
         source_size=size,
@@ -62,7 +63,7 @@ def test_plan_index_update_detects_new_changed_and_removed() -> None:
         chunk_count=2,
         source_fingerprints={
             alpha.target_file: record_fingerprint(alpha),
-            "data/processed/logan/p1/note/removed.md": {
+            "data/processed/iphone/logan/p1/note/removed.md": {
                 "source_mtime": 3.0,
                 "source_size": 30,
             },
@@ -79,7 +80,7 @@ def test_plan_index_update_detects_new_changed_and_removed() -> None:
         changed_beta.target_file,
         gamma.target_file,
     }
-    assert removed == {"data/processed/logan/p1/note/removed.md"}
+    assert removed == {"data/processed/iphone/logan/p1/note/removed.md"}
 
 
 def test_plan_index_update_force_reindexes_all() -> None:

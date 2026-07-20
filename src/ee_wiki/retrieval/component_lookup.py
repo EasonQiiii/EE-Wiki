@@ -3,36 +3,19 @@
 from __future__ import annotations
 
 from ee_wiki.common.types import DataLayoutConfig
-from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
+from ee_wiki.ingestion.path_metadata import allowed_scope_triples
 from ee_wiki.knowledge.indexer.component_index import ComponentHit, ComponentIndex
 
 COMPONENT_LOOKUP_BOOST = 3
 
 
-def _allowed_scopes(
-    *,
-    layout: DataLayoutConfig,
-    target_project: str | None,
-    target_build: str | None,
-    scope_inheritance: bool,
-) -> set[tuple[str, str]] | None:
-    """Return allowed ``(project, build)`` pairs, or ``None`` for no scope filter."""
-    if not target_project and not target_build:
-        return None
-    project = target_project or layout.enterprise_project
-    build = target_build or layout.project_shared_build
-    if not scope_inheritance:
-        return {(project, build)}
-    return set(expand_retrieval_scope(project, build, layout))
-
-
 def _hit_in_scope(
     hit: ComponentHit,
-    allowed_scopes: set[tuple[str, str]] | None,
+    allowed_scopes: set[tuple[str, str, str]] | None,
 ) -> bool:
     if allowed_scopes is None:
         return True
-    return (hit.project, hit.build) in allowed_scopes
+    return (hit.product, hit.project, hit.build) in allowed_scopes
 
 
 def lookup_tokens(
@@ -40,6 +23,7 @@ def lookup_tokens(
     tokens: list[str],
     *,
     layout: DataLayoutConfig,
+    target_product: str | None = None,
     target_project: str | None = None,
     target_build: str | None = None,
     scope_inheritance: bool = True,
@@ -50,6 +34,7 @@ def lookup_tokens(
         component_index: Loaded component lookup index.
         tokens: Query tokens from :func:`query_boost_tokens`.
         layout: Path naming configuration for scope expansion.
+        target_product: Optional product filter.
         target_project: Optional project filter.
         target_build: Optional build filter.
         scope_inheritance: Whether to expand scope upward when filtering.
@@ -60,10 +45,11 @@ def lookup_tokens(
     if component_index is None or not tokens:
         return set()
 
-    allowed_scopes = _allowed_scopes(
-        layout=layout,
-        target_project=target_project,
-        target_build=target_build,
+    allowed_scopes = allowed_scope_triples(
+        layout,
+        product=target_product,
+        project=target_project,
+        build=target_build,
         scope_inheritance=scope_inheritance,
     )
     matched: set[str] = set()
@@ -82,6 +68,7 @@ def search_components(
     query: str,
     *,
     layout: DataLayoutConfig,
+    target_product: str | None = None,
     target_project: str | None = None,
     target_build: str | None = None,
     scope_inheritance: bool = True,
@@ -93,6 +80,7 @@ def search_components(
         component_index: Loaded component lookup index.
         query: Part number or designator to look up.
         layout: Path naming configuration for scope expansion.
+        target_product: Optional product filter.
         target_project: Optional project filter.
         target_build: Optional build filter.
         scope_inheritance: Whether to expand scope upward when filtering.
@@ -108,10 +96,11 @@ def search_components(
     if not key:
         return []
 
-    allowed_scopes = _allowed_scopes(
-        layout=layout,
-        target_project=target_project,
-        target_build=target_build,
+    allowed_scopes = allowed_scope_triples(
+        layout,
+        product=target_product,
+        project=target_project,
+        build=target_build,
         scope_inheritance=scope_inheritance,
     )
     hits: list[ComponentHit] = []

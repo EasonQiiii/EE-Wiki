@@ -18,12 +18,13 @@ from ee_wiki.knowledge.indexer.store import (
 
 def _sample_chunk(chunk_id: str, content: str) -> Chunk:
     metadata = Metadata(
+        product="logan",
         project="logan",
         build="p1",
         document_type="engineering_note",
         title="manual",
-        source_file="data/raw/logan/p1/note/manual.md",
-        target_file="data/processed/logan/p1/note/manual.md",
+        source_file="data/raw/iphone/logan/p1/note/manual.md",
+        target_file="data/processed/iphone/logan/p1/note/manual.md",
     )
     return Chunk(
         chunk_id=chunk_id,
@@ -45,7 +46,7 @@ def test_save_and_load_index_roundtrip(tmp_path) -> None:
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     bm25_corpus = [["vbat", "u0902"], ["uart", "debug"]]
     fingerprints = {
-        "data/processed/logan/p1/note/manual.md": {
+        "data/processed/iphone/logan/p1/note/manual.md": {
             "source_mtime": 1.0,
             "source_size": 42,
         }
@@ -91,7 +92,7 @@ def test_clear_index_removes_all_artifacts(tmp_path) -> None:
         embeddings=embeddings,
         bm25_corpus=[["vbat"]],
         source_fingerprints={
-            "data/processed/logan/p1/note/manual.md": {
+            "data/processed/iphone/logan/p1/note/manual.md": {
                 "source_mtime": 1.0,
                 "source_size": 42,
             }

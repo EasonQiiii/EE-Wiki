@@ -50,47 +50,49 @@ def test_parse_project_count_question() -> None:
 
 def test_build_index_inventory_counts_projects(data_layout) -> None:
     chunks = [
-        {"project": "global", "build": "global"},
-        {"project": "global", "build": "global"},
-        {"project": "kingboo", "build": "common"},
-        {"project": "logan", "build": "p1"},
-        {"project": "logan", "build": "p1"},
-        {"project": "logan", "build": "common"},
+        {"product": "global", "project": "global", "build": "global"},
+        {"product": "global", "project": "global", "build": "global"},
+        {"product": "kingboo", "project": "common", "build": "common"},
+        {"product": "iphone", "project": "logan", "build": "p1"},
+        {"product": "iphone", "project": "logan", "build": "p1"},
+        {"product": "iphone", "project": "logan", "build": "common"},
     ]
     inventory = build_index_inventory(chunks, data_layout)
     assert inventory.chunk_count == 6
     assert inventory.product_count == 2
-    by_name = {entry.project: entry for entry in inventory.projects}
-    assert by_name["global"].is_enterprise is True
-    assert by_name["global"].chunk_count == 2
-    assert by_name["kingboo"].builds == ("common",)
-    assert by_name["logan"].builds == ("common", "p1")
-    assert by_name["logan"].chunk_count == 3
+    by_scope = {
+        (entry.product, entry.project): entry for entry in inventory.projects
+    }
+    assert by_scope[("global", "global")].is_enterprise is True
+    assert by_scope[("global", "global")].chunk_count == 2
+    assert by_scope[("kingboo", "common")].builds == ("common",)
+    assert by_scope[("iphone", "logan")].builds == ("common", "p1")
+    assert by_scope[("iphone", "logan")].chunk_count == 3
 
 
 def test_format_inventory_answer_mentions_products(data_layout) -> None:
     inventory = build_index_inventory(
         [
-            {"project": "global", "build": "global"},
-            {"project": "kingboo", "build": "common"},
-            {"project": "logan", "build": "p1"},
+            {"product": "global", "project": "global", "build": "global"},
+            {"product": "kingboo", "project": "common", "build": "common"},
+            {"product": "iphone", "project": "logan", "build": "p1"},
         ],
         data_layout,
     )
     answer = format_inventory_answer(inventory)
     assert "3** 个 project" in answer or "3 个 project" in answer
     assert "kingboo" in answer
-    assert "logan" in answer
-    assert "产品级 project" in answer
+    assert "iphone/logan" in answer
+    assert "产品（product）共 **2** 个" in answer
 
 
 def test_format_project_builds_answer_for_logan(data_layout) -> None:
     inventory = build_index_inventory(
         [
-            {"project": "logan", "build": "p1"},
-            {"project": "logan", "build": "p1"},
-            {"project": "logan", "build": "common"},
-            {"project": "kingboo", "build": "common"},
+            {"product": "iphone", "project": "logan", "build": "p1"},
+            {"product": "iphone", "project": "logan", "build": "p1"},
+            {"product": "iphone", "project": "logan", "build": "common"},
+            {"product": "kingboo", "project": "common", "build": "common"},
         ],
         data_layout,
     )

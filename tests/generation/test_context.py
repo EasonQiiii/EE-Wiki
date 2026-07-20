@@ -14,9 +14,10 @@ from ee_wiki.retrieval.rewrite import ConversationTurn
 
 
 def test_knowledge_scope_tier() -> None:
-    assert knowledge_scope_tier("global", "global") == "global"
-    assert knowledge_scope_tier("logan", "common") == "project_common"
-    assert knowledge_scope_tier("logan", "p1") == "build"
+    assert knowledge_scope_tier("global", "global", "global") == "global"
+    assert knowledge_scope_tier("iphone", "common", "common") == "product_common"
+    assert knowledge_scope_tier("iphone", "logan", "common") == "project_common"
+    assert knowledge_scope_tier("iphone", "logan", "p1") == "build"
 
 
 def test_format_context_blocks_numbers_chunks_and_scope() -> None:
@@ -24,9 +25,14 @@ def test_format_context_blocks_numbers_chunks_and_scope() -> None:
         HybridChunk(
             chunk_id="a__1",
             content="First chunk body.",
-            metadata={"project": "logan", "build": "p1", "document_type": "engineering_note"},
+            metadata={
+                "product": "iphone",
+                "project": "logan",
+                "build": "p1",
+                "document_type": "engineering_note",
+            },
             citation={
-                "source_file": "data/raw/logan/p1/note/a.md",
+                "source_file": "data/raw/iphone/logan/p1/note/a.md",
                 "chunk_id": "a__1",
                 "page": 0,
                 "excerpt": "First",
@@ -35,9 +41,14 @@ def test_format_context_blocks_numbers_chunks_and_scope() -> None:
         HybridChunk(
             chunk_id="common__sop",
             content="Project bring-up SOP.",
-            metadata={"project": "logan", "build": "common", "document_type": "sop"},
+            metadata={
+                "product": "iphone",
+                "project": "logan",
+                "build": "common",
+                "document_type": "sop",
+            },
             citation={
-                "source_file": "data/raw/logan/common/sop/bringup.md",
+                "source_file": "data/raw/iphone/logan/common/sop/bringup.md",
                 "chunk_id": "common__sop",
                 "page": 0,
                 "excerpt": "SOP",
@@ -46,7 +57,12 @@ def test_format_context_blocks_numbers_chunks_and_scope() -> None:
         HybridChunk(
             chunk_id="ds__lan",
             content="Generic PHY datasheet excerpt.",
-            metadata={"project": "global", "build": "global", "document_type": "datasheet"},
+            metadata={
+                "product": "global",
+                "project": "global",
+                "build": "global",
+                "document_type": "datasheet",
+            },
             citation={
                 "source_file": "data/raw/global/datasheet/LAN8720A.pdf",
                 "chunk_id": "ds__lan",
@@ -57,10 +73,13 @@ def test_format_context_blocks_numbers_chunks_and_scope() -> None:
     ]
 
     rendered = format_context_blocks(chunks)
-    assert "[1] scope=build project=logan build=p1" in rendered
+    assert "[1] scope=build product=iphone project=logan build=p1" in rendered
     assert "First chunk body." in rendered
-    assert "[2] scope=project_common project=logan build=common" in rendered
-    assert "[3] scope=global project=global build=global" in rendered
+    assert (
+        "[2] scope=project_common product=iphone project=logan build=common"
+        in rendered
+    )
+    assert "[3] scope=global product=global project=global build=global" in rendered
     assert "Generic PHY datasheet excerpt." in rendered
 
 
@@ -153,7 +172,7 @@ def test_chunks_to_citations_maps_fields() -> None:
             content="RMII notes",
             metadata={},
             citation={
-                "source_file": "data/raw/logan/p1/sch/board.pdf",
+                "source_file": "data/raw/iphone/logan/p1/sch/board.pdf",
                 "chunk_id": "sch__rmii",
                 "page": 3,
                 "excerpt": "RMII",

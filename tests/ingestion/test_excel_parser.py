@@ -52,7 +52,7 @@ def _write_sample_workbook(path: Path) -> None:
 
 
 def test_parse_excel_markdown_table(excel_config: AppConfig) -> None:
-    raw_path = excel_config.raw_dir / "logan/p1/note/bom.xlsx"
+    raw_path = excel_config.raw_dir / "iphone/logan/p1/note/bom.xlsx"
     raw_path.parent.mkdir(parents=True)
     _write_sample_workbook(raw_path)
 
@@ -75,7 +75,7 @@ def test_parse_excel_markdown_table(excel_config: AppConfig) -> None:
 
 
 def test_parse_excel_plain_text(excel_config: AppConfig) -> None:
-    raw_path = excel_config.raw_dir / "logan/p1/note/bom.xlsx"
+    raw_path = excel_config.raw_dir / "iphone/logan/p1/note/bom.xlsx"
     raw_path.parent.mkdir(parents=True)
     _write_sample_workbook(raw_path)
 
@@ -92,7 +92,7 @@ def test_parse_excel_plain_text(excel_config: AppConfig) -> None:
 
 
 def test_ingest_file_writes_excel_mirror(excel_config: AppConfig) -> None:
-    raw_path = excel_config.raw_dir / "logan/p1/note/bom.xlsx"
+    raw_path = excel_config.raw_dir / "iphone/logan/p1/note/bom.xlsx"
     raw_path.parent.mkdir(parents=True)
     _write_sample_workbook(raw_path)
 
@@ -104,7 +104,7 @@ def test_ingest_file_writes_excel_mirror(excel_config: AppConfig) -> None:
 
 
 def test_parse_excel_rejects_workbook_with_only_empty_sheets(excel_config: AppConfig) -> None:
-    raw_path = excel_config.raw_dir / "logan/p1/note/empty.xlsx"
+    raw_path = excel_config.raw_dir / "iphone/logan/p1/note/empty.xlsx"
     raw_path.parent.mkdir(parents=True)
     workbook = Workbook()
     workbook.save(raw_path)

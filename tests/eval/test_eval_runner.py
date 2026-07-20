@@ -23,6 +23,7 @@ def _chunk(
     content: str,
     target_file: str,
     source_file: str | None = None,
+    product: str = "global",
     project: str = "global",
     build: str = "global",
 ) -> HybridChunk:
@@ -30,6 +31,7 @@ def _chunk(
         chunk_id="chunk-1",
         content=content,
         metadata={
+            "product": product,
             "project": project,
             "build": build,
             "target_file": target_file,
@@ -66,12 +68,13 @@ class _FakeEngine:
         self,
         query: str,
         *,
+        target_product: str | None = None,
         target_project: str | None = None,
         target_build: str | None = None,
         document_type: str | None = None,
         top_k_final: int | None = None,
     ) -> RetrievalResult:
-        del target_project, target_build, document_type, top_k_final
+        del target_product, target_project, target_build, document_type, top_k_final
         return self.responses[query]
 
 
@@ -104,8 +107,9 @@ def test_negative_case_fails_on_forbidden_scope() -> None:
     case = next(item for item in dataset.cases if item.id == "Q-019")
     chunk = _chunk(
         content="PMIC VBAT connects to U0902",
-        target_file="data/processed/apollo/evt/note/fake.md",
-        project="apollo",
+        target_file="data/processed/apollo/demo/evt/note/fake.md",
+        product="apollo",
+        project="demo",
         build="evt",
     )
     engine = _FakeEngine(
@@ -174,6 +178,7 @@ def test_forbidden_scope_only_when_configured() -> None:
     chunk = _chunk(
         content="STM32F407 MCU specifications",
         target_file="data/processed/global/datasheet/STM32F407ZGT6.md",
+        product="global",
         project="global",
         build="global",
     )

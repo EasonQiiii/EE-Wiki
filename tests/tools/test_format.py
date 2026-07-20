@@ -15,6 +15,7 @@ def test_format_component_search_includes_scope(app_config) -> None:
             key="STM32F407VGT6",
             kind="part_number",
             chunk_id="stm32__p001",
+            product="global",
             project="global",
             build="global",
             document_type="datasheet",
@@ -39,13 +40,14 @@ def test_format_retrieval_result_truncates_content(app_config) -> None:
                 chunk_id="board__p001",
                 content="x" * 1200,
                 metadata={
+                    "product": "iphone",
                     "project": "logan",
                     "build": "p1",
                     "document_type": "schematic",
                     "title": "board",
                 },
                 citation={
-                    "source_file": "data/raw/logan/p1/sch/board.pdf",
+                    "source_file": "data/raw/iphone/logan/p1/sch/board.pdf",
                     "chunk_id": "board__p001",
                     "page": 1,
                     "excerpt": "preview",

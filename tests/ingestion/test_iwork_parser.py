@@ -53,7 +53,7 @@ def test_iwork_ingest_active_requires_darwin_and_enabled() -> None:
 
 
 def test_parse_keynote_uses_original_metadata(iwork_config: AppConfig, tmp_path: Path) -> None:
-    raw_path = iwork_config.raw_dir / "logan/p1/note/slides.key"
+    raw_path = iwork_config.raw_dir / "iphone/logan/p1/note/slides.key"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"fake-key")
 
@@ -72,11 +72,12 @@ def test_parse_keynote_uses_original_metadata(iwork_config: AppConfig, tmp_path:
         mock_parse_pdf.return_value = StandardDocument(
             content="# slides\n\n## Page 1\n\nSlide body.\n",
             metadata=Metadata(
+                product="logan",
                 project="logan",
                 build="p1",
                 document_type="engineering_note",
                 title="slides",
-                source_file="data/raw/logan/p1/note/slides.pdf",
+                source_file="data/raw/iphone/logan/p1/note/slides.pdf",
             ),
             source_ref=str(pdf_path),
         )
@@ -91,7 +92,7 @@ def test_parse_keynote_uses_original_metadata(iwork_config: AppConfig, tmp_path:
 
 
 def test_parse_numbers_uses_original_metadata(iwork_config: AppConfig, tmp_path: Path) -> None:
-    raw_path = iwork_config.raw_dir / "logan/p1/note/bom.numbers"
+    raw_path = iwork_config.raw_dir / "iphone/logan/p1/note/bom.numbers"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"fake-numbers")
 
@@ -110,11 +111,12 @@ def test_parse_numbers_uses_original_metadata(iwork_config: AppConfig, tmp_path:
         mock_parse_excel.return_value = StandardDocument(
             content="# bom\n\n## Sheet: Parts\n\n| Part | Value |\n",
             metadata=Metadata(
+                product="logan",
                 project="logan",
                 build="p1",
                 document_type="engineering_note",
                 title="bom",
-                source_file="data/raw/logan/p1/note/bom.xlsx",
+                source_file="data/raw/iphone/logan/p1/note/bom.xlsx",
             ),
             source_ref=str(xlsx_path),
         )
@@ -129,7 +131,7 @@ def test_parse_numbers_uses_original_metadata(iwork_config: AppConfig, tmp_path:
 
 
 def test_parse_keynote_disabled_raises(iwork_config: AppConfig) -> None:
-    raw_path = iwork_config.raw_dir / "logan/p1/note/slides.key"
+    raw_path = iwork_config.raw_dir / "iphone/logan/p1/note/slides.key"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"fake-key")
     config = replace(iwork_config, iwork=IworkConfig(enabled=False))
@@ -197,7 +199,7 @@ def test_export_opened_iwork_document_orchestrates_open_then_osascript(
 
 
 def test_ingest_file_key_mocked(iwork_config: AppConfig, tmp_path: Path) -> None:
-    raw_path = iwork_config.raw_dir / "logan/p1/note/slides.key"
+    raw_path = iwork_config.raw_dir / "iphone/logan/p1/note/slides.key"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"fake-key")
 
@@ -207,11 +209,12 @@ def test_ingest_file_key_mocked(iwork_config: AppConfig, tmp_path: Path) -> None
         mock_parse.return_value = StandardDocument(
             content="# slides\n\nDeck text.\n",
             metadata=Metadata(
+                product="logan",
                 project="logan",
                 build="p1",
                 document_type="engineering_note",
                 title="slides",
-                source_file="data/raw/logan/p1/note/slides.key",
+                source_file="data/raw/iphone/logan/p1/note/slides.key",
             ),
             source_ref=str(raw_path),
         )
@@ -222,7 +225,7 @@ def test_ingest_file_key_mocked(iwork_config: AppConfig, tmp_path: Path) -> None
 
 
 def test_ingest_file_key_maps_parser_error(iwork_config: AppConfig) -> None:
-    raw_path = iwork_config.raw_dir / "logan/p1/note/slides.key"
+    raw_path = iwork_config.raw_dir / "iphone/logan/p1/note/slides.key"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"fake-key")
 

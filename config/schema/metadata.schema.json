@@ -3,8 +3,9 @@
   "$id": "https://ee-wiki.local/schema/metadata.json",
   "title": "EE-Wiki Document Metadata",
   "type": "object",
-  "required": ["project", "build", "document_type", "title", "source_file"],
+  "required": ["product", "project", "build", "document_type", "title", "source_file"],
   "properties": {
+    "product": { "type": "string" },
     "project": { "type": "string" },
     "build": { "type": "string" },
     "document_type": { "type": "string" },

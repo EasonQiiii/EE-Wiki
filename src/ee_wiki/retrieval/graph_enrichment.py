@@ -61,6 +61,7 @@ def _resolve_power_seed(
     power_query: Any,
     tokens: list[str],
     *,
+    product: str | None,
     project: str | None,
     build: str | None,
 ) -> str | None:
@@ -69,6 +70,7 @@ def _resolve_power_seed(
     Args:
         power_query: A :class:`PowerTreeQuery` bound to the loaded graph.
         tokens: Candidate tokens from the query.
+        product: Optional product scope.
         project: Optional project scope.
         build: Optional build scope.
 
@@ -82,7 +84,9 @@ def _resolve_power_seed(
         for candidate in (cleaned, cleaned.replace("_", ""), cleaned.replace("-", "")):
             if not candidate:
                 continue
-            resolved = power_query.resolve(candidate, project=project, build=build)
+            resolved = power_query.resolve(
+                candidate, product=product, project=project, build=build
+            )
             if resolved:
                 return resolved
     return None
@@ -168,13 +172,14 @@ def format_neighborhood_block(
     for seed in seeds:
         lines.append(
             f"  seed id={seed.get('id')} type={seed.get('type')} "
-            f"scope={seed.get('scope')} project={seed.get('project')} "
-            f"build={seed.get('build')}"
+            f"scope={seed.get('scope')} product={seed.get('product')} "
+            f"project={seed.get('project')} build={seed.get('build')}"
         )
     for neighbor in neighbors:
         lines.append(
             f"  neighbor id={neighbor.get('id')} type={neighbor.get('type')} "
             f"scope={neighbor.get('scope')} hops={neighbor.get('hops', 1)} "
+            f"product={neighbor.get('product')} "
             f"project={neighbor.get('project')} build={neighbor.get('build')}"
         )
         if len(lines) >= max_lines + 1:
@@ -187,6 +192,7 @@ def build_graph_enrichment(
     query: str,
     *,
     graph_query: GraphQuery,
+    product: str | None = None,
     project: str | None = None,
     build: str | None = None,
     max_hops: int = 1,
@@ -199,6 +205,7 @@ def build_graph_enrichment(
     Args:
         query: User or retrieval query text.
         graph_query: Loaded scope-aware graph query handle.
+        product: Optional product filter.
         project: Optional project filter.
         build: Optional build filter.
         max_hops: Neighbor traversal depth (generic neighborhood path).
@@ -222,10 +229,14 @@ def build_graph_enrichment(
     # Engineer agent a trustworthy structured view.
     if power_tree and is_power_query(query):
         pw = open_power_query(graph_query)
-        seed_id = _resolve_power_seed(pw, tokens, project=project, build=build)
+        seed_id = _resolve_power_seed(
+            pw, tokens, product=product, project=project, build=build
+        )
         if seed_id is not None:
-            feeds = pw.what_feeds(seed_id, project=project, build=build)
-            powers = pw.what_powers(seed_id, project=project, build=build)
+            feeds = pw.what_feeds(seed_id, product=product, project=project, build=build)
+            powers = pw.what_powers(
+                seed_id, product=product, project=project, build=build
+            )
             related_ids = (
                 {seed_id}
                 | {str(f.get("id", "")) for f in feeds}
@@ -233,7 +244,7 @@ def build_graph_enrichment(
             )
             scoped_flags = [
                 flag
-                for flag in pw.flags(project=project, build=build)
+                for flag in pw.flags(product=product, project=project, build=build)
                 if any(nid in related_ids for nid in flag.node_ids)
             ]
             if feeds or powers or scoped_flags:
@@ -256,10 +267,14 @@ def build_graph_enrichment(
     for token in tokens:
         if len(seeds) >= max_seeds:
             break
-        resolved = graph_query.resolve_node(token, project=project, build=build)
+        resolved = graph_query.resolve_node(
+            token, product=product, project=project, build=build
+        )
         if not resolved or resolved in seen_ids:
             continue
-        node = graph_query.get_node(resolved, project=project, build=build)
+        node = graph_query.get_node(
+            resolved, product=product, project=project, build=build
+        )
         if node is None:
             continue
         seen_ids.add(resolved)
@@ -274,6 +289,7 @@ def build_graph_enrichment(
         seed_id = str(seed["id"])
         for neighbor in graph_query.neighbors(
             seed_id,
+            product=product,
             project=project,
             build=build,
             max_hops=max_hops,
@@ -296,6 +312,7 @@ def try_graph_enrichment(
     query: str,
     *,
     config: AppConfig,
+    product: str | None = None,
     project: str | None = None,
     build: str | None = None,
     graph_query: GraphQuery | None = None,
@@ -305,6 +322,7 @@ def try_graph_enrichment(
     Args:
         query: Retrieval query.
         config: Application configuration (reads ``retrieval.graph_enrichment*``).
+        product: Optional product filter.
         project: Optional project filter.
         build: Optional build filter.
         graph_query: Optional pre-loaded query handle; loaded from disk when omitted.
@@ -335,6 +353,7 @@ def try_graph_enrichment(
     return build_graph_enrichment(
         query,
         graph_query=gq,
+        product=product,
         project=project,
         build=build,
         max_hops=retrieval.graph_enrichment_max_hops,

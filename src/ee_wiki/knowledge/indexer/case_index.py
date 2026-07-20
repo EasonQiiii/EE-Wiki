@@ -16,7 +16,7 @@ from ee_wiki.common.types import Chunk
 logger = get_logger(__name__)
 
 CASES_NAME = "cases.json"
-CASE_INDEX_VERSION = 1
+CASE_INDEX_VERSION = 2
 
 
 class CaseIndexError(EEWikiError):
@@ -28,6 +28,7 @@ class DebugCaseRecord:
     """One debug / failure-analysis case record."""
 
     case_id: str
+    product: str
     project: str
     build: str
     title: str
@@ -46,6 +47,7 @@ class DebugCaseRecord:
         """Serialize this case for JSON persistence."""
         payload: dict[str, Any] = {
             "case_id": self.case_id,
+            "product": self.product,
             "project": self.project,
             "build": self.build,
             "title": self.title,
@@ -74,6 +76,7 @@ class DebugCaseRecord:
         """Deserialize a case record from a JSON object."""
         return cls(
             case_id=str(data.get("case_id", "")),
+            product=str(data.get("product", "")),
             project=str(data.get("project", "")),
             build=str(data.get("build", "")),
             title=str(data.get("title", "")),
@@ -198,6 +201,7 @@ def build_case_index(chunks: list[Chunk]) -> CaseIndex:
             case_id = (meta.case_id or Path(meta.source_file).stem or chunk.chunk_id).strip()
             by_source[meta.source_file] = {
                 "case_id": case_id,
+                "product": meta.product,
                 "project": meta.project,
                 "build": meta.build,
                 "title": meta.title,
@@ -235,6 +239,7 @@ def build_case_index(chunks: list[Chunk]) -> CaseIndex:
     cases = tuple(
         DebugCaseRecord(
             case_id=str(item["case_id"]),
+            product=str(item["product"]),
             project=str(item["project"]),
             build=str(item["build"]),
             title=str(item["title"]),
@@ -251,7 +256,7 @@ def build_case_index(chunks: list[Chunk]) -> CaseIndex:
         )
         for item in sorted(
             by_source.values(),
-            key=lambda row: (row["project"], row["build"], row["case_id"]),
+            key=lambda row: (row["product"], row["project"], row["build"], row["case_id"]),
         )
     )
     built_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")

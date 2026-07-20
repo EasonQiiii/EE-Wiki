@@ -26,8 +26,8 @@ def test_parse_markdown_fixture(data_layout, repo_root: Path, tmp_path: Path) ->
         raw_dir=tmp_path / "raw",
         processed_dir=tmp_path / "processed",
     )
-    source = repo_root / "tests/fixtures/raw/logan/p1/note/sample.md"
-    raw_path = layout.raw_dir / "logan/p1/note/sample.md"
+    source = repo_root / "tests/fixtures/raw/iphone/logan/p1/note/sample.md"
+    raw_path = layout.raw_dir / "iphone/logan/p1/note/sample.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -41,14 +41,21 @@ def test_parse_markdown_fixture(data_layout, repo_root: Path, tmp_path: Path) ->
 
 
 def test_parse_markdown_requires_valid_layout(data_layout, tmp_path: Path) -> None:
-    bad_path = data_layout.raw_dir / "orphan.md"
+    from dataclasses import replace
+
+    layout = replace(
+        data_layout,
+        raw_dir=tmp_path / "raw",
+        processed_dir=tmp_path / "processed",
+    )
+    bad_path = layout.raw_dir / "orphan.md"
     bad_path.parent.mkdir(parents=True, exist_ok=True)
     bad_path.write_text("# orphan\n", encoding="utf-8")
     with pytest.raises(PathMetadataError):
-        parse_markdown(bad_path, data_layout)
+        parse_markdown(bad_path, layout)
 
 
 def test_parse_markdown_missing_file(data_layout) -> None:
-    missing = data_layout.raw_dir / "logan/p1/note/missing.md"
+    missing = data_layout.raw_dir / "iphone/logan/p1/note/missing.md"
     with pytest.raises(MarkdownParserError, match="Cannot read"):
         parse_markdown(missing, data_layout)

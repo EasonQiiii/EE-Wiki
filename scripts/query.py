@@ -8,8 +8,9 @@ import logging
 import sys
 
 from ee_wiki.common.config import load_config
-from ee_wiki.common.errors import EEWikiError
+from ee_wiki.common.errors import EEWikiError, ScopeValidationError
 from ee_wiki.common.logging import get_logger
+from ee_wiki.common.project_aliases import canonicalize_scope_filters
 from ee_wiki.retrieval.hybrid import HybridRagEngine
 
 logger = get_logger(__name__)
@@ -25,6 +26,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("query", help="Natural language or keyword search string")
+    parser.add_argument(
+        "--product",
+        default=None,
+        help="Metadata filter: product name (e.g. iphone)",
+    )
     parser.add_argument(
         "--project",
         default=None,
@@ -78,16 +84,22 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger("ee_wiki").setLevel(logging.DEBUG)
     try:
         config = load_config()
+        product, project, build = canonicalize_scope_filters(
+            args.product, args.project, args.build,
+            aliases=config.data_layout.project_aliases,
+            require_product=True,
+        )
         engine = HybridRagEngine(config)
         engine.load_index()
         retrieval = engine.retrieve(
             args.query,
-            target_project=args.project,
-            target_build=args.build,
+            target_product=product,
+            target_project=project,
+            target_build=build,
             document_type=args.document_type,
             top_k_final=args.top_k,
         )
-    except (EEWikiError, RuntimeError) as exc:
+    except (EEWikiError, ScopeValidationError, RuntimeError) as exc:
         logger.error("%s", exc)
         return 1
 

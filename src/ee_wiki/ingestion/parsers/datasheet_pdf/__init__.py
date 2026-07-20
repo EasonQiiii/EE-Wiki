@@ -206,6 +206,7 @@ def parse_datasheet_pdf(
 
     stat = raw_path.stat()
     final_metadata = Metadata(
+        product=metadata.product,
         project=metadata.project,
         build=metadata.build,
         document_type=metadata.document_type,

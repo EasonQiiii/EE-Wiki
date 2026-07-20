@@ -1,22 +1,23 @@
-"""Discover companion CAD / netlist files next to a schematic PDF."""
+"""Backward-compatible CAD companion discovery entry points.
+
+New code should prefer :mod:`discover` and :mod:`registry` (ADR 0009).
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from ee_wiki.common.logging import get_logger
-
-logger = get_logger(__name__)
-
-# Default extensions — overridden by config when provided.
-DEFAULT_CAD_EXTENSIONS: tuple[str, ...] = (
-    ".net",
-    ".kicad_sch",
-    ".kicad_pro",
-    ".SchDoc",
-    ".prjpcb",
-    ".PrjPcb",
+from ee_wiki.ingestion.parsers.schematic_pdf.connectivity.discover import (
+    DEFAULT_NETLIST_EXTENSIONS,
+    discover_companions,
 )
+from ee_wiki.ingestion.parsers.schematic_pdf.connectivity.model import CompanionGraph
+from ee_wiki.ingestion.parsers.schematic_pdf.connectivity.registry import (
+    parse_companion_file,
+)
+
+# Re-export historical default (netlist only; boardview is separate in ADR 0009).
+DEFAULT_CAD_EXTENSIONS: tuple[str, ...] = DEFAULT_NETLIST_EXTENSIONS
 
 
 def discover_cad_companions(
@@ -24,13 +25,9 @@ def discover_cad_companions(
     *,
     extensions: tuple[str, ...] | None = None,
 ) -> list[Path]:
-    """Return candidate CAD/netlist paths for ``pdf_path``, highest preference first.
+    """Return candidate CAD/netlist paths for ``pdf_path`` (legacy API).
 
-    Search order:
-
-    1. Same directory, same stem + each extension
-    2. Same directory, any file with a configured extension
-    3. Sibling ``cad/`` directory with the same stem
+    Does not include boardview ``.brd`` unless ``extensions`` lists it.
 
     Args:
         pdf_path: Path to the schematic PDF under ``data/raw/``.
@@ -39,42 +36,14 @@ def discover_cad_companions(
     Returns:
         Deduplicated existing paths in preference order.
     """
-    suffixes = tuple(extensions) if extensions is not None else DEFAULT_CAD_EXTENSIONS
-    suffixes_lower = tuple(suffix.lower() for suffix in suffixes)
-    directory = pdf_path.parent
-    stem = pdf_path.stem
-    found: list[Path] = []
-    seen: set[Path] = set()
-
-    def _add(path: Path) -> None:
-        resolved = path.resolve()
-        if resolved in seen or not path.is_file():
-            return
-        seen.add(resolved)
-        found.append(path)
-
-    for suffix in suffixes:
-        _add(directory / f"{stem}{suffix}")
-
-    try:
-        for child in sorted(directory.iterdir()):
-            if child.suffix.lower() in suffixes_lower and child.is_file():
-                _add(child)
-    except OSError as exc:
-        logger.warning("Cannot list schematic directory %s: %s", directory, exc)
-
-    cad_dir = directory / "cad"
-    if cad_dir.is_dir():
-        for suffix in suffixes:
-            _add(cad_dir / f"{stem}{suffix}")
-        try:
-            for child in sorted(cad_dir.iterdir()):
-                if child.suffix.lower() in suffixes_lower and child.is_file():
-                    _add(child)
-        except OSError as exc:
-            logger.warning("Cannot list cad companion directory %s: %s", cad_dir, exc)
-
-    return found
+    discovered = discover_companions(
+        pdf_path,
+        netlist_extensions=extensions
+        if extensions is not None
+        else DEFAULT_NETLIST_EXTENSIONS,
+        boardview_extensions=(),
+    )
+    return list(discovered.netlist_paths)
 
 
 def try_parse_cad_module_nets(
@@ -82,22 +51,31 @@ def try_parse_cad_module_nets(
 ) -> dict[str, list[str]] | None:
     """Best-effort parse of companion CAD/netlist into module→nets.
 
-    Phase 1: discovery + logging only for unsupported formats. Returns ``None``
-    so callers fall through to PDF geometry. KiCad/Altium parsers land later
-    behind the same entry point.
+    Prefer document-level :func:`discover.discover_and_parse_companions`.
+    This legacy helper groups nets by refdes when a pin–net graph is available.
 
     Args:
         companions: Preferred-order CAD paths from :func:`discover_cad_companions`.
 
     Returns:
-        Module label → net names when a parser succeeds; otherwise ``None``.
+        Module/refdes → net names when a parser succeeds; otherwise ``None``.
     """
     if not companions:
         return None
     for path in companions:
-        logger.info(
-            "Schematic CAD companion present but no parser yet for %s — "
-            "falling back to PDF geometry / OCR spatial",
-            path.name,
-        )
+        graph = parse_companion_file(path)
+        if graph is None:
+            continue
+        if graph.module_nets:
+            return {key: list(vals) for key, vals in graph.module_nets.items()}
+        return _refdes_nets_from_graph(graph)
     return None
+
+
+def _refdes_nets_from_graph(graph: CompanionGraph) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for binding in graph.bindings:
+        bucket = out.setdefault(binding.refdes, [])
+        if binding.net not in bucket:
+            bucket.append(binding.net)
+    return out

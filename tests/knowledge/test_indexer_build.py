@@ -22,7 +22,7 @@ def _write_processed(
     mtime: float,
     size: int,
 ) -> None:
-    rel = Path("logan/p1/note") / f"{stem}.md"
+    rel = Path("iphone/logan/p1/note") / f"{stem}.md"
     path = processed_dir / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -49,7 +49,7 @@ def _write_schematic_processed(
     mtime: float = 1.0,
     size: int = 10,
 ) -> None:
-    rel = Path("logan/p1/sch/board.md")
+    rel = Path("iphone/logan/p1/sch/board.md")
     path = processed_dir / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     content = (
@@ -65,7 +65,7 @@ def _write_schematic_processed(
         "build": "p1",
         "document_type": "schematic",
         "title": "board",
-        "source_file": "data/raw/logan/p1/sch/board.pdf",
+        "source_file": "data/raw/iphone/logan/p1/sch/board.pdf",
         "target_file": target,
         "source_mtime": mtime,
         "source_size": size,
@@ -185,7 +185,7 @@ def test_incremental_index_removes_deleted_document(app_config: AppConfig, tmp_p
     )
     build_index_from_processed(config, embedder=_mock_embedder)
 
-    beta_path = config.processed_dir / "logan/p1/note/beta.md"
+    beta_path = config.processed_dir / "iphone/logan/p1/note/beta.md"
     beta_meta = beta_path.with_suffix(".md.meta.json")
     beta_path.unlink()
     beta_meta.unlink()
@@ -215,7 +215,7 @@ def test_incremental_index_clears_index_when_all_processed_removed(
     build_index_from_processed(config, embedder=_mock_embedder)
     assert index_exists(config.indexes_dir)
 
-    alpha_path = config.processed_dir / "logan/p1/note/alpha.md"
+    alpha_path = config.processed_dir / "iphone/logan/p1/note/alpha.md"
     alpha_meta = alpha_path.with_suffix(".md.meta.json")
     alpha_path.unlink()
     alpha_meta.unlink()

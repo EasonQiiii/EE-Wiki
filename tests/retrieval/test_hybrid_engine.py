@@ -15,17 +15,19 @@ def _make_chunk(
     chunk_id: str,
     content: str,
     *,
+    product: str = "iphone",
     project: str = "logan",
     build: str = "p1",
     document_type: str = "engineering_note",
 ) -> Chunk:
     metadata = Metadata(
+        product=product,
         project=project,
         build=build,
         document_type=document_type,
         title=chunk_id,
-        source_file=f"data/raw/{project}/{build}/note/{chunk_id}.md",
-        target_file=f"data/processed/{project}/{build}/note/{chunk_id}.md",
+        source_file=f"data/raw/{product}/{project}/{build}/note/{chunk_id}.md",
+        target_file=f"data/processed/{product}/{project}/{build}/note/{chunk_id}.md",
     )
     return Chunk(
         chunk_id=chunk_id,
@@ -44,6 +46,7 @@ def _hybrid_from_chunk(chunk: Chunk, embedding: np.ndarray) -> HybridChunk:
         chunk_id=chunk.chunk_id,
         content=chunk.content,
         metadata={
+            "product": chunk.metadata.product,
             "project": chunk.metadata.project,
             "build": chunk.metadata.build,
             "document_type": chunk.metadata.document_type,
@@ -79,6 +82,7 @@ def engine_with_index(app_config):
     global_chunk = _make_chunk(
         "global__datasheet",
         "TPS62840 datasheet excerpt.",
+        product="global",
         project="global",
         build="global",
         document_type="datasheet",
@@ -124,6 +128,7 @@ def engine_with_index(app_config):
 def test_retrieve_filters_by_document_type(engine_with_index) -> None:
     results = engine_with_index.retrieve(
         "RMII",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
         document_type="schematic",
@@ -140,6 +145,7 @@ def test_retrieve_scope_includes_common_and_global(engine_with_index) -> None:
 
     results = engine_with_index.retrieve(
         "UART debug",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
     )
@@ -150,6 +156,7 @@ def test_retrieve_scope_includes_common_and_global(engine_with_index) -> None:
 def test_retrieve_returns_empty_when_document_type_has_no_matches(engine_with_index) -> None:
     results = engine_with_index.retrieve(
         "RMII",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
         document_type="sop",
@@ -166,6 +173,7 @@ def test_retrieve_pin_query_does_not_auto_filter_document_type(engine_with_index
 
     results = engine_with_index.retrieve(
         "VBAT pin power",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
     )
@@ -200,6 +208,7 @@ def test_retrieve_lcd_pin_query_prefers_build_schematic(engine_with_index) -> No
         _make_chunk(
             "global__datasheet",
             "TPS62840 datasheet excerpt.",
+            product="global",
             project="global",
             build="global",
             document_type="datasheet",
@@ -221,6 +230,7 @@ def test_retrieve_lcd_pin_query_prefers_build_schematic(engine_with_index) -> No
 
     results = engine_with_index.retrieve(
         "lcd的pin有哪些",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
         top_k_final=1,
@@ -233,9 +243,9 @@ def test_retrieve_scope_ranks_override_filters_inherit_product(
     engine_with_index,
 ) -> None:
     scope_ranks = {
-        ("logan", "p1"): 0,
-        ("logan", "common"): 1,
-        ("global", "global"): 2,
+        ("iphone", "logan", "p1"): 0,
+        ("iphone", "logan", "common"): 1,
+        ("global", "global", "global"): 2,
     }
     engine_with_index._embed_model.encode.return_value = np.array(
         [0.5, 0.5, 0.0], dtype=np.float32
@@ -244,6 +254,7 @@ def test_retrieve_scope_ranks_override_filters_inherit_product(
 
     results = engine_with_index.retrieve(
         "UART debug",
+        target_product="iphone",
         target_project="logan",
         target_build=None,
         scope_ranks_override=scope_ranks,
@@ -266,6 +277,7 @@ def test_retrieve_scope_rank_prefers_build_over_higher_rerank_common(
 
     results = engine_with_index.retrieve(
         "debug power UART",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
         top_k_final=1,
@@ -285,6 +297,7 @@ def test_retrieve_returns_empty_when_below_min_rerank_score(
     )
     results = engine_with_index.retrieve(
         "UART debug",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
     )
@@ -302,6 +315,7 @@ def test_cascade_build_sufficient_limits_global_primary(engine_with_index) -> No
 
     results = engine_with_index.retrieve(
         "reset module",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
         top_k_final=2,
@@ -341,6 +355,7 @@ def test_cascade_build_insufficient_falls_back_to_common(engine_with_index) -> N
 
     results = engine_with_index.retrieve(
         "UART debug",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
         top_k_final=1,
@@ -357,6 +372,7 @@ def test_cascade_mixed_quota_supplements_common_when_build_partial(engine_with_i
 
     results = engine_with_index.retrieve(
         "power debug",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
         top_k_final=4,
@@ -385,6 +401,7 @@ def test_scope_inheritance_false_skips_cascade(engine_with_index) -> None:
 
     results = engine_with_index.retrieve(
         "UART debug",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
         top_k_final=4,

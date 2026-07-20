@@ -7,7 +7,16 @@ from typing import Any, Literal
 
 from ee_wiki.common.types import DataLayoutConfig
 
-NodeType = Literal["Component", "Net", "Document", "Project", "Build", "Case", "Rail"]
+NodeType = Literal[
+    "Component",
+    "Net",
+    "Document",
+    "Product",
+    "Project",
+    "Build",
+    "Case",
+    "Rail",
+]
 EdgeType = Literal[
     "connects_to",
     "appears_in",
@@ -18,11 +27,12 @@ EdgeType = Literal[
     "caused_by",
     "related_to",
 ]
-ScopeLabel = Literal["build", "common", "global"]
+ScopeLabel = Literal["build", "common", "product_common", "global"]
 
 NODE_COMPONENT: NodeType = "Component"
 NODE_NET: NodeType = "Net"
 NODE_DOCUMENT: NodeType = "Document"
+NODE_PRODUCT: NodeType = "Product"
 NODE_PROJECT: NodeType = "Project"
 NODE_BUILD: NodeType = "Build"
 NODE_CASE: NodeType = "Case"
@@ -37,23 +47,31 @@ EDGE_MENTIONS: EdgeType = "mentions"
 EDGE_CAUSED_BY: EdgeType = "caused_by"
 EDGE_RELATED_TO: EdgeType = "related_to"
 
-GRAPH_SCHEMA_VERSION = 3
+GRAPH_SCHEMA_VERSION = 4
 
 
-def scope_label(project: str, build: str, layout: DataLayoutConfig) -> ScopeLabel:
-    """Return the knowledge-layer label for a ``(project, build)`` pair.
+def scope_label(
+    product: str,
+    project: str,
+    build: str,
+    layout: DataLayoutConfig,
+) -> ScopeLabel:
+    """Return the knowledge-layer label for a ``(product, project, build)`` triple.
 
     Args:
+        product: Metadata product segment.
         project: Metadata project segment.
         build: Metadata build segment.
         layout: Path naming configuration.
 
     Returns:
-        ``global``, ``common``, or ``build``.
+        ``global``, ``product_common``, ``common`` (project common), or ``build``.
     """
-    if project == layout.enterprise_project:
+    if product == layout.global_segment:
         return "global"
-    if build == layout.project_shared_build:
+    if project == layout.common_segment:
+        return "product_common"
+    if build == layout.common_segment:
         return "common"
     return "build"
 
@@ -64,6 +82,7 @@ class GraphNode:
 
     id: str
     type: str
+    product: str
     project: str
     build: str
     attributes: dict[str, Any] = field(default_factory=dict)
@@ -73,6 +92,7 @@ class GraphNode:
         payload: dict[str, Any] = {
             "id": self.id,
             "type": self.type,
+            "product": self.product,
             "project": self.project,
             "build": self.build,
         }
@@ -87,6 +107,7 @@ class GraphNode:
         return cls(
             id=str(data.get("id", "")),
             type=str(data.get("type", "")),
+            product=str(data.get("product", "")),
             project=str(data.get("project", "")),
             build=str(data.get("build", "")),
             attributes=dict(attrs) if isinstance(attrs, dict) else {},
@@ -95,7 +116,7 @@ class GraphNode:
     def with_scope(self, layout: DataLayoutConfig) -> dict[str, Any]:
         """Return a query-facing dict including an explicit ``scope`` label."""
         payload = self.to_dict()
-        payload["scope"] = scope_label(self.project, self.build, layout)
+        payload["scope"] = scope_label(self.product, self.project, self.build, layout)
         return payload
 
 
@@ -106,6 +127,7 @@ class GraphEdge:
     source: str
     target: str
     type: str
+    product: str = ""
     project: str = ""
     build: str = ""
     attributes: dict[str, Any] = field(default_factory=dict)
@@ -117,6 +139,8 @@ class GraphEdge:
             "target": self.target,
             "type": self.type,
         }
+        if self.product:
+            payload["product"] = self.product
         if self.project:
             payload["project"] = self.project
         if self.build:
@@ -133,6 +157,7 @@ class GraphEdge:
             source=str(data.get("source", "")),
             target=str(data.get("target", "")),
             type=str(data.get("type", "")),
+            product=str(data.get("product", "")),
             project=str(data.get("project", "")),
             build=str(data.get("build", "")),
             attributes=dict(attrs) if isinstance(attrs, dict) else {},
@@ -141,8 +166,10 @@ class GraphEdge:
     def with_scope(self, layout: DataLayoutConfig) -> dict[str, Any]:
         """Return a query-facing dict including an explicit ``scope`` label."""
         payload = self.to_dict()
-        if self.project or self.build:
-            payload["scope"] = scope_label(self.project, self.build, layout)
+        if self.product or self.project or self.build:
+            payload["scope"] = scope_label(
+                self.product, self.project, self.build, layout
+            )
         return payload
 
 

@@ -29,22 +29,22 @@ def layout_with_tmp_dirs(data_layout, tmp_path: Path):
 
 def test_write_processed_mirror(layout_with_tmp_dirs, repo_root: Path) -> None:
     layout = layout_with_tmp_dirs
-    raw_path = layout.raw_dir / "logan" / "p1" / "note" / "sample.md"
+    raw_path = layout.raw_dir / "iphone" / "logan" / "p1" / "note" / "sample.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("# Title\n\nBody\n", encoding="utf-8")
 
     document = parse_markdown(raw_path, layout, repo_root=repo_root)
     paths = write_processed_document(document, raw_path, layout, repo_root=repo_root)
 
-    assert paths.content_path == layout.processed_dir / "logan/p1/note/sample.md"
-    assert paths.metadata_path == layout.processed_dir / "logan/p1/note/sample.md.meta.json"
+    assert paths.content_path == layout.processed_dir / "iphone/logan/p1/note/sample.md"
+    assert paths.metadata_path == layout.processed_dir / "iphone/logan/p1/note/sample.md.meta.json"
     assert paths.content_path.read_text(encoding="utf-8") == document.content
 
     meta = json.loads(paths.metadata_path.read_text(encoding="utf-8"))
     assert meta["project"] == "logan"
     assert meta["build"] == "p1"
     assert meta["document_type"] == "engineering_note"
-    assert meta["target_file"] == "data/processed/logan/p1/note/sample.md"
+    assert meta["target_file"] == "data/processed/iphone/logan/p1/note/sample.md"
     assert "major_components" not in meta
     assert "nets" not in meta
     assert "interfaces" not in meta
@@ -52,37 +52,39 @@ def test_write_processed_mirror(layout_with_tmp_dirs, repo_root: Path) -> None:
 
 def test_write_processed_preserves_metadata_fields(layout_with_tmp_dirs) -> None:
     layout = layout_with_tmp_dirs
-    raw_path = layout.raw_dir / "logan" / "p1" / "note" / "sample.md"
+    raw_path = layout.raw_dir / "iphone" / "logan" / "p1" / "note" / "sample.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("content\n", encoding="utf-8")
 
     metadata = Metadata(
+        product="iphone",
         project="logan",
         build="p1",
         document_type="engineering_note",
         title="sample",
-        source_file="data/raw/logan/p1/note/sample.md",
+        source_file="data/raw/iphone/logan/p1/note/sample.md",
         keywords=["test"],
     )
     document = StandardDocument(content="content\n", metadata=metadata, source_ref=str(raw_path))
     paths = write_processed_document(document, raw_path, layout)
     meta = json.loads(paths.metadata_path.read_text(encoding="utf-8"))
     assert meta["keywords"] == ["test"]
-    assert meta["target_file"] == "data/processed/logan/p1/note/sample.md"
+    assert meta["target_file"] == "data/processed/iphone/logan/p1/note/sample.md"
 
 
 def test_write_processed_pdf_maps_to_md(layout_with_tmp_dirs, repo_root: Path) -> None:
     layout = layout_with_tmp_dirs
-    raw_path = layout.raw_dir / "logan" / "p1" / "sch" / "board.pdf"
+    raw_path = layout.raw_dir / "iphone" / "logan" / "p1" / "sch" / "board.pdf"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"%PDF-1.4")
 
     metadata = Metadata(
+        product="iphone",
         project="logan",
         build="p1",
         document_type="schematic",
         title="board",
-        source_file="data/raw/logan/p1/sch/board.pdf",
+        source_file="data/raw/iphone/logan/p1/sch/board.pdf",
         major_components=["U1"],
         nets=["VBAT"],
         interfaces=[],
@@ -98,4 +100,4 @@ def test_write_processed_pdf_maps_to_md(layout_with_tmp_dirs, repo_root: Path) -
     assert paths.content_path.name == "board.md"
     assert paths.metadata_path.name == "board.md.meta.json"
     meta = json.loads(paths.metadata_path.read_text(encoding="utf-8"))
-    assert meta["target_file"] == "data/processed/logan/p1/sch/board.md"
+    assert meta["target_file"] == "data/processed/iphone/logan/p1/sch/board.md"

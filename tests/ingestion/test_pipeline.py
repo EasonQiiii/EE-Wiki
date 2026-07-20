@@ -27,8 +27,8 @@ def ingest_config(app_config, tmp_path: Path) -> AppConfig:
 
 
 def test_ingest_file_end_to_end(ingest_config: AppConfig, repo_root: Path) -> None:
-    source = repo_root / "tests/fixtures/raw/logan/p1/note/sample.md"
-    raw_path = ingest_config.raw_dir / "logan/p1/note/sample.md"
+    source = repo_root / "tests/fixtures/raw/iphone/logan/p1/note/sample.md"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/note/sample.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -42,7 +42,7 @@ def test_ingest_file_end_to_end(ingest_config: AppConfig, repo_root: Path) -> No
 
 
 def test_ingest_txt_file_uses_markdown_parser(ingest_config: AppConfig) -> None:
-    raw_path = ingest_config.raw_dir / "logan/p1/note/readme.txt"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/note/readme.txt"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("# Readme\n\nPlain text body.\n", encoding="utf-8")
 
@@ -55,7 +55,7 @@ def test_ingest_txt_file_uses_markdown_parser(ingest_config: AppConfig) -> None:
 
 
 def test_ingest_path_rejects_unsupported_suffix(ingest_config: AppConfig) -> None:
-    raw_path = ingest_config.raw_dir / "logan/p1/note/archive.zip"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/note/archive.zip"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_bytes(b"zip")
     with pytest.raises(IngestionError, match="Unsupported"):
@@ -64,17 +64,17 @@ def test_ingest_path_rejects_unsupported_suffix(ingest_config: AppConfig) -> Non
 
 def test_ingest_path_directory(ingest_config: AppConfig, repo_root: Path) -> None:
     for name in ("a.md", "b.md"):
-        path = ingest_config.raw_dir / "logan/p1/note" / name
+        path = ingest_config.raw_dir / "iphone/logan/p1/note" / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"# {name}\n", encoding="utf-8")
 
-    run = ingest_path(ingest_config.raw_dir / "logan", ingest_config)
+    run = ingest_path(ingest_config.raw_dir / "iphone", ingest_config)
     assert len(run.ingested) == 2
     assert len(run.skipped) == 0
 
 
 def test_ingest_path_skips_unchanged(ingest_config: AppConfig) -> None:
-    raw_path = ingest_config.raw_dir / "logan/p1/note/a.md"
+    raw_path = ingest_config.raw_dir / "iphone/logan/p1/note/a.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("# a\n", encoding="utf-8")
 
@@ -92,7 +92,7 @@ def test_ingest_path_continues_after_file_failure(
     ingest_config: AppConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    note_dir = ingest_config.raw_dir / "logan/p1/note"
+    note_dir = ingest_config.raw_dir / "iphone/logan/p1/note"
     note_dir.mkdir(parents=True)
     (note_dir / "good.md").write_text("# good\n", encoding="utf-8")
     (note_dir / "bad.md").write_text("# bad\n", encoding="utf-8")

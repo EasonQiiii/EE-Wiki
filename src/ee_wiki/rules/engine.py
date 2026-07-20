@@ -69,6 +69,7 @@ class RuleEngine:
         self,
         *,
         rule_ids: list[str] | None = None,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
         include_disabled: bool = False,
@@ -77,6 +78,7 @@ class RuleEngine:
 
         Args:
             rule_ids: Optional subset of rule ids. Unknown ids yield a fail result.
+            product: Optional product filter.
             project: Optional project filter.
             build: Optional build filter.
             include_disabled: Evaluate disabled rules when explicitly requested.
@@ -114,7 +116,9 @@ class RuleEngine:
                     )
                     continue
                 results.append(
-                    self._evaluate_one(rule, project=project, build=build)
+                    self._evaluate_one(
+                        rule, product=product, project=project, build=build
+                    )
                 )
             return results
 
@@ -124,13 +128,15 @@ class RuleEngine:
             else self.pack.enabled_rules()
         )
         return [
-            self._evaluate_one(rule, project=project, build=build) for rule in rules
+            self._evaluate_one(rule, product=product, project=project, build=build)
+            for rule in rules
         ]
 
     def evaluate_summary(
         self,
         *,
         rule_ids: list[str] | None = None,
+        product: str | None = None,
         project: str | None = None,
         build: str | None = None,
         include_disabled: bool = False,
@@ -139,6 +145,7 @@ class RuleEngine:
 
         Args:
             rule_ids: Optional subset of rule ids.
+            product: Optional product filter.
             project: Optional project filter.
             build: Optional build filter.
             include_disabled: Include disabled rules when true.
@@ -148,6 +155,7 @@ class RuleEngine:
         """
         results = self.evaluate(
             rule_ids=rule_ids,
+            product=product,
             project=project,
             build=build,
             include_disabled=include_disabled,
@@ -156,6 +164,7 @@ class RuleEngine:
         for result in results:
             counts[result.status] = counts.get(result.status, 0) + 1
         return {
+            "product": product,
             "project": project,
             "build": build,
             "pack_dir": self.pack.pack_dir,
@@ -171,6 +180,7 @@ class RuleEngine:
         self,
         rule: RuleDefinition,
         *,
+        product: str | None,
         project: str | None,
         build: str | None,
     ) -> RuleResult:
@@ -187,6 +197,7 @@ class RuleEngine:
             return check_rail_presence(
                 rule,
                 graph_query=self.graph_query,
+                product=product,
                 project=project,
                 build=build,
             )
@@ -194,6 +205,7 @@ class RuleEngine:
             return check_power_tree_flags(
                 rule,
                 power_query=self.power_query,
+                product=product,
                 project=project,
                 build=build,
             )
@@ -201,6 +213,7 @@ class RuleEngine:
             return check_interface_naming(
                 rule,
                 graph_query=self.graph_query,
+                product=product,
                 project=project,
                 build=build,
             )
@@ -209,6 +222,7 @@ class RuleEngine:
                 rule,
                 case_index=self.case_index,
                 graph_query=self.graph_query,
+                product=product,
                 project=project,
                 build=build,
             )

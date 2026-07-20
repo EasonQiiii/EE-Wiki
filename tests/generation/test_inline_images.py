@@ -8,19 +8,19 @@ from ee_wiki.generation.inline_images import build_image_block
 
 def _citation(idx: int, images: tuple[str, ...] = ()) -> Citation:
     return Citation(
-        source_file="data/raw/logan/p1/sch/board.pdf",
+        source_file="data/raw/iphone/logan/p1/sch/board.pdf",
         chunk_id=f"board__p{idx:03d}",
         page=idx,
         excerpt="...",
-        url=f"http://localhost:8080/v1/sources/logan/p1/sch/board.md#p{idx:03d}",
+        url=f"http://localhost:8080/v1/sources/iphone/logan/p1/sch/board.md#p{idx:03d}",
         images=images,
     )
 
 
 def test_collects_images_from_referenced_citations() -> None:
     citations = [
-        _citation(1, ("http://localhost:8080/v1/assets/logan/p1/sch/images/board/board_p1_page.png",)),
-        _citation(2, ("http://localhost:8080/v1/assets/logan/p1/sch/images/board/board_p2_page.png",)),
+        _citation(1, ("http://localhost:8080/v1/assets/iphone/logan/p1/sch/images/board/board_p1_page.png",)),
+        _citation(2, ("http://localhost:8080/v1/assets/iphone/logan/p1/sch/images/board/board_p2_page.png",)),
         _citation(3),
     ]
     block = build_image_block("POWER SWITCH 原理 [1] 以及 [2] 相关。", citations)

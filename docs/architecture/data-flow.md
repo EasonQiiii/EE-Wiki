@@ -5,8 +5,8 @@ High-level pipeline for EE-Wiki. Core types: `src/ee_wiki/common/types.py`.
 ## Ingestion (write path)
 
 ```
-Raw file under data/raw/{project}/{build}/{type}/…
-    → path parser (derive project, build, document_type)
+Raw file under data/raw/{product}/{project}/{build}/{type}/…
+    → path parser (derive product, project, build, document_type)
     → ingestion/parsers/*
     → StandardDocument (Markdown + Metadata)
     → knowledge/store → data/processed/  (mirrors raw tree)
@@ -132,13 +132,14 @@ Section expansion does **not** merge chunks from different section slugs (e.g. `
 `generation/context.py` formats each retrieved (possibly merged) block as:
 
 ```
-[N] scope=build|project_common|global project=… build=… source=… page=… chunk_id=…
+[N] scope=build|project_common|product_common|global product=… project=… build=… source=… page=… chunk_id=…
 <content>
 ```
 
-- **`scope=build`** — `{project}/{build}/` board-level truth
-- **`scope=project_common`** — `{project}/common/` project-wide shared knowledge
-- **`scope=global`** — `global/global/` enterprise-wide knowledge
+- **`scope=build`** — `{product}/{project}/{build}/` board-level truth
+- **`scope=project_common`** — `{product}/{project}/common/` program-wide shared knowledge
+- **`scope=product_common`** — `{product}/common/` product-wide shared knowledge
+- **`scope=global`** — `global/` enterprise-wide knowledge
 
 Task prompts include `prompts/_shared/scope_rules.md` via `{{scope_rules}}`. The generator must label which scope each conclusion applies to.
 

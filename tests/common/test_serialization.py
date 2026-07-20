@@ -13,12 +13,13 @@ from ee_wiki.common.types import Chunk, Citation, Metadata, PageMetadata
 
 def test_note_metadata_omits_schematic_fields() -> None:
     metadata = Metadata(
-        project="logan",
+        product="logan",
+        project="m2",
         build="p1",
         document_type="engineering_note",
         title="manual",
-        source_file="data/raw/logan/p1/note/manual.md",
-        target_file="data/processed/logan/p1/note/manual.md",
+        source_file="data/raw/logan/m2/p1/note/manual.md",
+        target_file="data/processed/logan/m2/p1/note/manual.md",
     )
     data = metadata_to_dict(metadata)
     assert "target_file" in data
@@ -32,6 +33,7 @@ def test_note_metadata_omits_schematic_fields() -> None:
 
 def test_datasheet_metadata_includes_structured_fields() -> None:
     metadata = Metadata(
+        product="global",
         project="global",
         build="global",
         document_type="datasheet",
@@ -56,12 +58,13 @@ def test_datasheet_metadata_includes_structured_fields() -> None:
 
 def test_schematic_metadata_includes_pages() -> None:
     metadata = Metadata(
-        project="logan",
+        product="logan",
+        project="m2",
         build="p1",
         document_type="schematic",
         title="main",
-        source_file="data/raw/logan/p1/sch/main.pdf",
-        target_file="data/processed/logan/p1/sch/main.md",
+        source_file="data/raw/logan/m2/p1/sch/main.pdf",
+        target_file="data/processed/logan/m2/p1/sch/main.md",
         major_components=["U0902", "U101"],
         nets=["VBAT"],
         interfaces=["I2C1"],
@@ -91,12 +94,13 @@ def test_schematic_metadata_includes_pages() -> None:
 
 def test_schematic_metadata_includes_schematic_fields() -> None:
     metadata = Metadata(
-        project="logan",
+        product="logan",
+        project="m2",
         build="p1",
         document_type="schematic",
         title="main",
-        source_file="data/raw/logan/p1/sch/main.pdf",
-        target_file="data/processed/logan/p1/sch/main.md",
+        source_file="data/raw/logan/m2/p1/sch/main.pdf",
+        target_file="data/processed/logan/m2/p1/sch/main.md",
         major_components=["U0902"],
         nets=["VBAT"],
         interfaces=["I2C1"],
@@ -110,11 +114,12 @@ def test_schematic_metadata_includes_schematic_fields() -> None:
 def test_metadata_from_dict_strips_schematic_fields_for_note() -> None:
     """Hand-edited sidecars must not load schematic fields into note metadata."""
     data = {
-        "project": "logan",
+        "product": "logan",
+        "project": "m2",
         "build": "p1",
         "document_type": "engineering_note",
         "title": "manual",
-        "source_file": "data/raw/logan/p1/note/manual.md",
+        "source_file": "data/raw/logan/m2/p1/note/manual.md",
         "major_components": ["U0902"],
         "nets": ["VBAT"],
         "interfaces": ["I2C1"],
@@ -129,12 +134,13 @@ def test_metadata_from_dict_strips_schematic_fields_for_note() -> None:
 
 def test_metadata_from_dict_roundtrip() -> None:
     original = Metadata(
-        project="logan",
+        product="logan",
+        project="m2",
         build="p1",
         document_type="engineering_note",
         title="manual",
-        source_file="data/raw/logan/p1/note/manual.md",
-        target_file="data/processed/logan/p1/note/manual.md",
+        source_file="data/raw/logan/m2/p1/note/manual.md",
+        target_file="data/processed/logan/m2/p1/note/manual.md",
         source_mtime=123.0,
         source_size=99,
     )
@@ -147,16 +153,17 @@ def test_chunk_roundtrip() -> None:
         chunk_id="board__p001",
         content="U0902 VBAT",
         metadata=Metadata(
-            project="logan",
+            product="logan",
+            project="m2",
             build="p1",
             document_type="schematic",
             title="board",
-            source_file="data/raw/logan/p1/sch/board.pdf",
+            source_file="data/raw/logan/m2/p1/sch/board.pdf",
             target_file="data/processed/logan/p1/sch/board.md",
             page=1,
         ),
         citation=Citation(
-            source_file="data/raw/logan/p1/sch/board.pdf",
+            source_file="data/raw/logan/m2/p1/sch/board.pdf",
             chunk_id="board__p001",
             page=1,
             excerpt="U0902 VBAT",

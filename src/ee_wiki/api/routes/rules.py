@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ee_wiki.api.deps import get_rule_engine
+from ee_wiki.api.deps import get_config, get_rule_engine
 from ee_wiki.api.models import (
     RuleDefinitionModel,
     RuleEvaluateResponse,
     RuleListResponse,
     RuleResultModel,
 )
+from ee_wiki.api.scope_params import resolve_request_scope
 from ee_wiki.rules.engine import RuleEngine
 
 router = APIRouter(prefix="/v1", tags=["rules"])
@@ -40,6 +41,7 @@ async def list_rules(
 
 @router.get("/rules/evaluate", response_model=RuleEvaluateResponse)
 async def evaluate_rules(
+    product: str | None = Query(default=None),
     project: str | None = Query(default=None),
     build: str | None = Query(default=None),
     rule_id: list[str] | None = Query(
@@ -48,8 +50,10 @@ async def evaluate_rules(
     ),
     include_disabled: bool = Query(default=False),
     engine: RuleEngine | None = Depends(get_rule_engine),
+    config=Depends(get_config),
 ) -> RuleEvaluateResponse:
     """Evaluate engineering rules against the knowledge graph (and case index)."""
+    product, project, build = resolve_request_scope(config, product, project, build)
     if engine is None:
         raise HTTPException(
             status_code=503,
@@ -61,11 +65,13 @@ async def evaluate_rules(
         )
     summary = engine.evaluate_summary(
         rule_ids=rule_id,
+        product=product,
         project=project,
         build=build,
         include_disabled=include_disabled,
     )
     return RuleEvaluateResponse(
+        product=product,
         project=project,
         build=build,
         pack_dir=str(summary.get("pack_dir", "")),

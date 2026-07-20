@@ -16,7 +16,7 @@ def test_query_returns_answer_with_citations() -> None:
         answer="VBAT connects to PMIC.",
         citations=[
             Citation(
-                source_file="data/raw/logan/p1/note/manual.md",
+                source_file="data/raw/iphone/logan/p1/note/manual.md",
                 chunk_id="manual__power",
                 page=0,
                 excerpt="VBAT",
@@ -32,7 +32,7 @@ def test_query_returns_answer_with_citations() -> None:
     client = TestClient(app)
     response = client.post(
         "/v1/query",
-        json={"query": "What is VBAT?", "project": "logan", "build": "p1"},
+        json={"query": "What is VBAT?", "product": "iphone", "project": "logan", "build": "p1"},
     )
 
     assert response.status_code == 200
@@ -42,6 +42,7 @@ def test_query_returns_answer_with_citations() -> None:
     assert payload["citations"][0]["chunk_id"] == "manual__power"
     service.answer.assert_called_once_with(
         "What is VBAT?",
+        target_product="iphone",
         target_project="logan",
         target_build="p1",
         document_type=None,

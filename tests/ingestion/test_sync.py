@@ -30,14 +30,14 @@ def sync_config(app_config, tmp_path: Path) -> AppConfig:
 
 
 def test_needs_ingest_when_no_sidecar(sync_config: AppConfig) -> None:
-    raw_path = sync_config.raw_dir / "logan/p1/note/sample.md"
+    raw_path = sync_config.raw_dir / "iphone/logan/p1/note/sample.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("# hello\n", encoding="utf-8")
     assert needs_ingest(raw_path, sync_config.data_layout) is True
 
 
 def test_skip_when_fingerprint_matches(sync_config: AppConfig, repo_root: Path) -> None:
-    raw_path = sync_config.raw_dir / "logan/p1/note/sample.md"
+    raw_path = sync_config.raw_dir / "iphone/logan/p1/note/sample.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("# hello\n", encoding="utf-8")
     ingest_file(raw_path, sync_config)
@@ -45,12 +45,12 @@ def test_skip_when_fingerprint_matches(sync_config: AppConfig, repo_root: Path) 
 
 
 def test_reingest_when_file_size_changes(sync_config: AppConfig) -> None:
-    raw_path = sync_config.raw_dir / "logan/p1/note/sample.md"
+    raw_path = sync_config.raw_dir / "iphone/logan/p1/note/sample.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("# hello\n", encoding="utf-8")
 
     layout = sync_config.data_layout
-    content_path = layout.processed_dir / "logan/p1/note/sample.md"
+    content_path = layout.processed_dir / "iphone/logan/p1/note/sample.md"
     metadata_path = content_path.with_suffix(".md.meta.json")
     content_path.parent.mkdir(parents=True)
     content_path.write_text("# hello\n", encoding="utf-8")
@@ -63,7 +63,7 @@ def test_reingest_when_file_size_changes(sync_config: AppConfig) -> None:
 
 
 def test_force_always_reingests(sync_config: AppConfig) -> None:
-    raw_path = sync_config.raw_dir / "logan/p1/note/sample.md"
+    raw_path = sync_config.raw_dir / "iphone/logan/p1/note/sample.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("# hello\n", encoding="utf-8")
     ingest_file(raw_path, sync_config)
@@ -76,7 +76,7 @@ def test_log_skipped_raw_files_warns_on_key_and_numbers(
     import logging
 
     caplog.set_level(logging.INFO)
-    note_dir = sync_config.raw_dir / "logan/p1/note"
+    note_dir = sync_config.raw_dir / "iphone/logan/p1/note"
     note_dir.mkdir(parents=True)
     (note_dir / "slides.key").write_bytes(b"key")
     (note_dir / "sheet.numbers").write_bytes(b"numbers")
@@ -99,15 +99,16 @@ def test_log_skipped_raw_files_warns_on_key_and_numbers(
 
 
 def test_write_processed_records_fingerprint(sync_config: AppConfig) -> None:
-    raw_path = sync_config.raw_dir / "logan/p1/note/sample.md"
+    raw_path = sync_config.raw_dir / "iphone/logan/p1/note/sample.md"
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("content\n", encoding="utf-8")
     metadata = Metadata(
+        product="logan",
         project="logan",
         build="p1",
         document_type="engineering_note",
         title="sample",
-        source_file="data/raw/logan/p1/note/sample.md",
+        source_file="data/raw/iphone/logan/p1/note/sample.md",
     )
     document = StandardDocument(content="content\n", metadata=metadata, source_ref=str(raw_path))
     paths = write_processed_document(document, raw_path, sync_config.data_layout)

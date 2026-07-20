@@ -41,8 +41,8 @@ def _mock_embedder(texts: list[str]) -> np.ndarray:
 
 
 def test_raw_delete_flows_through_ingest_and_index(sync_config: AppConfig) -> None:
-    alpha_raw = sync_config.raw_dir / "logan/p1/note/alpha.md"
-    beta_raw = sync_config.raw_dir / "logan/p1/note/beta.md"
+    alpha_raw = sync_config.raw_dir / "iphone/logan/p1/note/alpha.md"
+    beta_raw = sync_config.raw_dir / "iphone/logan/p1/note/beta.md"
     alpha_raw.parent.mkdir(parents=True)
     alpha_raw.write_text("# Alpha\n\nAlpha body.\n", encoding="utf-8")
     beta_raw.write_text("# Beta\n\nBeta body.\n", encoding="utf-8")
@@ -54,7 +54,7 @@ def test_raw_delete_flows_through_ingest_and_index(sync_config: AppConfig) -> No
     beta_raw.unlink()
     ingest_run = ingest_path(sync_config.raw_dir, sync_config)
     assert len(ingest_run.removed) == 1
-    assert not (sync_config.processed_dir / "logan/p1/note/beta.md").is_file()
+    assert not (sync_config.processed_dir / "iphone/logan/p1/note/beta.md").is_file()
 
     index_run = build_index_from_processed(sync_config, embedder=_mock_embedder)
     assert index_run.removed_documents == 1

@@ -341,34 +341,38 @@ Every document should eventually share the same metadata schema.
 
 # Raw Data Layout
 
-Raw documents live under `data/raw/` (gitignored). Paths encode metadata — no manual tagging required for project, build, or document type.
+Raw documents live under `data/raw/` (gitignored). Paths encode metadata — no manual tagging required for product, project, build, or document type. Scope is a three-level hierarchy — `product` / `project` / `build` — with two reserved words, `global` and `common` (see [ADR 0011](docs/adr/0011-product-project-build-hierarchy.md)).
 
 ## Directory Convention
 
 ```
 data/raw/
-├── global/                         # enterprise-wide shared (all projects)
-│   ├── note/ sch/ sop/ datasheet/ fa/
-├── {project}/                      # e.g. logan, elias, ruby
-│   ├── common/                     # shared across all builds in this project
+├── global/                             # enterprise-wide shared (all products)
+│   └── note/ sch/ sop/ datasheet/ fa/
+├── {product}/                          # e.g. logan, elias, ruby
+│   ├── common/                         # product common — shared across all projects
 │   │   └── note/ sch/ sop/ fa/
-│   └── {build}/                    # e.g. p1, p2
-│       └── note/ sch/ sop/ fa/
+│   └── {project}/                      # a program within the product
+│       ├── common/                     # project common — shared across all builds
+│       │   └── note/ sch/ sop/ fa/
+│       └── {build}/                    # e.g. p1, p2
+│           └── note/ sch/ sop/ fa/
 └── ...
 ```
 
-| Path segment | Meaning | What to store |
-|--------------|---------|---------------|
-| `global` | Enterprise-wide library (`project=global`, `build=global`) | Knowledge shared by **all projects**: generic tool usage, industry practices, common component datasheets, enterprise FA methods |
-| `{project}` | A product line or program (e.g. `logan`) | — |
-| `common` | Project-wide shared (`build=common`) | **This project's** cross-build knowledge: product architecture, naming rules, shared IP, project-level bring-up — not board-specific wiring |
-| `{build}` | A specific hardware revision (e.g. `p1`, `p2`) | **Build truth**: schematics, build SOPs, debug notes for that revision |
-| `note` / `sch` / `sop` / `datasheet` / `fa` | Document category folder | — |
+| Path | product | project | build | What to store |
+|------|---------|---------|-------|---------------|
+| `global/{type}/…` | `global` | `global` | `global` | Knowledge shared by **all products**: generic tool usage, industry practices, common component datasheets, enterprise FA methods |
+| `{product}/common/{type}/…` | `{product}` | `common` | `common` | **Product common**: platform architecture, naming rules, shared IP across the product's programs |
+| `{product}/{project}/common/{type}/…` | `{product}` | `{project}` | `common` | **Project common**: cross-build knowledge for one program — not board-specific wiring |
+| `{product}/{project}/{build}/{type}/…` | `{product}` | `{project}` | `{build}` | **Build truth**: schematics, build SOPs, debug notes for that revision |
+
+`global` and `common` are reserved — they may not be used as ordinary product/project/build slugs. Folders `note` / `sch` / `sop` / `datasheet` / `fa` are document categories.
 
 Example:
 
 ```
-data/raw/logan/p1/sch/power-tree.pdf
+data/raw/logan/m2/p1/sch/power-tree.pdf
 ```
 
 Supported raw formats (V1 priority): PDF, Markdown, TXT, Excel, Word. On macOS, Keynote (`.key`) and Numbers (`.numbers`) are ingested via AppleScript export — see [ADR 0004](docs/adr/0004-iwork-macos-export.md) and `ingestion.iwork` in `config/default.yaml`.
@@ -378,8 +382,8 @@ Supported raw formats (V1 priority): PDF, Markdown, TXT, Excel, Word. On macOS, 
 After ingestion, `data/processed/` **mirrors the same path tree** as `data/raw/`:
 
 ```
-data/raw/logan/p1/sch/power-tree.pdf
-    →  data/processed/logan/p1/sch/power-tree.md   (+ sidecar metadata JSON)
+data/raw/logan/m2/p1/sch/power-tree.pdf
+    →  data/processed/logan/m2/p1/sch/power-tree.md   (+ sidecar metadata JSON)
 ```
 
 Indexes under `data/indexes/` are flat or sharded by implementation; they reference metadata, not the folder tree.
@@ -388,12 +392,13 @@ Indexes under `data/indexes/` are flat or sharded by implementation; they refere
 
 Ingestion derives metadata from the path relative to `data/raw/`:
 
-| Path | `project` | `build` | `document_type` |
-|------|-----------|---------|-----------------|
-| `global/datasheet/tps62840.pdf` | `global` | `global` | `datasheet` |
-| `logan/common/sop/bringup.md` | `logan` | `common` | `sop` |
-| `logan/p1/sch/main.pdf` | `logan` | `p1` | `schematic` |
-| `logan/p1/note/debug-log.txt` | `logan` | `p1` | `engineering_note` |
+| Path | `product` | `project` | `build` | `document_type` |
+|------|-----------|-----------|---------|-----------------|
+| `global/datasheet/tps62840.pdf` | `global` | `global` | `global` | `datasheet` |
+| `logan/common/sop/platform.md` | `logan` | `common` | `common` | `sop` |
+| `logan/m2/common/sop/bringup.md` | `logan` | `m2` | `common` | `sop` |
+| `logan/m2/p1/sch/main.pdf` | `logan` | `m2` | `p1` | `schematic` |
+| `logan/m2/p1/note/debug-log.txt` | `logan` | `m2` | `p1` | `engineering_note` |
 
 Folder → `document_type` mapping:
 
@@ -417,7 +422,8 @@ Example (schematic — `sch/` folder; V2 adds optional per-page sidecar `pages`)
 
 ```json
 {
-  "project": "logan",
+  "product": "logan",
+  "project": "m2",
   "build": "p1",
   "document_type": "schematic",
   "page": 0,
@@ -431,8 +437,8 @@ Example (schematic — `sch/` folder; V2 adds optional per-page sidecar `pages`)
   ],
   "keywords": [],
   "version": "",
-  "source_file": "data/raw/logan/p1/sch/power-tree.pdf",
-  "target_file": "data/processed/logan/p1/sch/power-tree.md"
+  "source_file": "data/raw/logan/m2/p1/sch/power-tree.pdf",
+  "target_file": "data/processed/logan/m2/p1/sch/power-tree.md"
 }
 ```
 
@@ -440,6 +446,7 @@ Example (datasheet — `datasheet/` folder; V2 structured fields):
 
 ```json
 {
+  "product": "global",
   "project": "global",
   "build": "global",
   "document_type": "datasheet",
@@ -458,13 +465,14 @@ Example (failure analysis — `fa/` folder):
 
 ```json
 {
-  "project": "logan",
+  "product": "logan",
+  "project": "m2",
   "build": "p1",
   "document_type": "failure_analysis",
   "title": "RMA-2024-001",
   "keywords": ["ESD", "RMA:RMA-2024-001", "LOT:B2024-117"],
-  "source_file": "data/raw/logan/p1/fa/rma-report.pdf",
-  "target_file": "data/processed/logan/p1/fa/rma-report.md"
+  "source_file": "data/raw/logan/m2/p1/fa/rma-report.pdf",
+  "target_file": "data/processed/logan/m2/p1/fa/rma-report.md"
 }
 ```
 
@@ -472,12 +480,13 @@ Example (engineering note — `note/` folder; no schematic fields):
 
 ```json
 {
-  "project": "logan",
+  "product": "logan",
+  "project": "m2",
   "build": "p1",
   "document_type": "engineering_note",
   "title": "iPadManual",
-  "source_file": "data/raw/logan/p1/note/iPadManual.md",
-  "target_file": "data/processed/logan/p1/note/iPadManual.md"
+  "source_file": "data/raw/logan/m2/p1/note/iPadManual.md",
+  "target_file": "data/processed/logan/m2/p1/note/iPadManual.md"
 }
 ```
 
@@ -493,30 +502,32 @@ Metadata is the foundation of enterprise retrieval.
 
 # Retrieval Scope
 
-When querying a specific project and build, retrieval **inherits upward** through shared libraries:
+When querying a specific product, project, and build, retrieval **inherits upward** through shared libraries:
 
 ```
-Query: project=logan, build=p1
+Query: product=logan, project=m2, build=p1
 
 Search scope (in priority order):
-  1. logan / p1          ← build-specific
-  2. logan / common      ← project-wide shared
-  3. global / global     ← enterprise-wide shared
+  1. logan / m2 / p1          ← build truth
+  2. logan / m2 / common      ← project common
+  3. logan / common / common  ← product common
+  4. global / global / global ← enterprise-wide shared
 ```
 
 Rules:
 
-- **Cascade retrieval** (default: `retrieval.scope_cascade: true`): search **build tier first**; expand to `common` only when the top build rerank score is below `scope_sufficient_rerank`; expand to `global` only when both build and common are insufficient. Product-only queries (`inherit`) cascade across all revision builds → `common` → `global` the same way.
-- **Mixed quotas** (defaults in `config/default.yaml`): build tier fills up to `scope_quota_build` slots; `common` and `global` supplement remaining slots up to their quotas — they do not replace build evidence when build tier is sufficient.
-- Build-specific documents rank highest; `common` and `global` provide fallback context.
+- **Upward inheritance** returns `(product, project, build)` triples, most specific first: build truth → project common → product common → `global`.
+- **Cascade retrieval** (default: `retrieval.scope_cascade: true`): search the most specific tier first and expand outward only when the top rerank score is insufficient.
+- **Mixed quotas** (defaults in `config/default.yaml`): the build tier fills up to `scope_quota_build` slots; broader tiers supplement remaining slots up to their quotas — they do not replace build evidence when the build tier is sufficient.
+- Build-specific documents rank highest; project/product `common` and `global` provide fallback context.
 - **`global/`** — enterprise or industry-wide background (tools, generic datasheets); answers must label it **global**, not as a specific board's fact.
-- **`{project}/common/`** — that project's shared knowledge across builds; label as **project common**; does not override build-to-build differences.
-- **`{project}/{build}/`** — authoritative board-level truth; engineering conclusions default here.
-- Querying `project=logan, build=common` searches `logan/common` + `global` only.
-- Querying `project=global` searches the enterprise library only.
+- **`{product}/common/`** — the product's shared knowledge across programs; label as **product common**.
+- **`{product}/{project}/common/`** — a program's shared knowledge across builds; label as **project common**; does not override build-to-build differences.
+- **`{product}/{project}/{build}/`** — authoritative board-level truth; engineering conclusions default here.
+- Querying `build=common` searches project common + product common + `global`; querying `project=common` searches product common + `global`; querying `product=global` searches the enterprise library only.
 - Scope inheritance is on by default (`config/default.yaml` → `retrieval.scope_inheritance`).
 
-This ensures a question about `logan/p1` still finds datasheets in `global/datasheet/` and SOPs in `logan/common/sop/`.
+This ensures a question about `logan/m2/p1` still finds datasheets in `global/datasheet/` and SOPs in `logan/m2/common/sop/` and `logan/common/sop/`.
 
 ### Answer presentation
 

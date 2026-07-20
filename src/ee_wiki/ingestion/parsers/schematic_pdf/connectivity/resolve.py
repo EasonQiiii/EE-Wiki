@@ -1,4 +1,9 @@
-"""Resolve module→nets using CAD → PDF geometry → OCR spatial ladder."""
+"""Resolve module→nets using PDF geometry → OCR spatial (page-level).
+
+Document-level netlist/boardview companions are parsed once via
+:mod:`discover` and merged in :mod:`merge` (ADR 0009). Optional
+``companion_module_nets`` may still enrich a page when callers pass them.
+"""
 
 from __future__ import annotations
 
@@ -36,8 +41,17 @@ def resolve_page_module_nets(
     cad_extensions: tuple[str, ...] | None = None,
     max_connector_distance: float = 90.0,
     prefer_geometry: bool = True,
+    companion_module_nets: dict[str, list[str]] | None = None,
+    skip_cad_discovery: bool = False,
 ) -> tuple[dict[str, list[str]], ConnectivitySource, PageConnectivity | None]:
-    """Resolve module→net map with the evidence ladder from ADR 0007.
+    """Resolve module→net map for one schematic page.
+
+    Evidence order for **page** bindings (ADR 0007 / 0009):
+
+    1. Optional pre-parsed ``companion_module_nets`` (``cad_netlist``)
+    2. Legacy on-demand CAD discovery when ``skip_cad_discovery`` is False
+    3. PDF connector geometry
+    4. OCR spatial
 
     Args:
         page: 1-based page number.
@@ -45,15 +59,26 @@ def resolve_page_module_nets(
         nets: Page net names.
         ocr_text: Raw OCR text (spatial fallback).
         ocr_tokens: Optional word boxes.
-        pdf_path: Raw schematic PDF path for CAD companion discovery.
+        pdf_path: Raw schematic PDF path for optional legacy CAD discovery.
         cad_extensions: Optional CAD suffixes from config.
         max_connector_distance: Geometry catchment radius.
         prefer_geometry: When True, try PDF connector catchment before OCR spatial.
+        companion_module_nets: Pre-parsed module→nets from document-level companions.
+        skip_cad_discovery: When True, do not re-discover companions per page.
 
     Returns:
         Tuple of ``(module_nets, source, page_connectivity_or_none)``.
     """
-    if pdf_path is not None:
+    if companion_module_nets:
+        logger.info("Page %d connectivity source=cad_netlist (pre-parsed)", page)
+        connectivity = PageConnectivity(
+            page=page,
+            source="cad_netlist",
+            module_nets=dict(companion_module_nets),
+        )
+        return dict(companion_module_nets), "cad_netlist", connectivity
+
+    if not skip_cad_discovery and pdf_path is not None:
         companions = discover_cad_companions(pdf_path, extensions=cad_extensions)
         cad_nets = try_parse_cad_module_nets(companions)
         if cad_nets:
@@ -74,7 +99,6 @@ def resolve_page_module_nets(
             max_connector_distance=max_connector_distance,
         )
         if geometry is not None and geometry.module_nets:
-            # Fill modules that geometry missed using OCR spatial (do not overwrite).
             spatial = associate_nets_to_modules(
                 module_labels,
                 nets,

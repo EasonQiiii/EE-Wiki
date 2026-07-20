@@ -122,6 +122,7 @@ def test_parse_legacy_doc_uses_libreoffice_and_prose_pdf(
         mock_parse_pdf.return_value = StandardDocument(
             content="# wm8978\n\n## Page 1\n\nConverted body text.\n",
             metadata=Metadata(
+                product="global",
                 project="global",
                 build="global",
                 document_type="datasheet",
