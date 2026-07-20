@@ -55,6 +55,10 @@ def main(argv: list[str] | None = None) -> int:
     host = args.host or config.api.host
     port = args.port or config.api.port
 
+    from ee_wiki.api.startup_checks import warn_lab_readiness
+
+    warn_lab_readiness(config)
+
     try:
         import uvicorn
     except ImportError:

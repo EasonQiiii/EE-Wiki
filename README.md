@@ -8,6 +8,7 @@
 | Document | Purpose |
 |----------|---------|
 | [AGENTS.md](AGENTS.md) | Rules and boundaries for AI coding assistants |
+| [docs/usage/lab-handoff.md](docs/usage/lab-handoff.md) | **Lab 交接** — 同事必读顺序、当天清单、分工 |
 | [docs/usage/local-setup.md](docs/usage/local-setup.md) | **Local machine setup** (models, env, smoke test) |
 | [docs/usage/ingest.md](docs/usage/ingest.md) | **How to run `scripts/ingest.py`** (raw → processed) |
 | [docs/usage/knowledge-authoring.md](docs/usage/knowledge-authoring.md) | **How to write & place documents** (authoring spec for humans + AI) |

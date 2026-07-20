@@ -21,6 +21,7 @@ from ee_wiki.api.routes.projects import router as projects_router
 from ee_wiki.api.routes.query import router as query_router
 from ee_wiki.api.routes.rules import router as rules_router
 from ee_wiki.api.routes.sources import router as sources_router
+from ee_wiki.api.startup_checks import warn_lab_readiness
 from ee_wiki.common.logging import get_logger
 
 logger = get_logger(__name__)
@@ -30,6 +31,8 @@ logger = get_logger(__name__)
 async def _lifespan(app: FastAPI):
     config = get_config()
     warn_if_ingest_unprotected(config)
+    # Also runs when the app is started outside scripts/serve.py.
+    warn_lab_readiness(config)
     if config.api.warmup_on_startup:
         warmup_rag_service()
     yield

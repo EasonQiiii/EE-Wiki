@@ -39,6 +39,9 @@ Falls back to the pre-V4 FA → trace → RAG cascade.
 
 ## Lab readiness checklist
 
+For a full reading order and role split for colleagues joining lab, see
+[lab-handoff.md](lab-handoff.md).
+
 Framework code is already in the repo. Lab work needs **data + models + a short smoke**,
 not more Python modules. Use this as the on-site packing list.
 
@@ -83,6 +86,15 @@ Same stem as the schematic PDF, under `sch/` or `sch/cad/`:
 
 Without these, chat/MCP/FA **refuse** pin–net answers instead of guessing (ADR 0009).
 PDF / OCR alone never counts as board-verified electrical truth.
+
+**Ingest path:** schematic PDF parse discovers companions → parses `.net` (generic
+line-oriented / light KiCad sexpr; Altium/KiCad project files are stubs) and
+`.brd` (Landrex BoardView) → merges into `*.connectivity.json` next to processed
+markdown when `write_sidecar: true`. Re-ingest after adding companions.
+
+`scripts/serve.py` (and API startup) logs **WARNING**s for missing `.net` / `.brd`,
+unparsed netlists, missing sidecars, empty `sop/`, missing indexes, and FA Keynote
+template gaps — see `ee_wiki.api.startup_checks.warn_lab_readiness`.
 
 ### FA session extras
 
