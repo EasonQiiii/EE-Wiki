@@ -28,6 +28,15 @@ class DiagnosisItem:
 
 
 @dataclass(frozen=True)
+class DescriptionItem:
+    """One description entry on a Radar problem (often a Summary block)."""
+
+    text: str
+    added_by: str | None = None
+    added_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class AttachmentMeta:
     """Metadata for a Radar attachment or picture."""
 
@@ -51,6 +60,7 @@ class RadarProblem:
     configuration_summary: str | None = None
     assignee: str | None = None
     priority: str | None = None
+    description: tuple[DescriptionItem, ...] = ()
     diagnosis: tuple[DiagnosisItem, ...] = ()
     attachments: tuple[AttachmentMeta, ...] = ()
 

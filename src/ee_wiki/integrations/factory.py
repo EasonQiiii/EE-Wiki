@@ -37,7 +37,10 @@ def build_radar_backend(config: AppConfig | FaConfig) -> RadarBackend:
     if backend == "radarclient":
         from ee_wiki.integrations.radar.client import RadarclientBackend
 
-        return RadarclientBackend()
+        return RadarclientBackend(
+            client_system_name=fa.radar.client_system_name,
+            client_system_version=fa.radar.client_system_version,
+        )
     raise ConfigError(f"Unknown fa.radar.backend: {fa.radar.backend!r}")
 
 

@@ -143,6 +143,8 @@ def _fetch_stream_result(
         project=target_project,
         build=target_build,
         connectivity_query=connectivity_query,
+        llm=service.llm,
+        cancel_event=cancel_event,
     )
     trace.mark_phase("gate", gate_started)
     if gate is not None:

@@ -37,6 +37,7 @@
 | [ADR 0012](../adr/0012-chat-pipeline-grounding.md) | gates → rules-first route → hybrid RAG + 引用 |
 | [ADR 0008](../adr/0008-multi-agent-runtime.md) | Supervisor + ToolBus、写禁令 |
 | [fa-session.md](../architecture/fa-session.md) | Radar 会话、Flames 手工粘贴 |
+| [integrations-radar.md](../architecture/integrations-radar.md) | stub vs live `radarclient`（SPNego）；开真票改 `fa.radar.backend` |
 | [ADR 0010](../adr/0010-fa-session-external-integrations.md) | FA 外部集成契约（默认 stub） |
 
 ### 原理图 / 追网
@@ -104,10 +105,41 @@ hybrid RAG (证据 + 检索 + 一次生成 + citations)
 | 开关 | 位置 | 作用 |
 |------|------|------|
 | `agents.enabled: false` | `config/default.yaml` | 关掉 Supervisor，退回 gate → RAG |
-| `fa.*.backend: stub` / Flames `manual` | 同上 | 无内网也能练 FA check-in |
+| `fa.radar.backend` | 同上 | **`stub`（默认）或 `radarclient`（真票）——二选一，见下节** |
+| `fa.flames.backend: manual` | 同上 | 无 Flames API 时靠用户粘贴 log |
 | `schematic_pdf.connectivity.enabled` | 同上 | 关则不做权威追网门 |
 
-**不要**在 lab 把 agent 配成可写 graph/ingest；写禁令见 ADR 0008。Radar 真写回需要确认门控（ADR 0010），默认不要开 live。
+**不要**在 lab 把 agent 配成可写 graph/ingest；写禁令见 ADR 0008。Radar **写回**（diagnosis / 上传附件）另需 `confirm=true`（ADR 0010），与读票 backend 无关。
+
+---
+
+## FA Radar：`stub` vs `radarclient`（务必读清）
+
+**不是**「本机有 Kerberos / radarclient 就自动用真票，挂了就回 stub」。  
+后端由配置**显式选定**，失败**不会**静默降级。
+
+| `fa.radar.backend` | 行为 |
+|--------------------|------|
+| `stub`（仓库默认） | 始终用假票（仿真实 shape 的 title/description/diagnosis）。**根本不调用** `radarclient`，本机环境再好也是假数据。 |
+| `radarclient` | 始终走真 Apple Radar（SPNego + Kerberos 票）。缺包、没票、拉票失败 → **直接报错**，不会自动切回 stub。 |
+
+开真票 checklist：
+
+1. 本机 `PYTHONPATH` 能 `import radarclient`（包不进本仓库）
+2. 本机已有有效 AppleConnect / Kerberos 票（EE-Wiki **不存密码**）
+3. `config/default.yaml` 改为：
+
+```yaml
+fa:
+  radar:
+    backend: radarclient
+    client_system_name: EE-Wiki    # 或 lab 工具名，如 Silence
+    client_system_version: "1.0"
+```
+
+4. **重启 API** 后再在 Open WebUI 发 `radar://…` / `rdar://…` check-in
+
+证据优先级（与 stub/live 无关）：Flames → Radar title/description/diagnosis → 再请用户粘贴。细节见 [integrations-radar.md](../architecture/integrations-radar.md)、[fa-session.md](../architecture/fa-session.md)。
 
 ---
 
@@ -120,7 +152,8 @@ hybrid RAG (证据 + 检索 + 一次生成 + citations)
 | ADR 0012：gates 一次、规则优先路由、hybrid 引用 | 已 accepted |
 | ADR 0011：三层 scope + migrate | 已 accepted |
 | ADR 0009：netlist/BoardView 合并 sidecar | 已落地；lab 需放 companion 文件 |
-| FA Radar/Flames/Keynote | 协议 + stub/manual；live 视现场内网 |
+| FA Radar | **默认 stub**；live 已实现，需手动改 `fa.radar.backend: radarclient`（无自动回退） |
+| FA Flames / Keynote | Flames 默认 `manual`；Keynote 模板在 `assets/templates/fa/` |
 
 ---
 
@@ -130,7 +163,7 @@ hybrid RAG (证据 + 检索 + 一次生成 + citations)
 |------|--------|----------|
 | 环境 / 模型 | local-setup | 模型路径、API、Open WebUI 连通 |
 | 知识库 | README 布局 + knowledge-authoring + ingest | 迁布局、放文档、ingest/index |
-| FA | agents + fa-session + ADR 0010 | check-in smoke、手工粘贴 Flames |
+| FA | 上文 Radar 开关 + fa-session + integrations-radar | stub smoke；要真票再改 backend 并确认 Kerberos |
 | 原理图追网 | ADR 0009 + agents smoke | 确认 `.net`/`.brd` 与权威拒绝行为 |
 | 联调 / 排错 | ADR 0012 + RequestTrace | 对照 smoke 表看 branch/route |
 
@@ -139,7 +172,7 @@ hybrid RAG (证据 + 检索 + 一次生成 + citations)
 ## 明确先别深挖
 
 - 全量 ADR 0001–0006（栈已定；除非改存储/模型）
-- live Radarclient / 内网 Flames API 细节（无凭证时用 stub）
+- 在未改 `backend: radarclient` 且无 Kerberos 时纠结「为什么不是真票」（默认就是 stub）
 - eval golden 全量（[eval.md](eval.md) 有空再跑）
 - 在 lab 现场做大 refactor / 新 ADR
 

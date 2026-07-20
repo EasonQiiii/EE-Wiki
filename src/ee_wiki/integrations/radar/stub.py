@@ -8,6 +8,7 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.integrations.paths import normalize_radar_id
 from ee_wiki.protocols.radar import (
     AttachmentMeta,
+    DescriptionItem,
     DiagnosisItem,
     RadarComponentRef,
     RadarProblem,
@@ -15,6 +16,86 @@ from ee_wiki.protocols.radar import (
 )
 
 logger = get_logger(__name__)
+
+
+def _sample_problem(
+    rid: str,
+    *,
+    component_name: str,
+    component_version: str,
+) -> RadarProblem:
+    """Build a redacted stub shaped like a real radarclient snapshot.
+
+    Based on lab sample rdar://101493937 (flash erase / standby) so offline
+    FA check-in can exercise Radar title → description → diagnosis evidence
+    without Apple network access.
+    """
+    return RadarProblem(
+        radar_id=rid,
+        title=f"[stub] Scarif flash erase issue ({rid})",
+        state="Analyze",
+        substate="Investigate",
+        component=RadarComponentRef(
+            id=1,
+            name=component_name,
+            version=component_version,
+        ),
+        found_in_builds=(component_version,),
+        configuration_summary=(
+            f"stub unit for radar {rid}; build {component_version}"
+        ),
+        assignee="stub.user@example.com",
+        priority="3",
+        description=(
+            DescriptionItem(
+                text=(
+                    "Summary:\n"
+                    "This rdar is for the Scarif flash cannot erase fully"
+                ),
+                added_by="stub",
+            ),
+        ),
+        diagnosis=(
+            DiagnosisItem(
+                text=(
+                    "The external flash cannot been erased fully"
+                    "(turn to all `0xff`) after issue command "
+                    "`imu -d gyro save xxx`.\n\n"
+                    "Raw fail log please check "
+                    "`UNIT_save_100_NG.log` and `UNIT_save_500_NG.log`."
+                ),
+                added_by="stub",
+                entry_type="user",
+            ),
+            DiagnosisItem(
+                text=(
+                    "<Radar History>\n"
+                    "Assignee was changed.\n"
+                    "</Radar History>"
+                ),
+                added_by="stub",
+                entry_type="history",
+            ),
+            DiagnosisItem(
+                text=(
+                    "It looks like system is entering standby during test\n\n"
+                    "> Enter Standby\n"
+                    "MSG:  IMUProcessor State: Extended Idle\n\n"
+                    "Before running any test can you please try "
+                    "`pwr_state set factory` then continue with full test."
+                ),
+                added_by="stub",
+                entry_type="user",
+            ),
+        ),
+        attachments=(
+            AttachmentMeta(file_name="UNIT_save_100_NG.log", kind="attachment"),
+            AttachmentMeta(file_name="UNIT_save_500_NG.log", kind="attachment"),
+            AttachmentMeta(
+                file_name="sensor_flash_test_PASS.log", kind="attachment"
+            ),
+        ),
+    )
 
 
 class StubRadarBackend:
@@ -42,26 +123,14 @@ class StubRadarBackend:
         """Return a synthetic or previously mutated problem snapshot."""
         rid = normalize_radar_id(radar_id)
         if rid not in self._problems:
-            self._problems[rid] = RadarProblem(
-                radar_id=rid,
-                title=f"[stub] FA check-in {rid}",
-                state="Analyze",
-                substate="Investigate",
-                component=RadarComponentRef(
-                    id=1,
-                    name=self._default_component_name,
-                    version=self._default_component_version,
-                ),
-                found_in_builds=(self._default_component_version,),
-                configuration_summary=(
-                    f"stub unit for radar {rid}; build "
-                    f"{self._default_component_version}"
-                ),
-                assignee="stub.user@example.com",
-                priority="3",
-                diagnosis=tuple(self._diagnosis.get(rid, [])),
-                attachments=tuple(self._attachments.get(rid, [])),
+            sample = _sample_problem(
+                rid,
+                component_name=self._default_component_name,
+                component_version=self._default_component_version,
             )
+            self._problems[rid] = sample
+            self._diagnosis[rid] = list(sample.diagnosis)
+            self._attachments[rid] = list(sample.attachments)
         problem = self._problems[rid]
         return RadarProblem(
             radar_id=problem.radar_id,
@@ -73,6 +142,7 @@ class StubRadarBackend:
             configuration_summary=problem.configuration_summary,
             assignee=problem.assignee,
             priority=problem.priority,
+            description=problem.description,
             diagnosis=tuple(self._diagnosis.get(rid, [])),
             attachments=tuple(self._attachments.get(rid, [])),
         )

@@ -29,8 +29,11 @@ VALID_TASKS: frozenset[str] = frozenset({
 
 MAX_CLASSIFY_TOKENS = 16
 MAX_AGENT_ROUTE_TOKENS = 48
+MAX_FA_MESSAGE_TOKENS = 16
 _ROLES_LINE = re.compile(r"^ROLES:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 _TASK_LINE = re.compile(r"^TASK:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+_FA_KIND_LINE = re.compile(r"^KIND:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+VALID_FA_MESSAGE_KINDS: frozenset[str] = frozenset({"evidence", "stay"})
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,84 @@ def _generate_short_output(
             parts.append(fragment)
         return "".join(parts).strip()
     return llm.generate(prompt, max_new_tokens=max_new_tokens).strip()
+
+
+def classify_fa_message(
+    question: str,
+    *,
+    radar_id: str,
+    llm: LlmBackend,
+    repo_root: Path,
+    cancel_event: threading.Event | None = None,
+) -> str | None:
+    """Classify an FA-session turn as ``evidence`` or ``stay`` (prompt-driven).
+
+    Used when a chat is already bound to a Radar id so the session stays on
+    the FA path (no silent RAG fallthrough). Semantic judgment lives in
+    ``prompts/fa/classify_message.md`` — not hardcoded keyword lists.
+
+    Args:
+        question: Latest user utterance in the FA chat.
+        radar_id: Bound Radar id for prompt context.
+        llm: Local LLM backend.
+        repo_root: Repository root for loading the prompt template.
+        cancel_event: Optional cancellation signal.
+
+    Returns:
+        ``evidence`` or ``stay``, or ``None`` when output is unusable so the
+        caller can default to ``stay`` (session lock, ask again).
+    """
+    if cancel_event and cancel_event.is_set():
+        return None
+
+    path = repo_root / "prompts" / "fa" / "classify_message.md"
+    template = path.read_text(encoding="utf-8")
+    prompt = (
+        template.replace("{{radar_id}}", radar_id)
+        .replace("{{question}}", question)
+        .strip()
+    )
+
+    try:
+        raw_output = _generate_short_output(
+            llm,
+            prompt,
+            max_new_tokens=MAX_FA_MESSAGE_TOKENS,
+            cancel_event=cancel_event,
+        )
+    except Exception:
+        logger.warning("FA message classification failed", exc_info=True)
+        return None
+
+    if cancel_event and cancel_event.is_set():
+        return None
+    if not raw_output:
+        return None
+
+    match = _FA_KIND_LINE.search(raw_output)
+    raw_kind = match.group(1) if match else raw_output
+    cleaned = raw_kind.strip().split("\n")[0].strip()
+    cleaned = cleaned.strip('"').strip("'").strip("`").strip().lower()
+    cleaned = re.sub(r"[.。,，;；:：!！?？]", "", cleaned)
+    if cleaned in VALID_FA_MESSAGE_KINDS:
+        logger.info(
+            "FA message kind: %r -> %s (rdar://%s)",
+            question[:60],
+            cleaned,
+            radar_id,
+        )
+        return cleaned
+    for kind in VALID_FA_MESSAGE_KINDS:
+        if kind in cleaned:
+            logger.info(
+                "FA message kind (containment): %r -> %s (rdar://%s)",
+                question[:60],
+                kind,
+                radar_id,
+            )
+            return kind
+    logger.warning("FA message kind unrecognized: %r", raw_output)
+    return None
 
 
 def classify_agent_route(

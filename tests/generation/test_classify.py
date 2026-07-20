@@ -10,6 +10,7 @@ from ee_wiki.generation.classify import (
     VALID_TASKS,
     _parse_task_label,
     classify_agent_route,
+    classify_fa_message,
     classify_task,
 )
 
@@ -212,3 +213,55 @@ class TestClassifyAgentRoute:
 
         assert route is not None
         assert route.roles == ("pcb", "si", "power")
+
+
+class TestClassifyFaMessage:
+    """FA session evidence vs stay (prompt-driven)."""
+
+    @pytest.fixture()
+    def repo_root(self):
+        from pathlib import Path
+
+        return Path(__file__).resolve().parents[2]
+
+    def test_evidence_kind(self, repo_root) -> None:
+        llm = MagicMock()
+        llm.generate_stream = None
+        llm.generate.return_value = "KIND: evidence"
+        assert (
+            classify_fa_message(
+                "ERROR: rail OOR",
+                radar_id="123",
+                llm=llm,
+                repo_root=repo_root,
+            )
+            == "evidence"
+        )
+
+    def test_stay_kind(self, repo_root) -> None:
+        llm = MagicMock()
+        llm.generate_stream = None
+        llm.generate.return_value = "KIND: stay"
+        assert (
+            classify_fa_message(
+                "STM32F407 核心参数",
+                radar_id="123",
+                llm=llm,
+                repo_root=repo_root,
+            )
+            == "stay"
+        )
+
+    def test_unrecognized_returns_none(self, repo_root) -> None:
+        llm = MagicMock()
+        llm.generate_stream = None
+        llm.generate.return_value = "banana"
+        assert (
+            classify_fa_message(
+                "hello",
+                radar_id="123",
+                llm=llm,
+                repo_root=repo_root,
+            )
+            is None
+        )

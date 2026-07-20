@@ -48,10 +48,9 @@ def extract_errors_from_text(text: str) -> list[FailItem]:
     if items:
         return items
 
-    # Single non-empty paragraph treated as one fail item when user pastes one line.
-    stripped = text.strip()
-    if stripped and "\n" not in stripped and len(stripped) >= 3:
-        return [FailItem(message=stripped, line_no=1)]
+    # Do NOT treat an arbitrary one-line sentence as a fail item — that would
+    # hijack normal chat (e.g. "STM32F407 核心参数") after FA check-in asked
+    # for evidence. Require ERROR/FAIL lines or a bullet/numbered list above.
     return []
 
 

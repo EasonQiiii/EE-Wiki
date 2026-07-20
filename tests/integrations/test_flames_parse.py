@@ -18,7 +18,12 @@ def test_extracts_bullet_list_when_no_error_prefix() -> None:
     assert items[0].message == "first fail"
 
 
-def test_single_line_paste() -> None:
-    items = extract_errors_from_text("VDD_CORE out of range")
+def test_single_line_requires_error_marker() -> None:
+    assert extract_errors_from_text("VDD_CORE out of range") == []
+    items = extract_errors_from_text("ERROR: VDD_CORE out of range")
     assert len(items) == 1
     assert "VDD_CORE" in items[0].message
+
+
+def test_plain_question_is_not_a_fail_list() -> None:
+    assert extract_errors_from_text("STM32F407 核心参数") == []

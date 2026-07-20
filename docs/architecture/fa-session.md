@@ -16,12 +16,12 @@ Lab actions (bench, X-ray, T/A, probing) stay human-owned. EE-Wiki guides, retri
 3. EE-Wiki:
    a. Parse radar_id
    b. Radar agent → problem + component → project/build
-   c. Flames evidence (default = manual backup):
-      - live: pull logs → error items
-      - manual: ask user to paste log / error list (until API exists)
-      - stub: synthetic logs (tests only)
-   d. Cache evidence under data/cache/fa/{radar_id}/
-   e. Reply with fail list + downloadable log links + Radar status
+   c. Evidence waterfall:
+      - Flames (live/stub/manual cache) when fail items exist
+      - else Radar title → description → diagnosis (LLM extract; skip History)
+      - else ask user to paste log / error list
+   d. Cache evidence under data/cache/fa/{radar_id}/ (incl. radar_corpus.txt)
+   e. Reply with fail list + downloadable links + Radar status
       (or a short prompt if still awaiting paste)
 4. Interactive turns: true-fail judgment (human), module hints, similar cases,
    next lab steps, draft diagnosis text
@@ -61,9 +61,12 @@ See [integrations-radar.md](integrations-radar.md#project--build). Order: user o
 |------|-----------|
 | Chat entry | `POST /v1/chat/completions` → `integrations/fa_chat.py` before RAG |
 | Check-in intents | `分析 radar …` / `new checkin rdar://…` / bare `rdar://…` |
-| Evidence paste | After assistant “Need test evidence”, paste log or `- fail` list (optional `station: FQT`) |
+| Session lock | After assistant `FA check-in — rdar://…`, the chat stays on FA — no silent RAG fallthrough |
+| Evidence vs stay | Local LLM + `prompts/fa/classify_message.md` (`KIND: evidence|stay`); default `stay` if LLM unavailable |
+| Radar → fails | Local LLM + `prompts/fa/extract_radar_evidence.md` on title/description/diagnosis |
+| Evidence paste | Fallback when Flames + Radar yield nothing; optional `station: FQT` |
 | Download logs / Keynote | `GET /v1/exports/fa/{radar_id}/…` and `/v1/cache/…` with `api.public_base_url` |
-| Citations to wiki docs | Existing `/v1/sources` + `sources[]` chips (normal RAG turns) |
+| Citations to wiki docs | Existing `/v1/sources` + `sources[]` chips (**new** chat for wiki Q&A; not this FA thread) |
 | Full agent supervisor | Still gated on ADR 0008 §8 — this path is intentional lightweight routing |
 
 Engineers should be able to click a link in the assistant message and download `FA_summary.key` or a cached `.log` without leaving the browser.

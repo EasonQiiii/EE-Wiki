@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -16,12 +17,33 @@ from ee_wiki.integrations.factory import (
 )
 from ee_wiki.integrations.flames.manual import ManualFlamesBackend
 from ee_wiki.integrations.paths import fa_cache_dir, normalize_radar_id
+from ee_wiki.integrations.radar.evidence import (
+    compose_radar_evidence_corpus,
+    radar_has_evidence_corpus,
+)
 from ee_wiki.integrations.scope import ScopeResolution, resolve_scope_from_problem
 from ee_wiki.protocols.fa_report import FaReportRequest, FaReportResult
-from ee_wiki.protocols.flames import FailItemsResult
+from ee_wiki.protocols.flames import FailItemsResult, FlamesUnitRef
+from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.protocols.radar import RadarProblem, RadarWriteResult
 
 logger = get_logger(__name__)
+
+_NO_EVIDENCE_PROMPT = (
+    "No usable fail evidence was found in **Flames** or in Radar "
+    "**title / description / diagnosis**.\n\n"
+    "Please paste either:\n"
+    "1) the test **log** (preferred), or\n"
+    "2) a bullet list of **error / fail items**.\n"
+    "Optional: station name and serial (SN)."
+)
+
+_RADAR_UNPARSED_PROMPT = (
+    "Radar has title/description/diagnosis notes, but structured fail items "
+    "could not be extracted automatically.\n\n"
+    "Please paste the test **log** (preferred), or a bullet list of "
+    "**error / fail items**, or confirm the symptoms from the Radar notes above."
+)
 
 
 @dataclass(frozen=True)
@@ -61,11 +83,16 @@ def start_fa_checkin(
     user_product: str | None = None,
     user_project: str | None = None,
     user_build: str | None = None,
+    llm: LlmBackend | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> FaCheckinResult:
-    """Pull Radar + Flames (or ask for manual evidence) for FA check-in.
+    """Pull Radar + Flames (or Radar-text evidence, or ask for paste).
 
-    When ``fa.flames.backend`` is ``manual`` and the user has not pasted a log
-    yet, ``awaiting_user_evidence`` is true and the summary asks for paste.
+    Evidence priority:
+
+    1. Flames (live/stub/manual cache) when fail items are already available
+    2. Radar title → description → diagnosis (LLM extract; skip History rows)
+    3. Ask the user to paste a log / fail list
 
     Args:
         config: Loaded application configuration.
@@ -74,6 +101,8 @@ def start_fa_checkin(
         user_product: Optional scope override.
         user_project: Optional scope override.
         user_build: Optional scope override.
+        llm: Optional local LLM for Radar corpus → fail-item extraction.
+        cancel_event: Optional cancellation for the extract call.
 
     Returns:
         Check-in result with fail items and downloadable log URLs.
@@ -91,7 +120,100 @@ def start_fa_checkin(
     )
     cache = fa_cache_dir(config.cache_dir, rid)
     fails = flames.collect_fail_items(rid, serial=serial, cache_dir=cache)
+
+    if fails.fail_items and not fails.needs_user_input:
+        return _build_checkin_result(config, problem, scope, fails)
+
+    radar_fails = _collect_radar_text_evidence(
+        config,
+        problem,
+        cache_dir=cache,
+        serial=serial,
+        llm=llm,
+        cancel_event=cancel_event,
+    )
+    if radar_fails is not None and radar_fails.fail_items:
+        return _build_checkin_result(config, problem, scope, radar_fails)
+
+    prompt = (
+        _RADAR_UNPARSED_PROMPT
+        if radar_has_evidence_corpus(problem)
+        else _NO_EVIDENCE_PROMPT
+    )
+    if fails.needs_user_input or not fails.fail_items:
+        fails = FailItemsResult(
+            unit=fails.unit,
+            records=fails.records,
+            fail_items=fails.fail_items,
+            cached_logs=fails.cached_logs,
+            source=fails.source,
+            needs_user_input=True,
+            user_prompt=prompt,
+        )
     return _build_checkin_result(config, problem, scope, fails)
+
+
+def _collect_radar_text_evidence(
+    config: AppConfig,
+    problem: RadarProblem,
+    *,
+    cache_dir: Path,
+    serial: str | None,
+    llm: LlmBackend | None,
+    cancel_event: threading.Event | None,
+) -> FailItemsResult | None:
+    """Extract fail items from Radar title/description/diagnosis when possible."""
+    corpus = compose_radar_evidence_corpus(problem)
+    if not corpus:
+        return None
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    corpus_path = cache_dir / "radar_corpus.txt"
+    corpus_path.write_text(corpus, encoding="utf-8")
+    rel = str(corpus_path.relative_to(config.cache_dir)).replace("\\", "/")
+    unit = FlamesUnitRef(
+        unit_id=f"radar-text-{problem.radar_id}",
+        serial=serial,
+        radar_id=problem.radar_id,
+    )
+
+    if llm is None:
+        logger.info(
+            "Radar corpus cached for %s but no LLM — cannot extract fail items",
+            problem.radar_id,
+        )
+        return None
+
+    from ee_wiki.generation.fa_evidence import extract_fail_items_from_radar_corpus
+
+    items = extract_fail_items_from_radar_corpus(
+        corpus,
+        llm=llm,
+        repo_root=config.repo_root,
+        cancel_event=cancel_event,
+    )
+    if items is None:
+        return None
+    if not items:
+        return FailItemsResult(
+            unit=unit,
+            records=(),
+            fail_items=(),
+            cached_logs=(rel,),
+            source="radar",
+            needs_user_input=False,
+            user_prompt=None,
+        )
+
+    return FailItemsResult(
+        unit=unit,
+        records=(),
+        fail_items=tuple(items),
+        cached_logs=(rel,),
+        source="radar",
+        needs_user_input=False,
+        user_prompt=None,
+    )
 
 
 def ingest_fa_user_evidence(
@@ -182,7 +304,6 @@ def generate_fa_summary(
         Report result and browser download URL.
     """
     backend = build_fa_report_backend(config)
-    # Keynote template labels use project/build; qualify project when product known.
     project_label = (
         f"{product}/{project}" if product and project else project
     )
@@ -303,6 +424,11 @@ def _format_checkin_markdown(
         lines.append(
             f"**Component:** {problem.component.name} | {problem.component.version}"
         )
+    if problem.description:
+        preview = problem.description[0].text.strip().replace("\n", " ")
+        if len(preview) > 180:
+            preview = preview[:177] + "..."
+        lines.append(f"**Description:** {preview}")
     lines.append(
         f"**EE-Wiki scope:** product=`{scope.product or '?'}` "
         f"project=`{scope.project or '?'}` "
@@ -310,6 +436,12 @@ def _format_checkin_markdown(
         f"(source={scope.source}, confidence={scope.confidence})"
     )
     lines.append(f"**Evidence source:** `{fails.source}`")
+
+    att_names = [a.file_name for a in problem.attachments if a.file_name]
+    if att_names:
+        lines.append(
+            "**Radar attachments:** " + ", ".join(f"`{n}`" for n in att_names)
+        )
 
     if fails.needs_user_input:
         lines.extend(
@@ -325,15 +457,15 @@ def _format_checkin_markdown(
     else:
         lines.extend(["", "### Fail items"])
         if not fails.fail_items:
-            lines.append("_No ERROR/FAIL lines extracted from cached logs._")
+            lines.append("_No structured fail items extracted._")
         else:
             for item in fails.fail_items:
                 station = item.station or "?"
                 lines.append(f"- [{station}] {item.message}")
 
-        lines.extend(["", "### Raw logs"])
+        lines.extend(["", "### Evidence files"])
         if not log_urls:
-            lines.append("_No logs cached._")
+            lines.append("_No Flames/Radar corpus files cached for download._")
         else:
             for rel, url in zip(fails.cached_logs, log_urls, strict=True):
                 lines.append(f"- [{Path(rel).name}]({url})")

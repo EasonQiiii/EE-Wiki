@@ -133,6 +133,7 @@ Apply to all Python under `src/` and `tests/`:
 - Explicit error types from `common/errors.py`; catch narrowly, log with context, re-raise or map to API errors.
 - Prefer composition and `typing.Protocol` over deep inheritance.
 - Prefer configuration (`config/default.yaml`) over hardcoded constants.
+- Prefer local LLM + `prompts/` for **semantic** intent (evidence vs chat, task/role route); reserve regex for **structural** tokens (Radar ids, URLs, path segments).
 - Keep functions focused; extract when a file exceeds ~300 lines or a class has more than one reason to change.
 
 ### Public function checklist

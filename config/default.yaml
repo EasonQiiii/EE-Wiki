@@ -210,9 +210,12 @@ agents:
 fa:
   enabled: true
   radar:
-    backend: stub              # stub | radarclient (live needs Kerberos + radarclient)
-    stub_component_name: demo_product
+    backend: stub              # stub | radarclient (live: Kerberos ticket + radarclient on PYTHONPATH)
+    # Qualified product/project so ADR 0011 scope is complete in lab stubs.
+    stub_component_name: ipad/logan
     stub_component_version: P1
+    client_system_name: EE-Wiki
+    client_system_version: "1.0"
   flames:
     backend: manual            # manual (Open WebUI paste; default) | stub | live
     # base_url: null           # for live when Flames API is available

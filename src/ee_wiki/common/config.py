@@ -64,8 +64,11 @@ class FaRadarConfig:
     """Radar connector settings for FA sessions (ADR 0010)."""
 
     backend: str = "stub"  # stub | radarclient
-    stub_component_name: str = "demo_product"
+    stub_component_name: str = "ipad/logan"
     stub_component_version: str = "P1"
+    # ClientSystemIdentifier sent to live radarclient (SPNego).
+    client_system_name: str = "EE-Wiki"
+    client_system_version: str = "1.0"
 
 
 @dataclass(frozen=True)
@@ -699,10 +702,16 @@ def load_config(
             radar=FaRadarConfig(
                 backend=str(fa_radar.get("backend", "stub")),
                 stub_component_name=str(
-                    fa_radar.get("stub_component_name", "demo_product")
+                    fa_radar.get("stub_component_name", "ipad/logan")
                 ),
                 stub_component_version=str(
                     fa_radar.get("stub_component_version", "P1")
+                ),
+                client_system_name=str(
+                    fa_radar.get("client_system_name", "EE-Wiki")
+                ),
+                client_system_version=str(
+                    fa_radar.get("client_system_version", "1.0")
                 ),
             ),
             flames=FaFlamesConfig(

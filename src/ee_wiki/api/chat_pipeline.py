@@ -6,6 +6,7 @@ connectivity behavior stays identical for ``agents.enabled`` true and false.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.connectivity.chat import answer_trace_question
 from ee_wiki.connectivity.query import ConnectivityQuery
 from ee_wiki.integrations.fa_chat import try_fa_chat_reply
+from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.retrieval.rewrite import ConversationTurn
 
 logger = get_logger(__name__)
@@ -78,6 +80,8 @@ def pre_rag_gates(
     project: str | None,
     build: str | None,
     connectivity_query: ConnectivityQuery | None,
+    llm: LlmBackend | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> PreRagGateResult | None:
     """Run FA and connectivity hard gates once for the chat turn.
 
@@ -89,6 +93,8 @@ def pre_rag_gates(
         project: Resolved project scope.
         build: Resolved build scope.
         connectivity_query: Optional connectivity query handle.
+        llm: Optional local LLM for FA in-session evidence vs stay classify.
+        cancel_event: Optional cancellation for FA classify.
 
     Returns:
         Gate reply when FA or authoritative connectivity handles the turn;
@@ -101,6 +107,8 @@ def pre_rag_gates(
         user_product=product,
         user_project=project,
         user_build=build,
+        llm=llm,
+        cancel_event=cancel_event,
     )
     if fa_reply is not None:
         logger.info("pre_rag_gates: FA path (%d chars)", len(fa_reply))
