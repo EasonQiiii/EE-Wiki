@@ -6,11 +6,13 @@ data:
   processed_dir: data/processed
   indexes_dir: data/indexes
   graph_dir: data/graph
+  exports_dir: data/exports   # FA Keynote summaries etc. (ADR 0010); GET /v1/exports/
+  cache_dir: data/cache       # FA Flames/Radar cache; GET /v1/cache/
 
 models:
   base_dir: /Users/ml/Documents/Models
   layout_model: layoutlmv3-base
-  visual_model: Qwen3-VL-4B-Instruct
+  visual_model: Qwen3-VL-8B-Instruct
   embedding_model: bge-m3
   reranker_model: bge-reranker-v2-m3
   # llm_transformers_model: Qwen3.5-4B
@@ -69,7 +71,9 @@ ingestion:
     layout_zoom: 2.0          # temp3.py render zoom for LayoutLM + crops
     min_figure_area: 10000
     ocr_text_max_chars: 2500  # VLM prompt OCR budget (vlm_plus_ocr only)
-    fidelity_mode: vlm_plus_ocr   # ocr_only | vlm_plus_ocr (layout + VLM + OCR appendix)
+    # Default ocr_only: FA-grade truth is netlist/.brd (ADR 0009 gate), not VLM
+    # narrative. Use vlm_plus_ocr only when you need schematic prose for RAG recall.
+    fidelity_mode: ocr_only   # ocr_only | vlm_plus_ocr (layout + VLM + OCR appendix)
     # max_pages: null         # null = all pages
     max_pages: null
     max_new_tokens: 1536
@@ -78,12 +82,30 @@ ingestion:
     do_sample: false
     images_rel_prefix: images
     save_page_images: true        # save full-page renders as PNG alongside figure crops
-    # ADR 0007 — module↔net: CAD companion first, else PDF connector catchment, else OCR spatial
+    # ADR 0007 / 0009 — PDF + netlist + boardview complementary connectivity map
     connectivity:
       enabled: true
       write_sidecar: true           # *.connectivity.json next to processed .md
       max_connector_distance: 90.0  # PDF geometry: net label → connector center (page pts)
-      cad_extensions:               # companion discovery next to sch PDF / sch/cad/
+      companion_extensions:         # discovery next to sch PDF / sch/cad/
+        netlist:
+          - .net
+          - .kicad_sch
+          - .kicad_pro
+          - .SchDoc
+          - .prjpcb
+          - .PrjPcb
+        boardview:
+          - .brd
+      # FA-grade trace gate (ADR 0009 / 0010): only these evidence tags count as
+      # board-verified electrical truth. Advisory pdf_geometry / ocr_spatial never
+      # grounds a trace answer — chat / MCP / FA refuse instead of guessing.
+      authoritative_evidence:
+        - cad_netlist
+        - boardview
+      require_authority_for_trace: true
+      # Legacy alias (same as companion_extensions.netlist) — kept for older configs
+      cad_extensions:
         - .net
         - .kicad_sch
         - .kicad_pro
@@ -152,15 +174,51 @@ retrieval:
   graph_enrichment_power_tree: true # route power/rail queries through directed PowerTreeQuery (what_feeds/what_powers/flags)
 
 # Path segment names for shared libraries (must match data/raw/ folders)
+# Canonical raw layout (ADR 0011) — three scope levels: product / project / build
+#   global/{type}                       → product=global, project=global, build=global
+#   {product}/common/{type}             → product common   (project=common, build=common)
+#   {product}/{project}/common/{type}   → project common   (build=common)
+#   {product}/{project}/{build}/{type}  → build truth
+# Reserved words `global` and `common` may not be used as ordinary segment slugs.
 data_layout:
-  enterprise_project: global
-  project_shared_build: common
+  enterprise_project: global   # reserved top segment for the enterprise library
+  project_shared_build: common # reserved shared segment (product/project common tiers)
   document_type_folders:
     note: engineering_note
     sch: schematic
     sop: sop
     datasheet: datasheet
     fa: failure_analysis   # add new folders here — no code change required
+  # 甲方 / 乙方等混用名 → EE-Wiki 路径 slug（bare project 或 product/project）
+  project_aliases:
+    H340: logan
+    # example: customer_code: iphone/logan
+
+# Multi-agent runtime (ADR 0008) — Supervisor + ToolBus + config-driven roles
+agents:
+  enabled: true
+  roles_dir: config/agents/roles
+  max_roles_per_turn: 3          # max specialists selected by one semantic route
+  route_score_threshold: 2       # rules-first: min keyword hits to skip semantic LLM (ADR 0012)
+  max_steps: 8
+  max_tool_calls: 16
+  tool_timeout_seconds: 60
+  max_concurrent_tools: 2
+  span_log: data/cache/agents/spans.jsonl
+
+# FA session connectors (ADR 0010) — stub backends by default (no Apple/Flames network)
+fa:
+  enabled: true
+  radar:
+    backend: stub              # stub | radarclient (live needs Kerberos + radarclient)
+    stub_component_name: demo_product
+    stub_component_version: P1
+  flames:
+    backend: manual            # manual (Open WebUI paste; default) | stub | live
+    # base_url: null           # for live when Flames API is available
+    timeout_seconds: 60
+  report:
+    template_path: assets/templates/fa/one_page.key
 
 api:
   host: 0.0.0.0

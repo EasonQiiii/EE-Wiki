@@ -11,7 +11,11 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.common.types import Citation, RagAnswer
 from ee_wiki.generation.citations import build_enriched_citations
 from ee_wiki.generation.classify import classify_task
-from ee_wiki.generation.context import format_context_blocks, resolve_history_for_prompt
+from ee_wiki.generation.context import (
+    format_context_blocks,
+    merge_agent_evidence_into_context,
+    resolve_history_for_prompt,
+)
 from ee_wiki.generation.inline_images import build_image_block
 from ee_wiki.generation.llm.factory import build_llm_backend
 from ee_wiki.generation.prepare import PreparedQuery, prepare_query, should_prepare_query
@@ -161,9 +165,11 @@ class RagService:
         history: list[ConversationTurn] | None,
         caller_task: str | None,
         *,
+        caller_product: str | None = None,
         caller_project: str | None = None,
         caller_build: str | None = None,
         cancel_event: threading.Event | None = None,
+        task_owner: str = "legacy",
     ) -> PreparedQuery:
         """Prepare retrieval query, optional scope, and task before hybrid search.
 
@@ -171,15 +177,21 @@ class RagService:
             question: Current user question.
             history: Prior conversation turns.
             caller_task: Explicit task from the API caller.
+            caller_product: Explicit API product filter, if any.
             caller_project: Explicit API project filter, if any.
             caller_build: Explicit API build filter, if any.
             cancel_event: Cancellation signal.
+            task_owner: ``supervisor`` forces task classification off (ADR 0012).
 
         Returns:
             Prepared retrieval query with optional scope and task fields.
         """
         gen = self.config.generation
-        caller_has_scope = bool(caller_project or caller_build)
+        # Runtime guard: supervisor-owned turns never re-classify TASK.
+        task_classification = (
+            gen.task_classification and task_owner != "supervisor"
+        )
+        caller_has_scope = bool(caller_product or caller_project or caller_build)
         scope_inference = gen.scope_inference and not caller_has_scope
         scope_mode = gen.scope_inference_mode
         catalog = self.engine.get_scope_catalog() if scope_inference else None
@@ -191,7 +203,7 @@ class RagService:
                 cancel_event=cancel_event,
             )
             prepared_task: str | None = None
-            if gen.task_classification and caller_task is None:
+            if task_classification and caller_task is None:
                 prepared_task = classify_task(
                     question,
                     llm=self.llm,
@@ -205,7 +217,7 @@ class RagService:
             question,
             history,
             query_rewrite=gen.query_rewrite,
-            task_classification=gen.task_classification,
+            task_classification=task_classification,
             caller_task=caller_task,
             scope_inference=scope_inference,
             scope_inference_mode=scope_mode,
@@ -220,7 +232,7 @@ class RagService:
             repo_root=self.config.repo_root,
             default_task=self.template_task,
             query_rewrite=gen.query_rewrite,
-            task_classification=gen.task_classification,
+            task_classification=task_classification,
             scope_inference=scope_inference and scope_mode in {"llm", "merged"},
             catalog=catalog,
             caller_task=caller_task,
@@ -233,16 +245,29 @@ class RagService:
         question: str,
         prepared: PreparedQuery,
         *,
+        caller_product: str | None,
         caller_project: str | None,
         caller_build: str | None,
-    ) -> tuple[str, str | None, str | None, dict[tuple[str, str], int] | None]:
+    ) -> tuple[
+        str,
+        str | None,
+        str | None,
+        str | None,
+        dict[tuple[str, str, str], int] | None,
+    ]:
         """Resolve retrieval scope and the stripped query used for hybrid search."""
-        if caller_project:
-            return prepared.retrieval_query, caller_project, caller_build, None
+        if caller_product or caller_project or caller_build:
+            return (
+                prepared.retrieval_query,
+                caller_product,
+                caller_project,
+                caller_build,
+                None,
+            )
 
         gen = self.config.generation
         if not gen.scope_inference:
-            return prepared.retrieval_query, None, None, None
+            return prepared.retrieval_query, None, None, None, None
 
         catalog = self.engine.get_scope_catalog()
         rules_scope: InferredScope | None = None
@@ -260,7 +285,7 @@ class RagService:
 
         retrieval_query = prepared.retrieval_query
         if inferred is None:
-            return retrieval_query, None, None, None
+            return retrieval_query, None, None, None, None
 
         if (
             rules_scope is not None
@@ -273,20 +298,30 @@ class RagService:
         elif stripped_from_rules and prepared.retrieval_query == question:
             retrieval_query = stripped_from_rules
 
-        target_project, target_build, scope_ranks = resolve_retrieval_targets(
-            inferred,
-            catalog,
-            self.config.data_layout,
+        target_product, target_project, target_build, scope_ranks = (
+            resolve_retrieval_targets(
+                inferred,
+                catalog,
+                self.config.data_layout,
+            )
         )
         logger.info(
-            "Inferred scope product=%s revision=%s layer=%s -> target=%s/%s",
+            "Inferred scope product=%s project=%s revision=%s layer=%s -> target=%s/%s/%s",
             inferred.product,
+            inferred.project,
             inferred.revision,
             inferred.layer,
+            target_product,
             target_project,
             target_build,
         )
-        return retrieval_query, target_project, target_build, scope_ranks or None
+        return (
+            retrieval_query,
+            target_product,
+            target_project,
+            target_build,
+            scope_ranks or None,
+        )
 
     def _resolve_task(
         self,
@@ -295,6 +330,7 @@ class RagService:
         prepared_task: str | None,
         *,
         cancel_event: threading.Event | None = None,
+        task_owner: str = "legacy",
     ) -> str | None:
         """Resolve the prompt task after retrieval.
 
@@ -303,6 +339,7 @@ class RagService:
             retrieval_query: Query used for retrieval (for separate-mode classify).
             prepared_task: Task from merged prepare step, if any.
             cancel_event: Cancellation signal.
+            task_owner: ``supervisor`` skips legacy ``classify_task`` (ADR 0012).
 
         Returns:
             Resolved task name, or ``None`` to use the configured default.
@@ -311,6 +348,8 @@ class RagService:
             return caller_task
         if prepared_task is not None:
             return prepared_task
+        if task_owner == "supervisor":
+            return None
         if not self.config.generation.task_classification:
             return None
         if self.config.generation.query_prepare != "separate":
@@ -535,6 +574,7 @@ class RagService:
         self,
         question: str,
         *,
+        target_product: str | None = None,
         target_project: str | None = None,
         target_build: str | None = None,
         document_type: str | None = None,
@@ -542,6 +582,8 @@ class RagService:
         task: str | None = None,
         cancel_event: threading.Event | None = None,
         history: list[ConversationTurn] | None = None,
+        agent_evidence: str | None = None,
+        task_owner: str = "legacy",
     ) -> _RagStep:
         """Run the shared pre-generation pipeline for both entry points.
 
@@ -551,16 +593,26 @@ class RagService:
         This helper performs them once and returns a discriminated result so each
         caller can assemble its own return type (``RagAnswer`` vs
         ``AnswerStreamResult``).
+
+        When ``agent_evidence`` is set (ADR 0012 hybrid path), specialist ToolBus
+        findings are merged into the prompt; retrieval citations remain the
+        primary provenance when chunks exist.
         """
         if cancel_event and cancel_event.is_set():
             return _RagCancelled()
 
+        evidence = (agent_evidence or "").strip()
+
         inventory_request = parse_inventory_request(question)
         if inventory_request is not None:
             inventory = self.engine.get_index_inventory()
+            known_names = sorted(
+                {entry.project for entry in inventory.projects}
+                | {entry.product for entry in inventory.projects}
+            )
             inventory_request = parse_inventory_request(
                 question,
-                known_projects=[entry.project for entry in inventory.projects],
+                known_projects=known_names,
             )
             assert inventory_request is not None
             answer = format_inventory_answer(inventory, inventory_request)
@@ -583,9 +635,11 @@ class RagService:
             question,
             history,
             task,
+            caller_product=target_product,
             caller_project=target_project,
             caller_build=target_build,
             cancel_event=cancel_event,
+            task_owner=task_owner,
         )
         if cancel_event and cancel_event.is_set():
             return _RagCancelled()
@@ -595,17 +649,23 @@ class RagService:
                 question=question, history=history, cancel_event=cancel_event
             )
 
-        retrieval_query, resolved_project, resolved_build, scope_ranks = (
-            self._resolve_scope_for_retrieval(
-                question,
-                prepared,
-                caller_project=target_project,
-                caller_build=target_build,
-            )
+        (
+            retrieval_query,
+            resolved_product,
+            resolved_project,
+            resolved_build,
+            scope_ranks,
+        ) = self._resolve_scope_for_retrieval(
+            question,
+            prepared,
+            caller_product=target_product,
+            caller_project=target_project,
+            caller_build=target_build,
         )
 
         retrieval = self.engine.retrieve(
             retrieval_query,
+            target_product=resolved_product,
             target_project=resolved_project,
             target_build=resolved_build,
             document_type=document_type,
@@ -615,7 +675,7 @@ class RagService:
         if cancel_event and cancel_event.is_set():
             return _RagCancelled()
 
-        if self._should_use_assistant_fallback(task, retrieval):
+        if self._should_use_assistant_fallback(task, retrieval) and not evidence:
             return _RagAssistant(
                 question=question,
                 history=history,
@@ -624,23 +684,33 @@ class RagService:
             )
 
         chunks = retrieval.chunks
-        if not chunks:
+        if not chunks and not evidence:
             logger.info("No chunks retrieved for question: %s", question)
             return _RagInsufficient()
+        if not chunks and evidence:
+            logger.info(
+                "No chunks retrieved; generating from agent evidence only "
+                "(question=%s)",
+                question[:80],
+            )
 
         resolved_task = self._resolve_task(
             task,
             retrieval_query,
             prepared.task,
             cancel_event=cancel_event,
+            task_owner=task_owner,
         )
         if cancel_event and cancel_event.is_set():
             return _RagCancelled()
 
         template = self._load_prompt_template(resolved_task)
-        context = format_context_blocks(
-            chunks,
-            graph_enrichment=retrieval.graph_enrichment,
+        context = merge_agent_evidence_into_context(
+            format_context_blocks(
+                chunks,
+                graph_enrichment=retrieval.graph_enrichment,
+            ),
+            evidence,
         )
         scope_rules = load_scope_rules(self.config.repo_root)
         graph_rules = load_graph_rules(self.config.repo_root)
@@ -671,6 +741,7 @@ class RagService:
         self,
         question: str,
         *,
+        target_product: str | None = None,
         target_project: str | None = None,
         target_build: str | None = None,
         document_type: str | None = None,
@@ -678,11 +749,14 @@ class RagService:
         task: str | None = None,
         cancel_event: threading.Event | None = None,
         history: list[ConversationTurn] | None = None,
+        agent_evidence: str | None = None,
+        task_owner: str = "legacy",
     ) -> RagAnswer:
         """Retrieve context and generate a grounded answer.
 
         Args:
             question: User question.
+            target_product: Optional product metadata filter.
             target_project: Optional project metadata filter.
             target_build: Optional build metadata filter.
             document_type: Optional document type filter.
@@ -690,12 +764,15 @@ class RagService:
             task: Optional prompt task folder under ``prompts/`` (e.g. ``debug``).
             cancel_event: When set, stop LLM generation as soon as possible.
             history: Prior conversation turns for query rewriting and prompt context.
+            agent_evidence: Optional fused specialist evidence (ADR 0012 hybrid).
+            task_owner: ``supervisor`` disables legacy task classification.
 
         Returns:
             Answer text with citations, or an insufficient-context response.
         """
         step = self._prepare_and_retrieve(
             question,
+            target_product=target_product,
             target_project=target_project,
             target_build=target_build,
             document_type=document_type,
@@ -703,6 +780,8 @@ class RagService:
             task=task,
             cancel_event=cancel_event,
             history=history,
+            agent_evidence=agent_evidence,
+            task_owner=task_owner,
         )
         if isinstance(step, _RagCancelled):
             return RagAnswer(answer="", citations=[], insufficient_context=False)
@@ -755,6 +834,7 @@ class RagService:
         self,
         question: str,
         *,
+        target_product: str | None = None,
         target_project: str | None = None,
         target_build: str | None = None,
         document_type: str | None = None,
@@ -762,11 +842,14 @@ class RagService:
         cancel_event: threading.Event | None = None,
         task: str | None = None,
         history: list[ConversationTurn] | None = None,
+        agent_evidence: str | None = None,
+        task_owner: str = "legacy",
     ) -> AnswerStreamResult:
         """Retrieve context and stream a grounded answer with citation metadata.
 
         Args:
             question: User question.
+            target_product: Optional product metadata filter.
             target_project: Optional project metadata filter.
             target_build: Optional build metadata filter.
             document_type: Optional document type filter.
@@ -774,6 +857,8 @@ class RagService:
             cancel_event: When set, stop LLM streaming as soon as possible.
             task: Optional prompt task folder under ``prompts/`` (e.g. ``debug``).
             history: Prior conversation turns for query rewriting and prompt context.
+            agent_evidence: Optional fused specialist evidence (ADR 0012 hybrid).
+            task_owner: ``supervisor`` disables legacy task classification.
 
         Returns:
             Citation list plus text fragments from the LLM. When retrieval finds
@@ -781,6 +866,7 @@ class RagService:
         """
         step = self._prepare_and_retrieve(
             question,
+            target_product=target_product,
             target_project=target_project,
             target_build=target_build,
             document_type=document_type,
@@ -788,6 +874,8 @@ class RagService:
             task=task,
             cancel_event=cancel_event,
             history=history,
+            agent_evidence=agent_evidence,
+            task_owner=task_owner,
         )
         if isinstance(step, _RagCancelled):
             return AnswerStreamResult(citations=[], text_chunks=iter(()))

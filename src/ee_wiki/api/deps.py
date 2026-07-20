@@ -7,6 +7,8 @@ from functools import lru_cache
 from ee_wiki.api.concurrency import RequestQueueGate
 from ee_wiki.common.config import AppConfig, load_config
 from ee_wiki.common.logging import get_logger
+from ee_wiki.connectivity.authority import AuthorityPolicy
+from ee_wiki.connectivity.query import ConnectivityQuery, open_connectivity_query
 from ee_wiki.generation.service import RagService
 from ee_wiki.graph.power_tree import PowerTreeQuery, open_power_query
 from ee_wiki.graph.query import GraphQuery, open_query
@@ -133,6 +135,34 @@ def get_rule_engine() -> RuleEngine | None:
     except RulePackError as exc:
         logger.warning("Failed to load rule pack: %s", exc)
         return None
+
+
+@lru_cache
+def get_connectivity_query() -> ConnectivityQuery | None:
+    """Return a cached connectivity query handle, or ``None`` if unavailable.
+
+    Returns:
+        :class:`ConnectivityQuery` when connectivity is enabled and at least
+        one ``*.connectivity.json`` sidecar loads; else ``None`` (routes map
+        to HTTP 503).
+    """
+    config = get_config()
+    if not config.schematic_pdf.connectivity.enabled:
+        logger.info("schematic_pdf.connectivity.enabled is false; connectivity queries unavailable")
+        return None
+    query = open_connectivity_query(
+        processed_dir=config.processed_dir,
+        layout=config.data_layout,
+        scope_inheritance=config.retrieval.scope_inheritance,
+        authority=AuthorityPolicy.from_config(config.schematic_pdf.connectivity),
+    )
+    if not query.documents:
+        logger.warning(
+            "No connectivity sidecars under %s; re-ingest sch/ PDFs",
+            config.processed_dir,
+        )
+        return None
+    return query
 
 
 def warmup_rag_service() -> None:

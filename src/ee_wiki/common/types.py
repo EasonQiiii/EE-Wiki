@@ -18,8 +18,14 @@ class PageMetadata:
 
 @dataclass(frozen=True)
 class Metadata:
-    """Document metadata derived from path and ingestion."""
+    """Document metadata derived from path and ingestion.
 
+    Scope is a three-level hierarchy: ``product`` (top program/product line),
+    ``project`` (a program within a product), and ``build`` (a specific
+    hardware revision). See ADR 0011 and README Raw Data Layout.
+    """
+
+    product: str
     project: str
     build: str
     document_type: str
@@ -91,8 +97,9 @@ class RagAnswer:
 
 @dataclass(frozen=True)
 class MetadataFilter:
-    """Pre-retrieval constraints for project, build, and document type."""
+    """Pre-retrieval constraints for product, project, build, and document type."""
 
+    product: str | None = None
     project: str | None = None
     build: str | None = None
     document_type: str | None = None
@@ -100,13 +107,37 @@ class MetadataFilter:
 
 @dataclass(frozen=True)
 class DataLayoutConfig:
-    """Path segment naming for raw data layout."""
+    """Path segment naming for raw data layout.
+
+    The canonical hierarchy is ``{product}/{project}/{build}/{type}`` with two
+    reserved words: ``enterprise_project`` (``global``) marks the enterprise
+    library, and ``project_shared_build`` (``common``) marks a shared tier at
+    either the project segment (product common) or the build segment (project
+    common). See ADR 0011.
+    """
 
     enterprise_project: str
     project_shared_build: str
     document_type_folders: dict[str, str]
     raw_dir: Path
     processed_dir: Path
+    # Alternate names → EE-Wiki path slug (e.g. 甲方 H340 → 乙方 logan)
+    project_aliases: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def global_segment(self) -> str:
+        """Reserved top segment for the enterprise-wide library (``global``)."""
+        return self.enterprise_project
+
+    @property
+    def common_segment(self) -> str:
+        """Reserved shared segment (``common``) for product/project common tiers."""
+        return self.project_shared_build
+
+    @property
+    def reserved_segments(self) -> frozenset[str]:
+        """Segment names that may not be used as ordinary product/project/build slugs."""
+        return frozenset({self.enterprise_project, self.project_shared_build})
 
 
 @dataclass(frozen=True)

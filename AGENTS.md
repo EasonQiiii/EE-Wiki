@@ -60,15 +60,20 @@ src/ee_wiki/
 ├── retrieval/     → Metadata filter → embed + BM25 → merge → rerank
 ├── generation/    → Prompt assembly + local LLM
 ├── graph/         → Knowledge graph store/build/query (V3 P1–P3)
+├── connectivity/  → Schematic connectivity sidecar query (ADR 0009; HTTP/MCP trace)
 ├── rules/         → Engineering rules engine (V3 P4)
 ├── tools/         → MCP / function tools (V2)
+├── integrations/  → FA connectors: Radar / Flames / Keynote (ADR 0010; stub by default)
 ├── protocols/     → Interfaces all implementations must satisfy
 └── common/        → Types, config, logging, errors
 
 prompts/           → YAML or Markdown prompt templates by task
 config/            → default.yaml + JSON Schema
+assets/templates/fa/ → Company FA Keynote template (one_page.key)
 data/raw/          → Original documents (gitignored); path = metadata
 data/processed/    → Mirrors data/raw/ tree after ingestion
+data/exports/      → FA Keynote summaries (gitignored); GET /v1/exports/
+data/cache/        → FA Flames/Radar cache (gitignored); GET /v1/cache/
 docs/architecture/ → Data flow, API contracts
 tests/             → Mirrors src layout; fixtures only, never enterprise raw data
 ```
@@ -79,33 +84,40 @@ Do not create parallel top-level packages or duplicate module names outside this
 
 ## 4. Raw Data & Retrieval Scope
 
-Raw files live under `data/raw/` using this layout:
+Raw files live under `data/raw/` using a three-level scope hierarchy —
+`product` / `project` / `build` — plus two reserved words ([ADR 0011](docs/adr/0011-product-project-build-hierarchy.md)):
 
 ```
-data/raw/{project}/{build}/{type}/<file>
+global/{type}/<file>                        → product=global, project=global, build=global
+{product}/common/{type}/<file>              → product common (project=common, build=common)
+{product}/{project}/common/{type}/<file>    → project common (build=common)
+{product}/{project}/{build}/{type}/<file>   → build truth
 ```
 
 Reserved segments (see `config/default.yaml` → `data_layout`):
 
 | Segment | Location | Meaning | Purpose |
 |---------|----------|---------|---------|
-| `global` | `data/raw/global/` | Enterprise-wide shared (`project=global`, `build=global`) | All projects: generic tools, industry practices, common datasheets |
-| `common` | `data/raw/{project}/common/` | Shared by all builds in that project | Project-wide knowledge: architecture, naming, cross-build SOPs — not board-specific wiring |
+| `global` | `data/raw/global/` | Enterprise-wide shared (`product`=`project`=`build`=`global`) | All products: generic tools, industry practices, common datasheets |
+| `common` (product) | `data/raw/{product}/common/` | Shared by all projects in that product | Product-wide knowledge: platform architecture, naming, cross-project SOPs |
+| `common` (project) | `data/raw/{product}/{project}/common/` | Shared by all builds in that project | Project-wide knowledge — not board-specific wiring |
 | `{build}` | e.g. `p1` | A specific hardware build | Build truth: schematics and docs for that revision |
 
-Document folders: `note`, `sch`, `sop`, `datasheet` → map to `document_type` via `data_layout.document_type_folders`.
+`global` and `common` are **reserved** — they may not be used as ordinary product/project/build slugs.
+
+Document folders: `note`, `sch`, `sop`, `datasheet`, `fa` → map to `document_type` via `data_layout.document_type_folders`.
 
 **Ingestion must:**
 
-- Derive `project`, `build`, `document_type` from the path — do not hardcode project names in code.
+- Derive `product`, `project`, `build`, `document_type` from the path — do not hardcode names in code.
 - Write outputs to `data/processed/` with the **same relative path** as `data/raw/` (`.md` + optional `.meta.json`).
 - Set `metadata.build` (never `board`).
 
 **Retrieval must:**
 
 - Apply `retrieval.scope_inheritance` from config (default `true`).
-- When filtering `project=X, build=Y`, expand scope to also search `X/common/` and `global/`.
-- Rank build-specific chunks above `common`, and `common` above `global`.
+- When filtering `product=P, project=X, build=Y`, expand scope upward: build truth → project common → product common → `global`.
+- Rank build-specific chunks above project `common`, project `common` above product `common`, and product `common` above `global`.
 
 V1 raw formats: PDF, Markdown, TXT, Excel, Word (`.doc`/`.docx`). On macOS, Keynote (`.key`) and Numbers (`.numbers`) via AppleScript export ([ADR 0004](docs/adr/0004-iwork-macos-export.md)); elsewhere skip with a clear log message.
 
@@ -199,7 +211,7 @@ When implementing, respect the roadmap in README.md:
 | **V1** | Markdown/PDF ingest, hybrid retrieval, citations, Open WebUI REST, local LLM | Knowledge graph, multi-agent, schematic CAD parsing |
 | **V2** | Rich metadata, component DB, datasheet parser, MCP tools | Full graph reasoning, agent swarms |
 | **V3** | Knowledge graph, debug case DB, power tree | Full CAD netlist import, cloud graph DBs |
-| **V4** | Multi-agent orchestration | — |
+| **V4** | Multi-agent orchestration ([ADR 0008](docs/adr/0008-multi-agent-runtime.md), accepted: Supervisor + ToolBus + six config roles) | Day-1 landed: see [docs/usage/agents.md](docs/usage/agents.md) |
 
 **V3 progress:**
 
@@ -298,7 +310,7 @@ When your change affects structure or behavior, update the minimal set:
 1. Implement `ingestion/parsers/pdf.py` returning `StandardDocument`.
 2. Add `ingestion/path_metadata.py` (or equivalent) to derive `project`, `build`, `document_type` from `data/raw/` relative path.
 3. Register in ingestion pipeline; write output under `data/processed/` mirroring the raw path.
-4. Add fixture under `tests/fixtures/` mimicking `logan/p1/sch/sample.pdf`; tests in `tests/ingestion/`.
+4. Add fixture under `tests/fixtures/` mimicking `iphone/logan/p1/sch/sample.pdf`; tests in `tests/ingestion/`.
 5. Extend metadata schema only if new fields are required for all document types.
 
 ### “Add debug prompt”
@@ -344,8 +356,12 @@ V1 baseline is decided — do not re-litigate without a new ADR:
 | Embedding / reranker | `sentence-transformers`; paths in `config/default.yaml` | ADR 0002 |
 | Local LLM | MLX default; Transformers alternative; external OpenAI-compatible HTTP (`openai`) per ADR 0003 | ADR 0002, ADR 0003 |
 | Knowledge graph store | Offline JSONL bundle under `data/graph/`; `graph/` owns store/build/query; generation never imports store; P2 cases live in `data/indexes/cases.json` and as Case nodes in the graph | [ADR 0006](docs/adr/0006-knowledge-graph-store.md) |
+| Multi-agent runtime (V4) | Supervisor + read-only ToolBus; config-driven roles; agents must not write graph/ingest (**accepted**) | [ADR 0008](docs/adr/0008-multi-agent-runtime.md) |
+| Chat pipeline grounding | Gates once at chat; rules-first route; agent turns → hybrid RAG + citations (`task_owner`) | [ADR 0012](docs/adr/0012-chat-pipeline-grounding.md) |
+| Schematic connectivity map | PDF + BoardView `.brd` + netlist complementary merge into `*.connectivity.json` (v2) | [ADR 0009](docs/adr/0009-multi-source-schematic-map.md), [ADR 0007](docs/adr/0007-schematic-connectivity-extraction.md) |
+| FA session (Radar-keyed) | Open WebUI session keyed by Radar id; Flames/Radar protocols + stubs; Keynote under `data/exports/fa/{radar_id}/`; download via `/v1/exports` (**proposed**) | [ADR 0010](docs/adr/0010-fa-session-external-integrations.md) |
 
-**Still open (V2+):** external vector DB (Qdrant, pgvector), Ollama/vLLM/llama.cpp — require a new ADR before adoption. Heavier graph backends (SQLite/NetworkX persistence, Neo4j embedded) require amending ADR 0006 or a follow-up ADR.
+**Still open (V2+):** external vector DB (Qdrant, pgvector), Ollama/vLLM/llama.cpp — require a new ADR before adoption. Heavier graph backends (SQLite/NetworkX persistence, Neo4j embedded) require amending ADR 0006 or a follow-up ADR. Debate-style or write-back agent paradigms require amending ADR 0008.
 
 ---
 

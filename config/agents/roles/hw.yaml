@@ -1,0 +1,31 @@
+id: hw
+display_name: Hardware / Schematic
+routing:
+  keywords:
+    - schematic
+    - 原理图
+    - 器件
+    - 芯片
+    - 电路
+    - 接口
+    - designator
+    - 位号
+    - component
+    - part number
+    - 第几页
+    - pinout
+    - 连接器
+tools:
+  - engineering_search
+  - query_schematic
+  - search_component
+  - open_graph_node
+  - graph_neighbors
+recipe:
+  - tool: query_schematic
+    query_from: question
+  - tool: search_component
+    query_from: tokens
+  - tool: engineering_search
+    query_from: question
+max_tool_calls: 4

@@ -1,0 +1,25 @@
+id: pcb
+display_name: PCB / Layout
+routing:
+  keywords:
+    - PCB
+    - layout
+    - 布局
+    - 叠层
+    - 布线
+    - 阻抗
+    - DFM
+    - stackup
+    - via
+    - 过孔
+    - footprint
+tools:
+  - engineering_search
+  - connector_pins
+  - module_nets
+recipe:
+  - tool: engineering_search
+    query_from: question
+  - tool: module_nets
+    query_from: tokens
+max_tool_calls: 3

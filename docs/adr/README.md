@@ -30,3 +30,8 @@ Status: proposed | accepted | deprecated
 - [0005-datasheet-figure-table-retrieval.md](0005-datasheet-figure-table-retrieval.md) — Figure/Table vs Page retrieval, negated modifier ranking, ingest label enrichment
 - [0006-knowledge-graph-store.md](0006-knowledge-graph-store.md) — V3 offline JSONL graph bundle under `data/graph/`, module boundaries, scope inheritance
 - [0007-schematic-connectivity-extraction.md](0007-schematic-connectivity-extraction.md) — CAD-first schematic module↔net ladder; PDF connector geometry fallback; OCR spatial last
+- [0008-multi-agent-runtime.md](0008-multi-agent-runtime.md) — V4 supervisor + read-only ToolBus; config-driven roles; write bans (accepted)
+- [0009-multi-source-schematic-map.md](0009-multi-source-schematic-map.md) — PDF + BoardView `.brd` + netlist complementary connectivity map; evidence merge; sidecar v2
+- [0010-fa-session-external-integrations.md](0010-fa-session-external-integrations.md) — Radar-keyed FA session; Flames/Radar connectors; Keynote export + download (proposed)
+- [0011-product-project-build-hierarchy.md](0011-product-project-build-hierarchy.md) — three-level scope (product/project/build); reserved `global`/`common`; triple inheritance; strict cutover (accepted)
+- [0012-chat-pipeline-grounding.md](0012-chat-pipeline-grounding.md) — chat gates once; rules-first route; hybrid RAG + citations for agent turns (accepted)

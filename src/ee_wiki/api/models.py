@@ -22,6 +22,7 @@ class QueryRequest(BaseModel):
     """Explicit RAG query request."""
 
     query: str
+    product: str | None = None
     project: str | None = None
     build: str | None = None
     document_type: str | None = None
@@ -43,6 +44,7 @@ class ComponentHitModel(BaseModel):
     key: str
     kind: str
     chunk_id: str
+    product: str = ""
     project: str
     build: str
     document_type: str
@@ -63,6 +65,7 @@ class CaseHitModel(BaseModel):
     """One debug-case lookup hit."""
 
     case_id: str
+    product: str = ""
     project: str
     build: str
     title: str
@@ -90,6 +93,7 @@ class PowerTreeResponse(BaseModel):
 
     query: str = ""
     direction: str = "tree"
+    product: str | None = None
     project: str | None = None
     build: str | None = None
     resolved_id: str | None = None
@@ -105,6 +109,7 @@ class RuleCitationModel(BaseModel):
 
     kind: str
     ref: str
+    product: str = ""
     project: str = ""
     build: str = ""
     excerpt: str = ""
@@ -145,6 +150,7 @@ class RuleListResponse(BaseModel):
 class RuleEvaluateResponse(BaseModel):
     """Engineering rules evaluation response (V3 P4)."""
 
+    product: str | None = None
     project: str | None = None
     build: str | None = None
     pack_dir: str = ""
@@ -158,6 +164,7 @@ class GraphNeighborsResponse(BaseModel):
 
     node_id: str = ""
     resolved_id: str | None = None
+    product: str | None = None
     project: str | None = None
     build: str | None = None
     max_hops: int = 1
@@ -172,6 +179,7 @@ class GraphPathResponse(BaseModel):
     target: str = ""
     resolved_source: str | None = None
     resolved_target: str | None = None
+    product: str | None = None
     project: str | None = None
     build: str | None = None
     max_depth: int = 8
@@ -183,6 +191,7 @@ class GraphPathResponse(BaseModel):
 class GraphNodesResponse(BaseModel):
     """Scope-filtered node listing (V3 P5)."""
 
+    product: str | None = None
     project: str | None = None
     build: str | None = None
     node_types: list[str] | None = None
@@ -195,6 +204,7 @@ class GraphNodeResponse(BaseModel):
 
     query: str = ""
     resolved_id: str | None = None
+    product: str | None = None
     project: str | None = None
     build: str | None = None
     node: dict | None = None
@@ -203,6 +213,7 @@ class GraphNodeResponse(BaseModel):
 class ProjectInventoryEntryModel(BaseModel):
     """One indexed project path with builds and chunk count."""
 
+    product: str = ""
     project: str
     builds: list[str] = Field(default_factory=list)
     chunk_count: int = 0
@@ -232,13 +243,17 @@ class IngestRequest(BaseModel):
         default=None,
         description="Optional list of paths under data/raw/; mutually exclusive with path",
     )
+    product: str | None = Field(
+        default=None,
+        description="When path/paths omitted, scope ingest to data/raw/{product}/...",
+    )
     project: str | None = Field(
         default=None,
-        description="When path/paths omitted, scope ingest to data/raw/{project}/...",
+        description="With product, scope to data/raw/{product}/{project}/...",
     )
     build: str | None = Field(
         default=None,
-        description="With project, scope to data/raw/{project}/{build}/",
+        description="With product and project, scope to data/raw/{product}/{project}/{build}/",
     )
     force: bool = Field(
         default=False,
@@ -311,6 +326,33 @@ class IngestJobStatusResponse(BaseModel):
     result: IngestResponse | None = None
 
 
+class ConnectivityTraceResponse(BaseModel):
+    """Schematic connectivity sidecar query response (ADR 0009)."""
+
+    query: str = ""
+    kind: str = ""
+    found: bool = False
+    authoritative: bool = False
+    authority: str = ""
+    product: str | None = None
+    project: str | None = None
+    build: str | None = None
+    resolved_net: str | None = None
+    resolved_refdes: str | None = None
+    match: str | None = None
+    page: int | None = None
+    pins: list[dict] = Field(default_factory=list)
+    pin_count: int = 0
+    connectors: list[dict] = Field(default_factory=list)
+    modules: list[dict] = Field(default_factory=list)
+    advisory_pins: list[dict] = Field(default_factory=list)
+    advisory_connectors: list[dict] = Field(default_factory=list)
+    documents: list[dict] = Field(default_factory=list)
+    limitations: str = ""
+    note: str | None = None
+    error: str | None = None
+
+
 class ChatMessage(BaseModel):
     """OpenAI-compatible chat message."""
 
@@ -324,6 +366,7 @@ class ChatCompletionRequest(BaseModel):
     model: str = "ee-wiki"
     messages: list[ChatMessage]
     stream: bool = False
+    product: str | None = None
     project: str | None = None
     build: str | None = None
     document_type: str | None = None

@@ -1,0 +1,29 @@
+id: mfg
+display_name: Manufacturing / Test
+routing:
+  keywords:
+    - 工站
+    - 制程
+    - ICT
+    - ATE
+    - SMT
+    - 良率
+    - yield
+    - station
+    - manufacturing
+    - 生产
+    - fixture
+    - 夹具
+    - bring-up
+    - bringup
+tools:
+  - engineering_search
+  - search_debug_case
+recipe:
+  - tool: engineering_search
+    query_from: question
+    args:
+      document_type: sop
+  - tool: search_debug_case
+    query_from: question
+max_tool_calls: 3

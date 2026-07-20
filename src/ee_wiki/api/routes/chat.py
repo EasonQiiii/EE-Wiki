@@ -13,9 +13,19 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from ee_wiki.api.cancel import start_disconnect_watcher
+from ee_wiki.api.chat_pipeline import (
+    RequestTrace,
+    pre_rag_gates,
+    scope_source_label,
+)
 from ee_wiki.api.citation_models import citation_to_model
 from ee_wiki.api.concurrency import QueueFullError, queue_response_headers
-from ee_wiki.api.deps import get_config, get_queue_gate, get_rag_service
+from ee_wiki.api.deps import (
+    get_config,
+    get_connectivity_query,
+    get_queue_gate,
+    get_rag_service,
+)
 from ee_wiki.api.models import (
     ChatChoice,
     ChatChoiceMessage,
@@ -29,6 +39,7 @@ from ee_wiki.api.open_webui_auxiliary import (
 )
 from ee_wiki.api.open_webui_sources import citations_to_open_webui_sources
 from ee_wiki.api.rag_handler import raise_queue_full_http_error
+from ee_wiki.api.scope_params import resolve_request_scope
 from ee_wiki.api.stream_cancel import iter_sync_text_chunks
 from ee_wiki.api.stream_status import (
     GENERATION_STATUS,
@@ -43,6 +54,7 @@ from ee_wiki.api.timeout import (
     run_sync_with_request_timeout,
 )
 from ee_wiki.common.logging import get_logger
+from ee_wiki.connectivity.query import ConnectivityQuery
 from ee_wiki.generation.elapsed import RagPhaseTiming, format_phase_timing_footer
 from ee_wiki.generation.inline_images import build_image_block
 from ee_wiki.generation.llm.errors import LlmLoadError, LlmTimeoutError
@@ -93,6 +105,7 @@ def _fetch_stream_result(
     question: str,
     *,
     bypass_rag: bool,
+    target_product: str | None,
     target_project: str | None,
     target_build: str | None,
     document_type: str | None,
@@ -100,8 +113,9 @@ def _fetch_stream_result(
     cancel_event: threading.Event | None,
     task: str | None,
     history: list[ConversationTurn] | None,
+    connectivity_query: ConnectivityQuery | None = None,
 ) -> AnswerStreamResult:
-    """Run RAG or direct LLM streaming depending on request type."""
+    """Run gates, supervisor intent, then hybrid RAG (ADR 0012)."""
     if bypass_rag:
         logger.info(
             "Open WebUI auxiliary task — bypassing RAG (%d prompt chars)",
@@ -112,16 +126,109 @@ def _fetch_stream_result(
             cancel_event=cancel_event,
             max_new_tokens=AUXILIARY_MAX_NEW_TOKENS,
         )
-    return service.stream_answer(
+
+    trace = RequestTrace(
+        scope_source=scope_source_label(
+            product=target_product,
+            project=target_project,
+            build=target_build,
+        ),
+    )
+    gate_started = time.monotonic()
+    gate = pre_rag_gates(
+        service.config,
         question,
+        history,
+        product=target_product,
+        project=target_project,
+        build=target_build,
+        connectivity_query=connectivity_query,
+    )
+    trace.mark_phase("gate", gate_started)
+    if gate is not None:
+        trace.gate = gate.kind
+        trace.branch = "direct"
+        trace.roles = gate.roles_used
+        trace.log()
+        return AnswerStreamResult(
+            citations=[],
+            text_chunks=iter([gate.markdown]),
+        )
+
+    routed_task = task
+    agent_evidence: str | None = None
+    task_owner = "legacy"
+    agents_cfg = getattr(service.config, "agents", None)
+
+    # V4 supervisor path (ADR 0008 / 0012). Require real bool True so MagicMock
+    # configs in unit tests fall through to legacy RAG after gates.
+    if agents_cfg is not None and agents_cfg.enabled is True:
+        from ee_wiki.agents.supervisor import open_supervisor
+        from ee_wiki.tools.context import ToolContext
+
+        tool_ctx = ToolContext(config=service.config, engine=service.engine)
+        supervisor = open_supervisor(
+            service.config,
+            tool_context=tool_ctx,
+            connectivity_query=connectivity_query,
+            llm=service.llm,
+        )
+        route_started = time.monotonic()
+        result = supervisor.handle(
+            question,
+            product=target_product,
+            project=target_project,
+            build=target_build,
+            history=history,
+            requested_task=task,
+            cancel_event=cancel_event,
+        )
+        trace.mark_phase("route_tools", route_started)
+        trace.route_mode = supervisor.last_route_mode
+        trace.llm_calls = supervisor.last_llm_calls
+        trace.roles = result.roles_used
+        routed_task = task or result.task
+        task_owner = "supervisor"
+        trace.task_owner = "supervisor"
+        trace.task = routed_task
+
+        if result.kind == "hybrid":
+            agent_evidence = result.markdown or None
+            trace.branch = "hybrid"
+            logger.info(
+                "Supervisor hybrid — RAG with evidence (%d chars, roles=%s)",
+                len(result.markdown),
+                result.roles_used,
+            )
+        else:
+            # passthrough (and any unexpected kind) → plain hybrid RAG
+            trace.branch = "passthrough"
+            logger.info(
+                "Supervisor passthrough — hybrid RAG (task=%s)",
+                routed_task,
+            )
+    else:
+        trace.task_owner = "legacy"
+        trace.task = routed_task
+        trace.branch = "passthrough"
+
+    stream = service.stream_answer(
+        question,
+        target_product=target_product,
         target_project=target_project,
         target_build=target_build,
         document_type=document_type,
         top_k_final=top_k,
         cancel_event=cancel_event,
-        task=task,
+        task=routed_task,
         history=history,
+        agent_evidence=agent_evidence,
+        task_owner=task_owner,
     )
+    if agent_evidence and not stream.citations:
+        trace.evidence_only = True
+    trace.log()
+    return stream
 
 
 def _elapsed_footer(
@@ -237,11 +344,15 @@ async def chat_completions(
     service: RagService = Depends(get_rag_service),
     gate=Depends(get_queue_gate),
     config=Depends(get_config),
+    connectivity_query: ConnectivityQuery | None = Depends(get_connectivity_query),
 ):
     """Run RAG using the last user message as the query."""
     question = _extract_user_question(body.messages)
     history = _extract_history(body.messages)
     bypass_rag = _should_bypass_rag(question)
+    product, project, build = resolve_request_scope(
+        config, body.product, body.project, body.build
+    )
     chat_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     request_started = time.monotonic()
@@ -269,8 +380,9 @@ async def chat_completions(
                     created=created,
                     model=body.model,
                     question=question,
-                    project=body.project,
-                    build=body.build,
+                    product=product,
+                    project=project,
+                    build=build,
                     document_type=body.document_type,
                     top_k=body.top_k,
                     task=body.task,
@@ -279,6 +391,7 @@ async def chat_completions(
                     bypass_rag=bypass_rag,
                     request_started=request_started,
                     show_elapsed_time=show_elapsed_time,
+                    connectivity_query=connectivity_query,
                 ):
                     yield chunk
             finally:
@@ -315,13 +428,15 @@ async def chat_completions(
                     service,
                     question,
                     bypass_rag=bypass_rag,
-                    target_project=body.project,
-                    target_build=body.build,
+                    target_product=product,
+                    target_project=project,
+                    target_build=build,
                     document_type=body.document_type,
                     top_k=body.top_k,
                     cancel_event=cancel,
                     task=body.task,
                     history=history,
+                    connectivity_query=connectivity_query,
                     timeout_seconds=remaining_timeout,
                 )
             except (RequestTimeoutError, LlmTimeoutError) as exc:
@@ -428,6 +543,7 @@ async def _stream_answer(
     created: int,
     model: str,
     question: str,
+    product: str | None,
     project: str | None,
     build: str | None,
     document_type: str | None,
@@ -438,6 +554,7 @@ async def _stream_answer(
     bypass_rag: bool = False,
     request_started: float | None = None,
     show_elapsed_time: bool = False,
+    connectivity_query: ConnectivityQuery | None = None,
 ) -> AsyncIterator[str]:
     """Yield OpenAI-compatible SSE chunks for a streamed RAG answer."""
     cancel = threading.Event()
@@ -481,6 +598,7 @@ async def _stream_answer(
             service,
             question,
             bypass_rag=bypass_rag,
+            target_product=product,
             target_project=project,
             target_build=build,
             document_type=document_type,
@@ -488,6 +606,7 @@ async def _stream_answer(
             cancel_event=cancel,
             task=task,
             history=history,
+            connectivity_query=connectivity_query,
             timeout_seconds=remaining_timeout,
         )
         retrieval_done_at = time.monotonic()

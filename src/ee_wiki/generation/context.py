@@ -6,28 +6,56 @@ from ee_wiki.common.types import Citation
 from ee_wiki.retrieval.hybrid.engine import HybridChunk
 from ee_wiki.retrieval.rewrite import ConversationTurn, needs_answer_history
 
-ENTERPRISE_PROJECT = "global"
-PROJECT_SHARED_BUILD = "common"
+GLOBAL_SEGMENT = "global"
+COMMON_SEGMENT = "common"
 
 HISTORY_MAX_TURNS = 6
 HISTORY_MAX_CHARS_PER_TURN = 4000
 
 
-def knowledge_scope_tier(project: str, build: str) -> str:
+def knowledge_scope_tier(product: str, project: str, build: str) -> str:
     """Classify a chunk's knowledge layer for prompt headers.
 
     Args:
+        product: Metadata product segment.
         project: Metadata project segment.
         build: Metadata build segment.
 
     Returns:
-        ``global``, ``project_common``, or ``build``.
+        ``global``, ``product_common``, ``project_common``, or ``build``.
     """
-    if project == ENTERPRISE_PROJECT and build == ENTERPRISE_PROJECT:
+    if product == GLOBAL_SEGMENT:
         return "global"
-    if build == PROJECT_SHARED_BUILD:
+    if project == COMMON_SEGMENT:
+        return "product_common"
+    if build == COMMON_SEGMENT:
         return "project_common"
     return "build"
+
+
+def merge_agent_evidence_into_context(
+    context: str,
+    agent_evidence: str | None,
+) -> str:
+    """Prepend specialist ToolBus evidence ahead of retrieved chunks (ADR 0012).
+
+    Args:
+        context: Formatted retrieved context blocks (may be empty).
+        agent_evidence: Optional fused specialist markdown from the supervisor.
+
+    Returns:
+        Context string for ``{{context}}``, with an evidence section when present.
+    """
+    evidence = (agent_evidence or "").strip()
+    body = (context or "").strip()
+    if not evidence:
+        return body
+    if not body:
+        return f"## Agent tool evidence\n{evidence}"
+    return (
+        f"## Agent tool evidence\n{evidence}\n\n"
+        f"## Retrieved context\n{body}"
+    )
 
 
 def format_context_blocks(
@@ -37,10 +65,10 @@ def format_context_blocks(
 ) -> str:
     """Render chunks as numbered context blocks for prompt injection.
 
-    Each block header includes scope tier, project, build, source, page, and chunk_id
-    so the LLM can distinguish build facts from project-common and global knowledge.
-    When ``graph_enrichment`` is provided (retrieval config-gated), it is appended
-    after document blocks as a non-cited neighborhood summary.
+    Each block header includes scope tier, product, project, build, source, page,
+    and chunk_id so the LLM can distinguish build facts from common and global
+    knowledge. When ``graph_enrichment`` is provided (retrieval config-gated),
+    it is appended after document blocks as a non-cited neighborhood summary.
 
     Args:
         chunks: Retrieved chunks with citation metadata.
@@ -52,11 +80,13 @@ def format_context_blocks(
     blocks: list[str] = []
     for index, chunk in enumerate(chunks, start=1):
         citation = chunk.citation
+        product = str(chunk.metadata.get("product", ""))
         project = str(chunk.metadata.get("project", ""))
         build = str(chunk.metadata.get("build", ""))
-        scope = knowledge_scope_tier(project, build)
+        scope = knowledge_scope_tier(product, project, build)
         header = (
-            f"[{index}] scope={scope} project={project} build={build} "
+            f"[{index}] scope={scope} product={product} project={project} "
+            f"build={build} "
             f"source={citation.get('source_file', '')} "
             f"page={citation.get('page', 0)} chunk_id={chunk.chunk_id}"
         )

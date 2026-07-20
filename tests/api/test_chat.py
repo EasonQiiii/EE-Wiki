@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from ee_wiki.api.app import create_app
 from ee_wiki.api.deps import get_config, get_rag_service
+from ee_wiki.api.routes.chat import _fetch_stream_result
 from ee_wiki.api.stream_status import GENERATION_STATUS, RETRIEVAL_STATUS
 from ee_wiki.common.types import Citation
 from ee_wiki.generation.service import AnswerStreamResult
@@ -56,6 +57,7 @@ def test_chat_completions_uses_last_user_message(app_config) -> None:
                 {"role": "system", "content": "You are helpful."},
                 {"role": "user", "content": "What is RMII?"},
             ],
+            "product": "iphone",
             "project": "logan",
             "build": "p1",
         },
@@ -69,6 +71,7 @@ def test_chat_completions_uses_last_user_message(app_config) -> None:
     assert "created" in payload
     service.stream_answer.assert_called_once()
     call_kwargs = service.stream_answer.call_args.kwargs
+    assert call_kwargs["target_product"] == "iphone"
     assert call_kwargs["target_project"] == "logan"
     assert call_kwargs["target_build"] == "p1"
     assert "cancel_event" in call_kwargs
@@ -77,11 +80,11 @@ def test_chat_completions_uses_last_user_message(app_config) -> None:
 def test_chat_completions_returns_open_webui_sources(app_config) -> None:
     citations = [
         Citation(
-            source_file="data/raw/logan/p1/note/manual.md",
+            source_file="data/raw/iphone/logan/p1/note/manual.md",
             chunk_id="manual__power",
             page=0,
             excerpt="VBAT connects to PMIC.",
-            url="http://localhost:8080/v1/sources/logan/p1/note/manual.md#power",
+            url="http://localhost:8080/v1/sources/iphone/logan/p1/note/manual.md#power",
         ),
     ]
     service = MagicMock()
@@ -105,7 +108,9 @@ def test_chat_completions_returns_open_webui_sources(app_config) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["choices"][0]["message"]["content"] == "VBAT is connected to the PMIC [1]."
-    assert payload["citations"][0]["url"].endswith("/v1/sources/logan/p1/note/manual.md#power")
+    assert payload["citations"][0]["url"].endswith(
+        "/v1/sources/iphone/logan/p1/note/manual.md#power"
+    )
     assert payload["sources"][0]["source"]["url"] == citations[0].url
     assert payload["sources"][0]["source"]["name"] == "[1] manual.md"
 
@@ -113,11 +118,11 @@ def test_chat_completions_returns_open_webui_sources(app_config) -> None:
 def test_chat_completions_stream_emits_sources_chunk() -> None:
     citations = [
         Citation(
-            source_file="data/raw/logan/p1/note/manual.md",
+            source_file="data/raw/iphone/logan/p1/note/manual.md",
             chunk_id="manual__power",
             page=0,
             excerpt="VBAT connects to PMIC.",
-            url="http://localhost:8080/v1/sources/logan/p1/note/manual.md#power",
+            url="http://localhost:8080/v1/sources/iphone/logan/p1/note/manual.md#power",
         ),
     ]
 
@@ -198,6 +203,92 @@ def test_chat_completions_meta_question_uses_service_fast_path() -> None:
     assert response.status_code == 200
     assert "EE-Wiki" in response.json()["choices"][0]["message"]["content"]
     service.stream_answer.assert_called_once()
+
+
+def test_supervisor_route_forwards_task_without_second_classification(
+    app_config,
+) -> None:
+    service = MagicMock()
+    service.config = app_config
+    service.engine = MagicMock()
+    service.llm.generate_stream = None
+    service.llm.generate.return_value = "TASK: translate\nROLES: none"
+    service.stream_answer.return_value = _stream_result("Translated.")
+
+    result = _fetch_stream_result(
+        service,
+        "translate the previous answer",
+        bypass_rag=False,
+        target_product=None,
+        target_project=None,
+        target_build=None,
+        document_type=None,
+        top_k=None,
+        cancel_event=None,
+        task=None,
+        history=None,
+    )
+
+    assert "".join(result.text_chunks) == "Translated."
+    service.llm.generate.assert_called_once()
+    service.stream_answer.assert_called_once()
+    assert service.stream_answer.call_args.kwargs["task"] == "translate"
+    assert service.stream_answer.call_args.kwargs["task_owner"] == "supervisor"
+    service.stream_direct.assert_not_called()
+
+
+def test_supervisor_hybrid_uses_stream_answer_with_evidence(app_config) -> None:
+    """Specialist findings go to RagService hybrid path, not stream_direct."""
+    from unittest.mock import patch
+
+    from ee_wiki.protocols.agent import SupervisorResult
+
+    service = MagicMock()
+    service.config = app_config
+    service.engine = MagicMock()
+    service.stream_answer.return_value = _stream_result(
+        "Grounded.",
+        citations=[
+            Citation(
+                source_file="note.md",
+                page=1,
+                chunk_id="c1",
+                excerpt="rail",
+            )
+        ],
+    )
+
+    hybrid = SupervisorResult(
+        kind="hybrid",
+        markdown="## Agent evidence\npower hit",
+        task="power",
+        roles_used=("power",),
+    )
+    with patch(
+        "ee_wiki.agents.supervisor.Supervisor.handle",
+        return_value=hybrid,
+    ):
+        result = _fetch_stream_result(
+            service,
+            "VDD power tree",
+            bypass_rag=False,
+            target_product=None,
+            target_project=None,
+            target_build=None,
+            document_type=None,
+            top_k=None,
+            cancel_event=None,
+            task=None,
+            history=None,
+        )
+
+    assert "".join(result.text_chunks) == "Grounded."
+    service.stream_answer.assert_called_once()
+    kwargs = service.stream_answer.call_args.kwargs
+    assert kwargs["agent_evidence"] == "## Agent evidence\npower hit"
+    assert kwargs["task"] == "power"
+    assert kwargs["task_owner"] == "supervisor"
+    service.stream_direct.assert_not_called()
 
 
 def test_chat_completions_bypasses_rag_for_open_webui_title_task() -> None:

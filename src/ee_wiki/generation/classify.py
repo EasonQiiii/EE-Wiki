@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 from ee_wiki.common.logging import get_logger
@@ -27,6 +28,17 @@ VALID_TASKS: frozenset[str] = frozenset({
 })
 
 MAX_CLASSIFY_TOKENS = 16
+MAX_AGENT_ROUTE_TOKENS = 48
+_ROLES_LINE = re.compile(r"^ROLES:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+_TASK_LINE = re.compile(r"^TASK:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+
+
+@dataclass(frozen=True)
+class AgentRoute:
+    """One semantic routing decision shared by Supervisor and generation."""
+
+    task: str
+    roles: tuple[str, ...]
 
 
 def _load_classify_template(repo_root: Path) -> str:
@@ -45,6 +57,98 @@ def _load_classify_template(repo_root: Path) -> str:
 def _render_classify_prompt(template: str, *, question: str) -> str:
     """Substitute ``{{question}}`` in the classify template."""
     return template.replace("{{question}}", question).strip()
+
+
+def _generate_short_output(
+    llm: LlmBackend,
+    prompt: str,
+    *,
+    max_new_tokens: int,
+    cancel_event: threading.Event | None,
+) -> str:
+    """Generate a short classifier response from either LLM interface."""
+    if callable(getattr(llm, "generate_stream", None)):
+        parts: list[str] = []
+        for fragment in llm.generate_stream(
+            prompt,
+            max_new_tokens=max_new_tokens,
+            cancel_event=cancel_event,
+        ):
+            if cancel_event and cancel_event.is_set():
+                return ""
+            parts.append(fragment)
+        return "".join(parts).strip()
+    return llm.generate(prompt, max_new_tokens=max_new_tokens).strip()
+
+
+def classify_agent_route(
+    question: str,
+    *,
+    llm: LlmBackend,
+    repo_root: Path,
+    valid_roles: set[str] | frozenset[str],
+    max_roles: int = 2,
+    cancel_event: threading.Event | None = None,
+) -> AgentRoute | None:
+    """Classify one turn into a prompt task and zero or more specialist roles.
+
+    A malformed or failed response returns ``None`` so the Supervisor can use
+    its deterministic keyword fallback. ``ROLES: none`` is a valid semantic
+    passthrough decision and returns an empty role tuple.
+    """
+    if cancel_event and cancel_event.is_set():
+        return None
+
+    template_path = repo_root / "prompts" / "agents" / "supervisor" / "default.md"
+    template = template_path.read_text(encoding="utf-8")
+    prompt = (
+        template.replace("{{question}}", question)
+        .replace("{{max_roles}}", str(max_roles))
+        .replace("{{role_ids}}", ", ".join(sorted(valid_roles)))
+        .strip()
+    )
+
+    try:
+        raw_output = _generate_short_output(
+            llm,
+            prompt,
+            max_new_tokens=MAX_AGENT_ROUTE_TOKENS,
+            cancel_event=cancel_event,
+        )
+    except Exception:
+        logger.warning("Agent semantic routing failed", exc_info=True)
+        return None
+
+    task_match = _TASK_LINE.search(raw_output)
+    roles_match = _ROLES_LINE.search(raw_output)
+    if task_match is None or roles_match is None:
+        logger.warning("Agent routing output malformed: %r", raw_output)
+        return None
+
+    task = _parse_task_label(task_match.group(1))
+    if task is None:
+        logger.warning("Agent routing task unrecognized: %r", task_match.group(1))
+        return None
+
+    raw_roles = roles_match.group(1).strip().lower()
+    if raw_roles in {"none", "null", "n/a", "-"}:
+        roles: tuple[str, ...] = ()
+    else:
+        parsed = [item.strip() for item in raw_roles.split(",") if item.strip()]
+        roles = tuple(dict.fromkeys(role for role in parsed if role in valid_roles))[
+            :max_roles
+        ]
+        if not roles:
+            logger.warning("Agent routing roles unrecognized: %r", raw_roles)
+            return None
+
+    logger.info(
+        "Agent semantic route: %r -> task=%s roles=%s",
+        question[:60],
+        task,
+        roles,
+    )
+    return AgentRoute(task=task, roles=roles)
 
 
 def _parse_task_label(raw: str) -> str | None:
@@ -108,21 +212,12 @@ def classify_task(
     logger.info("Classifying task intent for question: %s", question[:80])
 
     try:
-        if callable(getattr(llm, "generate_stream", None)):
-            parts: list[str] = []
-            for fragment in llm.generate_stream(
-                prompt,
-                max_new_tokens=MAX_CLASSIFY_TOKENS,
-                cancel_event=cancel_event,
-            ):
-                if cancel_event and cancel_event.is_set():
-                    return default_task
-                parts.append(fragment)
-            raw_output = "".join(parts).strip()
-        else:
-            raw_output = llm.generate(
-                prompt, max_new_tokens=MAX_CLASSIFY_TOKENS,
-            ).strip()
+        raw_output = _generate_short_output(
+            llm,
+            prompt,
+            max_new_tokens=MAX_CLASSIFY_TOKENS,
+            cancel_event=cancel_event,
+        )
     except Exception:
         logger.warning(
             "Task classification failed, using default: %s",

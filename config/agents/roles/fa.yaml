@@ -1,0 +1,30 @@
+id: fa
+display_name: Failure Analysis
+routing:
+  keywords:
+    - FA
+    - 失效
+    - 客退
+    - RMA
+    - 8D
+    - root cause
+    - 根因
+    - fail
+    - failure
+    - EOS
+    - ESD
+    - debug case
+    - 失效分析
+tools:
+  - search_debug_case
+  - engineering_search
+  - trace_net
+  - connector_pins
+recipe:
+  - tool: search_debug_case
+    query_from: question
+  - tool: engineering_search
+    query_from: question
+    args:
+      document_type: failure_analysis
+max_tool_calls: 4

@@ -11,6 +11,8 @@ from ee_wiki.api.deps import get_config, warmup_rag_service
 from ee_wiki.api.routes.cases import router as cases_router
 from ee_wiki.api.routes.chat import router as chat_router
 from ee_wiki.api.routes.components import router as components_router
+from ee_wiki.api.routes.connectivity import router as connectivity_router
+from ee_wiki.api.routes.exports import router as exports_router
 from ee_wiki.api.routes.graph import router as graph_router
 from ee_wiki.api.routes.health import router as health_router
 from ee_wiki.api.routes.ingest import router as ingest_router
@@ -42,11 +44,13 @@ def create_app() -> FastAPI:
     app = FastAPI(title="EE-Wiki", version="0.1.0", lifespan=_lifespan)
     app.include_router(health_router)
     app.include_router(sources_router)
+    app.include_router(exports_router)
     app.include_router(query_router)
     app.include_router(components_router)
     app.include_router(cases_router)
     app.include_router(graph_router)
     app.include_router(power_router)
+    app.include_router(connectivity_router)
     app.include_router(rules_router)
     app.include_router(projects_router)
     app.include_router(ingest_router)

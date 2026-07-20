@@ -1,0 +1,26 @@
+id: si
+display_name: Signal Integrity
+routing:
+  keywords:
+    - SI
+    - 信号完整性
+    - 眼图
+    - 时序
+    - high-speed
+    - high speed
+    - timing
+    - eye diagram
+    - jitter
+    - crosstalk
+    - 串扰
+    - DDR
+    - SerDes
+tools:
+  - search_datasheet
+  - engineering_search
+recipe:
+  - tool: search_datasheet
+    query_from: question
+  - tool: engineering_search
+    query_from: question
+max_tool_calls: 3

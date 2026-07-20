@@ -10,6 +10,7 @@ import yaml
 
 from ee_wiki.common.errors import ConfigError
 from ee_wiki.common.logging import get_logger
+from ee_wiki.common.project_aliases import normalize_project_aliases
 from ee_wiki.common.types import DataLayoutConfig, ModelsConfig
 
 logger = get_logger(__name__)
@@ -59,6 +60,56 @@ class RulesConfig:
 
 
 @dataclass(frozen=True)
+class FaRadarConfig:
+    """Radar connector settings for FA sessions (ADR 0010)."""
+
+    backend: str = "stub"  # stub | radarclient
+    stub_component_name: str = "demo_product"
+    stub_component_version: str = "P1"
+
+
+@dataclass(frozen=True)
+class FaFlamesConfig:
+    """Flames connector settings for FA sessions (ADR 0010)."""
+
+    backend: str = "manual"  # manual (Open WebUI paste) | stub | live
+    base_url: str | None = None
+    timeout_seconds: int = 60
+
+
+@dataclass(frozen=True)
+class FaReportConfig:
+    """FA one-page Keynote report settings (ADR 0010)."""
+
+    template_path: str = "assets/templates/fa/one_page.key"
+
+
+@dataclass(frozen=True)
+class FaConfig:
+    """Failure-analysis session integrations (ADR 0010)."""
+
+    enabled: bool = True
+    radar: FaRadarConfig = field(default_factory=FaRadarConfig)
+    flames: FaFlamesConfig = field(default_factory=FaFlamesConfig)
+    report: FaReportConfig = field(default_factory=FaReportConfig)
+
+
+@dataclass(frozen=True)
+class AgentsConfig:
+    """Multi-agent runtime settings (ADR 0008)."""
+
+    enabled: bool = True
+    roles_dir: str = "config/agents/roles"
+    max_roles_per_turn: int = 3
+    route_score_threshold: int = 2
+    max_steps: int = 8
+    max_tool_calls: int = 16
+    tool_timeout_seconds: float = 60.0
+    max_concurrent_tools: int = 2
+    span_log: str = "data/cache/agents/spans.jsonl"
+
+
+@dataclass(frozen=True)
 class ProsePdfConfig:
     """Settings for prose PDF text extraction and OCR fallback."""
 
@@ -78,11 +129,12 @@ class ProsePdfConfig:
 
 @dataclass(frozen=True)
 class SchematicConnectivityConfig:
-    """CAD-first / PDF-geometry module↔net binding (ADR 0007)."""
+    """Multi-source schematic connectivity map (ADR 0007 / 0009)."""
 
     enabled: bool = True
     write_sidecar: bool = True
     max_connector_distance: float = 90.0
+    # Legacy alias for netlist_extensions (kept for existing YAML).
     cad_extensions: tuple[str, ...] = (
         ".net",
         ".kicad_sch",
@@ -91,6 +143,22 @@ class SchematicConnectivityConfig:
         ".prjpcb",
         ".PrjPcb",
     )
+    netlist_extensions: tuple[str, ...] = (
+        ".net",
+        ".kicad_sch",
+        ".kicad_pro",
+        ".SchDoc",
+        ".prjpcb",
+        ".PrjPcb",
+    )
+    boardview_extensions: tuple[str, ...] = (".brd",)
+    # FA-grade trace gate (ADR 0009 / 0010): evidence tags that count as
+    # board-verified electrical truth. Advisory geometry/OCR evidence
+    # (pdf_geometry / ocr_spatial) must never ground a trace answer.
+    authoritative_evidence: tuple[str, ...] = ("cad_netlist", "boardview")
+    # When true, answer-grade trace (chat / MCP / FA) refuses instead of
+    # presenting advisory-only connectivity as if it were verified.
+    require_authority_for_trace: bool = True
 
 
 @dataclass(frozen=True)
@@ -106,7 +174,7 @@ class SchematicPdfConfig:
     temperature: float = 0.1
     do_sample: bool = False
     images_rel_prefix: str = "images"
-    fidelity_mode: str = "vlm_plus_ocr"
+    fidelity_mode: str = "ocr_only"
     vlm_max_image_side: int = 1280
     save_page_images: bool = True
     connectivity: SchematicConnectivityConfig = field(
@@ -256,6 +324,8 @@ class AppConfig:
     processed_dir: Path
     indexes_dir: Path
     graph_dir: Path
+    exports_dir: Path
+    cache_dir: Path
     models: ModelsConfig
     prose_pdf: ProsePdfConfig
     schematic_pdf: SchematicPdfConfig
@@ -267,6 +337,8 @@ class AppConfig:
     indexing: IndexingConfig
     graph: GraphConfig
     rules: RulesConfig
+    fa: FaConfig
+    agents: AgentsConfig
     retrieval: RetrievalConfig
     data_layout: DataLayoutConfig
     generation: GenerationConfig
@@ -280,6 +352,16 @@ class AppConfig:
     def rules_pack_dir(self) -> Path:
         """Absolute path to the engineering rules YAML pack."""
         return _resolve_path(self.repo_root, self.rules.pack_dir)
+
+    @property
+    def agents_roles_dir(self) -> Path:
+        """Absolute path to agent role YAML packs."""
+        return _resolve_path(self.repo_root, self.agents.roles_dir)
+
+    @property
+    def agents_span_log(self) -> Path:
+        """Absolute path for ToolBus span JSONL."""
+        return _resolve_path(self.repo_root, self.agents.span_log)
 
 
 def _optional_positive_int(value: object) -> int | None:
@@ -358,11 +440,41 @@ def _load_models_config(repo_root: Path, models: dict) -> ModelsConfig:
 def _load_schematic_connectivity(raw: dict) -> SchematicConnectivityConfig:
     """Parse ``ingestion.schematic_pdf.connectivity`` from YAML."""
     defaults = SchematicConnectivityConfig()
-    extensions = raw.get("cad_extensions")
-    if extensions is None:
-        cad_extensions = defaults.cad_extensions
+    companion = raw.get("companion_extensions") or {}
+    if not isinstance(companion, dict):
+        companion = {}
+
+    netlist_raw = companion.get("netlist")
+    if netlist_raw is None:
+        netlist_raw = raw.get("netlist_extensions")
+    if netlist_raw is None:
+        netlist_raw = raw.get("cad_extensions")
+    if netlist_raw is None:
+        netlist_extensions = defaults.netlist_extensions
     else:
-        cad_extensions = tuple(str(item) for item in extensions)
+        netlist_extensions = tuple(str(item) for item in netlist_raw)
+
+    boardview_raw = companion.get("boardview")
+    if boardview_raw is None:
+        boardview_raw = raw.get("boardview_extensions")
+    if boardview_raw is None:
+        boardview_extensions = defaults.boardview_extensions
+    else:
+        boardview_extensions = tuple(str(item) for item in boardview_raw)
+
+    # Keep cad_extensions in sync with netlist for legacy callers.
+    cad_raw = raw.get("cad_extensions")
+    if cad_raw is None:
+        cad_extensions = netlist_extensions
+    else:
+        cad_extensions = tuple(str(item) for item in cad_raw)
+
+    authoritative_raw = raw.get("authoritative_evidence")
+    if authoritative_raw is None:
+        authoritative_evidence = defaults.authoritative_evidence
+    else:
+        authoritative_evidence = tuple(str(item) for item in authoritative_raw)
+
     return SchematicConnectivityConfig(
         enabled=bool(raw.get("enabled", defaults.enabled)),
         write_sidecar=bool(raw.get("write_sidecar", defaults.write_sidecar)),
@@ -370,6 +482,15 @@ def _load_schematic_connectivity(raw: dict) -> SchematicConnectivityConfig:
             raw.get("max_connector_distance", defaults.max_connector_distance)
         ),
         cad_extensions=cad_extensions,
+        netlist_extensions=netlist_extensions,
+        boardview_extensions=boardview_extensions,
+        authoritative_evidence=authoritative_evidence,
+        require_authority_for_trace=bool(
+            raw.get(
+                "require_authority_for_trace",
+                defaults.require_authority_for_trace,
+            )
+        ),
     )
 
 
@@ -431,6 +552,17 @@ def load_config(
     processed_dir = data_parent / Path(data.get("processed_dir", "data/processed")).name
     indexes_dir = data_parent / Path(data.get("indexes_dir", "data/indexes")).name
     graph_dir = data_parent / Path(data.get("graph_dir", "data/graph")).name
+    exports_dir = data_parent / Path(data.get("exports_dir", "data/exports")).name
+    cache_dir = data_parent / Path(data.get("cache_dir", "data/cache")).name
+
+    fa_raw = raw.get("fa", {}) or {}
+    fa_radar = fa_raw.get("radar", {}) or {}
+    fa_flames = fa_raw.get("flames", {}) or {}
+    fa_report = fa_raw.get("report", {}) or {}
+    agents_raw = raw.get("agents", {}) or {}
+    project_aliases_raw = data_layout.get("project_aliases") or {}
+    if not isinstance(project_aliases_raw, dict):
+        raise ConfigError("data_layout.project_aliases must be a mapping")
 
     layout = DataLayoutConfig(
         enterprise_project=str(data_layout.get("enterprise_project", "global")),
@@ -438,6 +570,9 @@ def load_config(
         document_type_folders={str(k): str(v) for k, v in document_type_folders.items()},
         raw_dir=raw_dir,
         processed_dir=processed_dir,
+        project_aliases=normalize_project_aliases(
+            {str(k): str(v) for k, v in project_aliases_raw.items()}
+        ),
     )
 
     tessdata_override = os.environ.get("EE_WIKI_TESSDATA_DIR")
@@ -457,6 +592,8 @@ def load_config(
         processed_dir=processed_dir,
         indexes_dir=indexes_dir,
         graph_dir=graph_dir,
+        exports_dir=exports_dir,
+        cache_dir=cache_dir,
         models=_load_models_config(root, models),
         prose_pdf=ProsePdfConfig(
             max_pages=prose.get("max_pages"),
@@ -482,7 +619,7 @@ def load_config(
             temperature=float(schematic.get("temperature", 0.1)),
             do_sample=bool(schematic.get("do_sample", False)),
             images_rel_prefix=str(schematic.get("images_rel_prefix", "images")),
-            fidelity_mode=str(schematic.get("fidelity_mode", "vlm_plus_ocr")),
+            fidelity_mode=str(schematic.get("fidelity_mode", "ocr_only")),
             vlm_max_image_side=int(schematic.get("vlm_max_image_side", 1280)),
             save_page_images=bool(schematic.get("save_page_images", True)),
             connectivity=_load_schematic_connectivity(schematic.get("connectivity") or {}),
@@ -556,6 +693,43 @@ def load_config(
         rules=RulesConfig(
             enabled=bool(rules_cfg.get("enabled", True)),
             pack_dir=str(rules_cfg.get("pack_dir", "config/rules")),
+        ),
+        fa=FaConfig(
+            enabled=bool(fa_raw.get("enabled", True)),
+            radar=FaRadarConfig(
+                backend=str(fa_radar.get("backend", "stub")),
+                stub_component_name=str(
+                    fa_radar.get("stub_component_name", "demo_product")
+                ),
+                stub_component_version=str(
+                    fa_radar.get("stub_component_version", "P1")
+                ),
+            ),
+            flames=FaFlamesConfig(
+                backend=str(fa_flames.get("backend", "manual")),
+                base_url=(
+                    str(fa_flames["base_url"]) if fa_flames.get("base_url") else None
+                ),
+                timeout_seconds=int(fa_flames.get("timeout_seconds", 60)),
+            ),
+            report=FaReportConfig(
+                template_path=str(
+                    fa_report.get("template_path", "assets/templates/fa/one_page.key")
+                ),
+            ),
+        ),
+        agents=AgentsConfig(
+            enabled=bool(agents_raw.get("enabled", True)),
+            roles_dir=str(agents_raw.get("roles_dir", "config/agents/roles")),
+            max_roles_per_turn=int(agents_raw.get("max_roles_per_turn", 3)),
+            route_score_threshold=int(agents_raw.get("route_score_threshold", 2)),
+            max_steps=int(agents_raw.get("max_steps", 8)),
+            max_tool_calls=int(agents_raw.get("max_tool_calls", 16)),
+            tool_timeout_seconds=float(agents_raw.get("tool_timeout_seconds", 60.0)),
+            max_concurrent_tools=int(agents_raw.get("max_concurrent_tools", 2)),
+            span_log=str(
+                agents_raw.get("span_log", "data/cache/agents/spans.jsonl")
+            ),
         ),
         retrieval=RetrievalConfig(
             top_k_embed=int(retrieval.get("top_k_embed", 20)),

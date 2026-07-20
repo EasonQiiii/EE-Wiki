@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ee_wiki.generation.context import knowledge_scope_tier
 from ee_wiki.knowledge.indexer.case_index import DebugCaseRecord
 from ee_wiki.knowledge.indexer.component_index import ComponentHit
 from ee_wiki.retrieval.hybrid.engine import HybridChunk, RetrievalResult
@@ -12,13 +13,10 @@ from ee_wiki.retrieval.hybrid.engine import HybridChunk, RetrievalResult
 DEFAULT_CONTENT_PREVIEW_CHARS = 800
 
 
-def _scope_label(*, project: str, build: str, layout) -> str:
+def _scope_label(*, product: str, project: str, build: str, layout) -> str:
     """Return a human-readable knowledge layer label for a hit."""
-    if project == layout.enterprise_project and build == layout.enterprise_project:
-        return "global"
-    if build == layout.project_shared_build:
-        return "common"
-    return "build"
+    del layout  # reserved for callers that already hold layout
+    return knowledge_scope_tier(product, project, build)
 
 
 def component_hit_to_dict(hit: ComponentHit, *, layout) -> dict[str, Any]:
@@ -27,9 +25,12 @@ def component_hit_to_dict(hit: ComponentHit, *, layout) -> dict[str, Any]:
         "key": hit.key,
         "kind": hit.kind,
         "chunk_id": hit.chunk_id,
+        "product": hit.product,
         "project": hit.project,
         "build": hit.build,
-        "scope": _scope_label(project=hit.project, build=hit.build, layout=layout),
+        "scope": _scope_label(
+            product=hit.product, project=hit.project, build=hit.build, layout=layout
+        ),
         "document_type": hit.document_type,
         "source_file": hit.source_file,
         "page": hit.page,
@@ -42,9 +43,12 @@ def case_hit_to_dict(case: DebugCaseRecord, *, layout) -> dict[str, Any]:
     """Convert one debug-case lookup hit to a JSON-serializable mapping."""
     return {
         "case_id": case.case_id,
+        "product": case.product,
         "project": case.project,
         "build": case.build,
-        "scope": _scope_label(project=case.project, build=case.build, layout=layout),
+        "scope": _scope_label(
+            product=case.product, project=case.project, build=case.build, layout=layout
+        ),
         "title": case.title,
         "source_file": case.source_file,
         "document_type": case.document_type,
@@ -58,6 +62,7 @@ def case_hit_to_dict(case: DebugCaseRecord, *, layout) -> dict[str, Any]:
         "chunk_ids": list(case.chunk_ids),
     }
 
+
 def chunk_hit_to_dict(
     chunk: HybridChunk,
     *,
@@ -66,6 +71,7 @@ def chunk_hit_to_dict(
 ) -> dict[str, Any]:
     """Convert one retrieval chunk to a JSON-serializable mapping."""
     metadata = chunk.metadata
+    product = str(metadata.get("product", ""))
     project = str(metadata.get("project", ""))
     build = str(metadata.get("build", ""))
     content = chunk.content
@@ -73,9 +79,12 @@ def chunk_hit_to_dict(
         content = content[:content_preview_chars].rstrip() + "..."
     return {
         "chunk_id": chunk.chunk_id,
+        "product": product,
         "project": project,
         "build": build,
-        "scope": _scope_label(project=project, build=build, layout=layout),
+        "scope": _scope_label(
+            product=product, project=project, build=build, layout=layout
+        ),
         "document_type": str(metadata.get("document_type", "")),
         "source_file": str(chunk.citation.get("source_file", "")),
         "page": int(chunk.citation.get("page") or metadata.get("page") or 0),
@@ -125,6 +134,11 @@ def format_rules(result: dict[str, Any]) -> str:
 
 def format_graph_query(result: dict[str, Any]) -> str:
     """Format a graph neighbors/path/nodes/node payload as JSON text."""
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+def format_connectivity_query(result: dict[str, Any]) -> str:
+    """Format a schematic connectivity trace payload as JSON text."""
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 

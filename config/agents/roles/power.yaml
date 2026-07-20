@@ -1,0 +1,31 @@
+id: power
+display_name: Power
+routing:
+  keywords:
+    - 电源
+    - 供电
+    - rail
+    - VDD
+    - VBAT
+    - 掉电
+    - 上电
+    - power tree
+    - 电源树
+    - PMIC
+    - LDO
+    - buck
+    - 轨
+tools:
+  - query_power_tree
+  - engineering_search
+  - evaluate_engineering_rules
+recipe:
+  - tool: query_power_tree
+    query_from: tokens
+    args:
+      direction: tree
+  - tool: evaluate_engineering_rules
+    args: {}
+  - tool: engineering_search
+    query_from: question
+max_tool_calls: 4
