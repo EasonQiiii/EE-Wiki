@@ -20,6 +20,7 @@ from ee_wiki.integrations.paths import fa_cache_dir, normalize_radar_id
 from ee_wiki.integrations.radar.evidence import (
     compose_radar_evidence_corpus,
     radar_has_evidence_corpus,
+    user_diagnosis_entries,
 )
 from ee_wiki.integrations.scope import ScopeResolution, resolve_scope_from_problem
 from ee_wiki.protocols.fa_report import FaReportRequest, FaReportResult
@@ -385,7 +386,9 @@ def _build_checkin_result(
         for rel in fails.cached_logs
     )
     awaiting = bool(fails.needs_user_input)
-    summary = _format_checkin_markdown(problem, scope, fails, log_urls)
+    summary = _format_checkin_markdown(
+        config, problem, scope, fails, log_urls
+    )
     logger.info(
         "FA check-in radar=%s product=%s project=%s build=%s fails=%d awaiting=%s source=%s",
         problem.radar_id,
@@ -408,6 +411,7 @@ def _build_checkin_result(
 
 
 def _format_checkin_markdown(
+    config: AppConfig,
     problem: RadarProblem,
     scope: ScopeResolution,
     fails: FailItemsResult,
@@ -442,6 +446,36 @@ def _format_checkin_markdown(
         lines.append(
             "**Radar attachments:** " + ", ".join(f"`{n}`" for n in att_names)
         )
+        from ee_wiki.integrations.radar.attachments import (
+            materialize_all_attachment_links,
+        )
+
+        links, failed = materialize_all_attachment_links(config, problem)
+        if links:
+            lines.extend(["", "### Radar attachment downloads", ""])
+            for name, url in links:
+                lines.append(f"- [`{name}`]({url})")
+            if failed:
+                names = ", ".join(f"`{n}`" for n in failed)
+                lines.append(
+                    f"\n> 以下附件下载链接未能生成（Radar 权限 / 网络问题）：{names}。"
+                    "可在 Radar 网页端查看，或把相关片段贴到对话里。"
+                )
+            if config.fa.radar.backend == "stub":
+                lines.append(
+                    "\n_Stub：链接可下载占位内容；真附件需 "
+                    "`fa.radar.backend: radarclient`。_"
+                )
+
+    user_diag = user_diagnosis_entries(problem)
+    if user_diag:
+        lines.extend(["", "### Radar diagnosis steps（原文）", ""])
+        for i, item in enumerate(user_diag, start=1):
+            who = (item.added_by or "—").strip()
+            preview = item.text.strip().replace("\n", " ")
+            if len(preview) > 220:
+                preview = preview[:217] + "..."
+            lines.append(f"{i}. **{who}:** {preview}")
 
     if fails.needs_user_input:
         lines.extend(

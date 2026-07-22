@@ -30,6 +30,8 @@ Constraints from AGENTS.md still apply: offline-first defaults, no hardcoded pro
 
 Session state is ephemeral (in-memory / short-lived store), **not** a second knowledge graph. Durable FA knowledge still lands via operator ingest of `fa/` docs when desired.
 
+> **Amendment (2026-07-21, fa-session.md):** A session may start **unbound** (`radar_id = null`) when the user opens an FA investigation by symptom / part / net without a ticket. The user can **bind** a Radar id later in the same conversation (`radar://…` in a follow-up message); at that point `case_id` becomes `radar_id` and the external primary key is Radar as before. See [fa-session.md](../architecture/fa-session.md) entry C and `agents/fa_session.py:ensure_fa_session`.
+
 ### 2. Integration layer (not ingestion)
 
 ```text
@@ -51,7 +53,7 @@ never be answered from probabilistic VLM/OCR text. Any FA path that reaches a
 trace — the chat trace intercept today, or a future `agents/` FA supervisor via
 the read-only ToolBus (ADR 0008) — goes through
 `ConnectivityQuery.resolve_trace`, which returns a trace only when grounded on
-`cad_netlist` / `boardview` evidence and otherwise refuses (ADR 0009 §5). A
+`cad_netlist` evidence (BoardView `.brd` is advisory-only and no longer grounds a trace — see ADR 0013 §4) and otherwise refuses (ADR 0009 §5). A
 half-correct trace is worse than an explicit "insufficient" because FA
 conclusions are built on it.
 - Concrete backends live in `src/ee_wiki/integrations/` (stub by default).

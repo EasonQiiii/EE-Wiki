@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from ee_wiki.agents.roles import RolePack
 from ee_wiki.common.logging import get_logger
 from ee_wiki.protocols.agent import Finding
+from ee_wiki.retrieval.rewrite import ConversationTurn
 from ee_wiki.tools.bus import ToolBus
 from ee_wiki.tools.scope import ScopeEnvelope
 
@@ -46,6 +48,7 @@ class Specialist:
         project: str | None,
         build: str | None,
         max_tool_calls: int | None = None,
+        history: Sequence[ConversationTurn] | None = None,
     ) -> Finding:
         """Execute the role recipe and return a finding.
 
@@ -55,6 +58,7 @@ class Specialist:
             project: Scope project.
             build: Scope build.
             max_tool_calls: Optional override for this turn.
+            history: Optional prior turns (for ``fa_session_turn``).
 
         Returns:
             :class:`Finding` with markdown evidence or ``insufficient``.
@@ -65,6 +69,12 @@ class Specialist:
         sections: list[str] = [f"### {self.pack.display_name} (`{self.pack.id}`)"]
         calls = 0
         useful = 0
+        history_json: str | None = None
+        if history:
+            history_json = json.dumps(
+                [{"role": t.role, "content": t.content} for t in history],
+                ensure_ascii=False,
+            )
 
         for step in self.pack.recipe:
             if calls >= budget:
@@ -89,6 +99,9 @@ class Specialist:
                 if step.tool == "module_nets" and "module" not in args:
                     args["module"] = tokens.split()[0] if tokens else question
 
+            if step.tool == "fa_session_turn" and history_json:
+                args["history_json"] = history_json
+
             result = self._bus.call(
                 step.tool,
                 args,
@@ -99,12 +112,19 @@ class Specialist:
             if not result.ok:
                 sections.append(f"- `{step.tool}` error: {result.error}")
                 continue
+            if step.tool == "fa_session_turn" and "not applicable" in result.text.lower():
+                sections.append(f"- `{step.tool}`: skipped")
+                continue
             if self._looks_empty(result.text):
                 sections.append(f"- `{step.tool}`: no useful hits")
                 continue
             useful += 1
-            sections.append(f"#### Tool `{step.tool}`")
-            sections.append(self._preview(result.text))
+            if step.tool in ("fa_session_turn", "fa_start_checkin") and "## FA check-in" in result.text:
+                sections.append(result.text)
+                break
+            else:
+                sections.append(f"#### Tool `{step.tool}`")
+                sections.append(self._preview(result.text))
 
         insufficient = useful == 0
         if insufficient:

@@ -1,25 +1,36 @@
 # Agent runtime (V4 / ADR 0008)
 
-EE-Wiki chat uses a **Supervisor + ToolBus + config-driven specialists** when `agents.enabled` is true (default).
+EE-Wiki chat uses a **Supervisor + ToolBus + config-driven specialists** when `agents.enabled` is true (default) for **WikiMode**. **FaMode** is a case-centric **FaAgent** on the **same ToolBus** — Radar optional at entry (intent or `radar://`); see [fa-session.md](../architecture/fa-session.md).
 
-## Routing order (ADR 0012)
+## Dual-mode flow（目标）
 
-1. FA check-in / evidence (`帮我FA一下radar://…`, `rdar://…`, …) — chat
-   `pre_rag_gates()` once
-2. Authoritative connectivity / trace (CAD netlist / BoardView only) — same gates
-3. **Rules-first** role-pack keywords (`route_score_threshold`); if roles clear →
-   skip routing LLM
-4. Else local-LLM semantic route selects `TASK` + up to `max_roles_per_turn`
-   specialists (`fa`, `hw`, `power`, `pcb`, `si`, `mfg`)
-5. Specialists → fuse evidence → **hybrid RAG** (`RagService`) with citations;
-   empty evidence still falls through to retrieve (no evidence-only
-   `stream_direct`)
-6. No specialists → passthrough hybrid RAG with supervisor `TASK`
+```text
+Open WebUI → EE-Wiki /v1/chat/completions
+        │
+        ├─ FaMode  if radar:// | FA session bound | FA调查意图(LLM mode classify)
+        │     FaAgent → skills → ToolBus（Radar / Flames / trace / case…）
+        │     → EvidenceBundle → 生成（事实必须有 provenance）
+        │     无票：**FA（未绑定 Radar）：** <symptom>（一行可读头，scope 走不可见 marker）；有票后再 bind
+        │
+        └─ WikiMode（默认）
+              Supervisor → clarify | passthrough | hybrid RAG + citations
+```
 
-FA and connectivity remain deterministic hard gates; the LLM cannot bypass their
-ID or authority requirements. When the supervisor owns the turn,
-`generation.task_classification` is treated as off for that request
-(`task_owner=supervisor`). Legacy classify remains for `agents.enabled: false`.
+工具实现只维护一份；FaAgent / 未来 FbAgent = 不同 allowlist，不复制 handlers。
+
+施工单：[fa-agent-implementation-plan.md](../architecture/fa-agent-implementation-plan.md)。
+
+## WikiMode routing（ADR 0012 — Supervisor-first）
+
+1. **Supervisor** (always when `agents.enabled`) — `clarify` | `respond` | `passthrough` | `hybrid`
+2. **Rules-first** role-pack keywords (`route_score_threshold`); if roles clear → skip routing LLM
+3. Else local-LLM semantic route selects `TASK` + up to `max_roles_per_turn`
+   specialists (`radar`, `fa`, `hw`, `power`, `pcb`, `si`, `mfg`)
+4. Specialists → fuse evidence → **hybrid RAG** (`RagService`) with citations;
+   empty evidence still falls through to retrieve (no evidence-only `stream_direct`)
+5. No specialists → passthrough hybrid RAG with supervisor `TASK`
+
+FA check-in today still enters via Supervisor → `radar` role (migration toward FaAgent in [fa-session.md](../architecture/fa-session.md)). Authoritative connectivity remains ToolBus `trace_net` / `connector_pins` (ADR 0009). When the supervisor owns a Wiki turn, `generation.task_classification` is off (`task_owner=supervisor`). Legacy classify remains for `agents.enabled: false`.
 
 Look for `RequestTrace` log lines (`gate=`, `route_mode=`, `branch=`, `phase_ms=`)
 to verify which path ran.
@@ -82,17 +93,19 @@ Same stem as the schematic PDF, under `sch/` or `sch/cad/`:
 | File | Role |
 |------|------|
 | `*.net` (or KiCad / Altium companion) | Authoritative netlist (`cad_netlist`) |
-| `*.brd` | BoardView (`boardview`) |
+| `*.brd` | BoardView (`boardview`) — advisory reference only, not a trace source |
 
-Without these, chat/MCP/FA **refuse** pin–net answers instead of guessing (ADR 0009).
-PDF / OCR alone never counts as board-verified electrical truth.
+Without a CAD netlist, chat/MCP/FA **refuse** pin–net answers instead of guessing
+(ADR 0009). BoardView (`.brd`) is retained for net-membership / probe-point
+reference but never grounds a trace. PDF / OCR alone never counts as board-verified
+electrical truth.
 
 **Ingest path:** schematic PDF parse discovers companions → parses `.net` (generic
 line-oriented / light KiCad sexpr; Altium/KiCad project files are stubs) and
 `.brd` (Landrex BoardView) → merges into `*.connectivity.json` next to processed
 markdown when `write_sidecar: true`. Re-ingest after adding companions.
 
-`scripts/serve.py` (and API startup) logs **WARNING**s for missing `.net` / `.brd`,
+`scripts/serve.py` (and API startup) logs **WARNING**s for missing `.net`,
 unparsed netlists, missing sidecars, empty `sop/`, missing indexes, and FA Keynote
 template gaps — see `ee_wiki.api.startup_checks.warn_lab_readiness`.
 
@@ -114,9 +127,12 @@ template gaps — see `ee_wiki.api.startup_checks.warn_lab_readiness`.
 
 | Utterance | Expect |
 |-----------|--------|
-| `帮我FA一下radar://123456` | FA check-in stub (not a RAG essay) |
-| `trace net EDP_AUXP` (no companion) | Authoritative refusal |
-| `trace net <known net>` (with `.net` / `.brd`) | Authoritative pins / net answer |
-| `VDD_1V8 电源轨从哪里来` | power role evidence → grounded answer |
+| `帮我FA一下为什么U8600（logan p1）的IIC接口没有输出` | **FaMode unbound**（一行 `**FA（未绑定 Radar）：**` 头，非纯 wiki RAG，不再贴原始工具 JSON） |
+| `radar://101493937` | FaMode 有票 check-in（Scarif stub）；可无票会话上 bind |
+| `STM32F407 核心参数` | WikiMode（非 FA） |
+| `帮我看看` | WikiMode → `clarify`（或等价追问） |
+| `J1 第3脚连到哪` (no scope) | clarify 要 scope（Wiki 或 FA 内均可，勿静默瞎追网） |
+| `trace net EDP_AUXP` (no companion, with scope) | tool reject（权威不足） |
+| `VDD_1V8 电源轨从哪里来` | WikiMode → power → `hybrid` |
 | casual chat | passthrough RAG |
 | `agents.enabled: false` | legacy cascade |

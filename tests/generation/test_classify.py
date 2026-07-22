@@ -252,6 +252,20 @@ class TestClassifyFaMessage:
             == "stay"
         )
 
+    def test_question_kind(self, repo_root) -> None:
+        llm = MagicMock()
+        llm.generate_stream = None
+        llm.generate.return_value = "KIND: question"
+        assert (
+            classify_fa_message(
+                "radar里没有log吗",
+                radar_id="123",
+                llm=llm,
+                repo_root=repo_root,
+            )
+            == "question"
+        )
+
     def test_unrecognized_returns_none(self, repo_root) -> None:
         llm = MagicMock()
         llm.generate_stream = None

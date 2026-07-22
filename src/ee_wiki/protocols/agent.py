@@ -36,7 +36,7 @@ class SessionState:
 class SupervisorResult:
     """Outcome of one supervisor turn."""
 
-    kind: str  # passthrough | hybrid | fused | insufficient (fuse-internal)
+    kind: str  # passthrough | hybrid | clarify | respond | fused | insufficient (fuse-internal)
     markdown: str
     findings: tuple[Finding, ...] = ()
     roles_used: tuple[str, ...] = ()

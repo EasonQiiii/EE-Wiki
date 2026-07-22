@@ -64,3 +64,23 @@ def test_found_in_build_fallback() -> None:
     assert result.build == "p3"
     assert result.source == "found_in_build"
     assert result.confidence == "low"
+
+
+def test_title_alias_when_component_has_no_slug() -> None:
+    """Program tokens in the Radar title map when component name does not."""
+    from ee_wiki.integrations.scope import resolve_scope_from_problem
+    from ee_wiki.protocols.radar import RadarProblem
+
+    aliases = normalize_project_aliases({"Scarif": "ipad/logan"})
+    problem = RadarProblem(
+        radar_id="101493937",
+        title="Ruby,P0,Scarif flash erase issue",
+        component=RadarComponentRef(
+            id=1, name="B5xx HW Build FATP", version="P0"
+        ),
+    )
+    result = resolve_scope_from_problem(problem, project_aliases=aliases)
+    assert result.product == "ipad"
+    assert result.project == "logan"
+    assert result.build == "p0"
+    assert result.source in {"title_alias", "component_alias"}

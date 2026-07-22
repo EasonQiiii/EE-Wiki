@@ -1,11 +1,13 @@
 """Hybrid Supervisor router (ADR 0008 / ADR 0012).
 
-Post-gate routing order:
+Supervisor-first routing order:
 
-1. Explicit API task → role map
-2. Keyword / cheap role selection (rules-first)
-3. Semantic ``TASK + ROLES`` only when cheap route finds no roles
-4. Specialists → fuse → ``hybrid`` intent (chat owns RagService)
+1. FA session / Radar check-in → ``radar`` role (forced)
+2. Clarify when trace lacks scope or message is too vague
+3. Explicit API task → role map
+4. Keyword / cheap role selection (rules-first)
+5. Semantic ``TASK + ROLES`` when cheap route finds no roles
+6. Specialists → fuse → ``hybrid`` or ``respond`` (radar-only FA)
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Sequence
 
+from ee_wiki.agents.clarify import needs_scope_clarify, needs_vague_clarify
 from ee_wiki.agents.fuse import fuse_findings
 from ee_wiki.agents.roles import RolePack, load_all_roles
 from ee_wiki.agents.specialist import Specialist
@@ -20,6 +23,10 @@ from ee_wiki.common.config import AppConfig
 from ee_wiki.common.logging import get_logger
 from ee_wiki.connectivity.query import ConnectivityQuery
 from ee_wiki.generation.classify import AgentRoute, classify_agent_route
+from ee_wiki.integrations.fa_chat import (
+    fa_session_radar_id_from_history,
+    parse_fa_checkin_radar_id,
+)
 from ee_wiki.protocols.agent import Finding, SessionState, SupervisorResult
 from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.retrieval.rewrite import ConversationTurn
@@ -28,9 +35,28 @@ from ee_wiki.tools.context import ToolContext
 
 logger = get_logger(__name__)
 
+_FA_HEADER = "## FA check-in"
+
+
+def _fa_checkin_markdown(findings: list[Finding]) -> str | None:
+    """Return the first FA check-in block from radar findings (no fuse wrapper)."""
+    for finding in findings:
+        if finding.insufficient:
+            continue
+        idx = finding.markdown.find(_FA_HEADER)
+        if idx >= 0:
+            block = finding.markdown[idx:]
+            # Drop accidental duplicate check-in blocks in the same finding.
+            rest = block[len(_FA_HEADER) :]
+            dup = rest.find(_FA_HEADER)
+            if dup >= 0:
+                block = block[: len(_FA_HEADER) + dup]
+            return block.strip()
+    return None
+
 
 class Supervisor:
-    """Owns post-gate routing: cheap/semantic route, specialists, fuse intent."""
+    """Owns routing, specialists, fuse intent, and clarify responses."""
 
     def __init__(
         self,
@@ -75,25 +101,21 @@ class Supervisor:
         requested_task: str | None = None,
         cancel_event: threading.Event | None = None,
     ) -> SupervisorResult:
-        """Route one post-gate user question through specialists or passthrough.
-
-        FA and connectivity hard gates are owned by the chat layer
-        (:func:`ee_wiki.api.chat_pipeline.pre_rag_gates`); do not re-run them here.
+        """Route one user question through clarify, specialists, or passthrough.
 
         Args:
             question: Latest user utterance.
             product: Resolved product scope (TurnScope).
             project: Resolved project scope.
             build: Resolved build scope.
-            history: Prior conversation turns (unused for routing today).
+            history: Prior conversation turns.
             requested_task: Explicit prompt task supplied by the API caller.
             cancel_event: Optional cancellation signal for semantic routing.
 
         Returns:
-            :class:`SupervisorResult` with ``kind`` ``passthrough`` or ``hybrid``.
-            Chat maps both onto :class:`RagService` (ADR 0012).
+            :class:`SupervisorResult` with ``kind`` in
+            ``clarify | respond | passthrough | hybrid``.
         """
-        del history  # reserved for future dialog-aware routing
         state = SessionState(
             question=question, product=product, project=project, build=build
         )
@@ -101,11 +123,35 @@ class Supervisor:
         self.last_route_mode = "none"
         self.last_llm_calls = 0
 
-        route = self._route_question(
-            question,
-            requested_task=requested_task,
-            cancel_event=cancel_event,
-        )
+        forced_radar = self._force_radar(question, history)
+        if forced_radar:
+            self.last_route_mode = "rules"
+            route = AgentRoute(task="fa", roles=("radar",))
+        else:
+            scope_msg = needs_scope_clarify(
+                question, product=product, project=project, build=build
+            )
+            if scope_msg:
+                return SupervisorResult(
+                    kind="clarify",
+                    markdown=scope_msg,
+                    task="wiki",
+                )
+
+            route = self._route_question(
+                question,
+                requested_task=requested_task,
+                cancel_event=cancel_event,
+            )
+            if not route.roles:
+                vague = needs_vague_clarify(question)
+                if vague:
+                    return SupervisorResult(
+                        kind="clarify",
+                        markdown=vague,
+                        task=route.task,
+                    )
+
         selected = list(route.roles)
         if not selected:
             logger.info(
@@ -127,6 +173,7 @@ class Supervisor:
         )
         findings: list[Finding] = []
         tool_budget = agents_cfg.max_tool_calls
+        history_list = list(history) if history else None
 
         for role_id in selected:
             if state.steps >= agents_cfg.max_steps:
@@ -146,6 +193,7 @@ class Supervisor:
                     specialist.pack.max_tool_calls,
                     remaining,
                 ),
+                history=history_list,
             )
             findings.append(finding)
             state.findings.append(finding)
@@ -159,7 +207,17 @@ class Supervisor:
             project=project,
             build=build,
         )
-        # Always hybrid: empty evidence triggers RAG fallback in chat (ADR 0012).
+
+        fa_md = _fa_checkin_markdown(findings) if selected == ["radar"] else None
+        if fa_md:
+            return SupervisorResult(
+                kind="respond",
+                markdown=fa_md,
+                task=route.task,
+                findings=fused.findings,
+                roles_used=fused.roles_used,
+            )
+
         evidence = "" if fused.insufficient else fused.markdown
         return SupervisorResult(
             kind="hybrid",
@@ -169,6 +227,18 @@ class Supervisor:
             roles_used=fused.roles_used,
             insufficient=False,
         )
+
+    def _force_radar(
+        self,
+        question: str,
+        history: Sequence[ConversationTurn] | None,
+    ) -> bool:
+        """Return whether this turn must use the ``radar`` specialist."""
+        if not self._config.fa.enabled:
+            return False
+        if parse_fa_checkin_radar_id(question):
+            return True
+        return fa_session_radar_id_from_history(history) is not None
 
     def _route_question(
         self,
@@ -185,7 +255,6 @@ class Supervisor:
                 roles=self._roles_for_explicit_task(requested_task),
             )
 
-        # Cheap route first — skip semantic LLM when keywords are decisive.
         selected = tuple(self._select_roles(question))
         if selected:
             self.last_route_mode = "rules"
@@ -222,7 +291,7 @@ class Supervisor:
                 needle = kw.lower()
                 if needle and needle in lower:
                     score += 1
-                elif kw in question:  # case-sensitive CJK / acronyms
+                elif kw in question:
                     score += 1
             if score >= cfg.route_score_threshold:
                 scored.append((score, role_id))
@@ -234,7 +303,7 @@ class Supervisor:
         candidates = {
             "wiki": ("hw",),
             "debug": ("hw", "fa"),
-            "fa": ("fa",),
+            "fa": ("fa", "radar"),
             "design_review": ("pcb", "si"),
             "power": ("power",),
             "rules": ("hw",),
@@ -247,6 +316,8 @@ class Supervisor:
     @staticmethod
     def _task_for_roles(roles: tuple[str, ...]) -> str:
         """Choose a safe prompt task when keyword fallback selected roles."""
+        if "radar" in roles:
+            return "fa"
         if "fa" in roles:
             return "fa"
         if "power" in roles:
@@ -275,6 +346,8 @@ def open_supervisor(
         Ready :class:`Supervisor`.
     """
     ctx = tool_context or ToolContext.from_config(config)
+    if llm is not None:
+        ctx.llm = llm
     bus = open_tool_bus(
         ctx,
         timeout_seconds=config.agents.tool_timeout_seconds,

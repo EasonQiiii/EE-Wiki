@@ -26,7 +26,7 @@ Schematic PDF parsing depends on `ingestion.schematic_pdf.fidelity_mode`:
 
 | Mode | Models | When to use |
 |------|--------|-------------|
-| **`ocr_only` (default)** | none for vision — PyMuPDF OCR text only | FA / ingest speed; pin–net truth comes from netlist / `.brd` (ADR 0009) |
+| **`ocr_only` (default)** | none for vision — PyMuPDF OCR text only | FA / ingest speed; pin–net truth comes from CAD netlist (`.net` / KiCad / Altium); `.brd` is advisory reference only (ADR 0009) |
 | `vlm_plus_ocr` | `layoutlmv3-base` + `Qwen3-VL-*` | Optional schematic prose for RAG recall (slow) |
 
 Datasheet PDFs under `datasheet/` still use the datasheet VLM pipeline when pages are table/graph/mixed. Markdown / TXT need no models.
@@ -106,7 +106,7 @@ Supported formats (V1):
 | Folder | Formats |
 |--------|---------|
 | `note/`, `sop/`, `datasheet/`, etc. | `.md`, `.markdown`, `.txt`, `.pdf` (text + OCR), `.xlsx`, `.doc`, `.docx`, `.key`, `.numbers` (macOS) |
-| `sch/` | `.pdf` (schematic vision pipeline); optional same-stem companions: `.brd` (BoardView), `.net` / KiCad / Altium (netlist) — see ADR 0009 |
+| `sch/` | `.pdf` (schematic vision pipeline); optional same-stem companions: `.brd` (BoardView, advisory reference), `.net` / KiCad / Altium (netlist, authoritative) — see ADR 0009 |
 | `datasheet/` | `.pdf` (datasheet VLM pipeline when under `datasheet/`; prose PDF + OCR otherwise) |
 | `fa/` | `.md`, `.txt`, `.pdf`, `.doc`, `.docx` (failure analysis reports) |
 
@@ -371,7 +371,7 @@ Output merges per-page reports under one `# 电子图纸分析报告：{title}` 
 
 **V2 — per-page sidecar:** schematic ingest also writes a `pages` array in `.meta.json` (one entry per PDF page with that page's components/nets/interfaces). At index time the chunker attaches page-scoped metadata to each schematic chunk. Re-ingest existing `sch/` PDFs with `--force` to populate `pages`; then re-index.
 
-**ADR 0009 — connectivity map:** when enabled, schematic ingest also writes `{stem}.connectivity.json` next to the processed `.md`. Optional companions beside the PDF (or under `sch/cad/`) are merged by evidence priority: netlist → BoardView `.brd` → PDF geometry → OCR spatial. Missing companions are skipped (ingest still succeeds). Connectivity does **not** depend on VLM — `ocr_only` still builds the sidecar. Query via `GET /v1/schematic/connectivity/{net,pins,module-nets}` or MCP tools; answer-grade traces require `cad_netlist` / `boardview` (authoritative gate).
+**ADR 0009 — connectivity map:** when enabled, schematic ingest also writes `{stem}.connectivity.json` next to the processed `.md`. Optional companions beside the PDF (or under `sch/cad/`) are merged by evidence priority: netlist → BoardView `.brd` → PDF geometry → OCR spatial. Missing companions are skipped (ingest still succeeds). Connectivity does **not** depend on VLM — `ocr_only` still builds the sidecar. Query via `GET /v1/schematic/connectivity/{net,pins,module-nets}` or MCP tools; answer-grade traces require `cad_netlist` (authoritative gate) — BoardView `.brd` is advisory-only and no longer grounds a trace (ADR 0013 §4).
 
 ### Datasheet PDFs (`datasheet/`)
 

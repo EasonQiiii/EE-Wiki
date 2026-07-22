@@ -714,9 +714,9 @@ Version 3 (current)
 - Power Tree Analysis (heuristic rails / supplies)
 - Graph-aware prompts + optional `retrieval.graph_enrichment`
 
-Version 4
+Version 4 (current — landed)
 
-- Multi-Agent System
+- Multi-Agent System (Supervisor + ToolBus, ADR 0008; `agents.enabled` default true)
 
 Agents:
 

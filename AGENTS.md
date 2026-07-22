@@ -37,6 +37,62 @@ If a change crosses these lines, stop and propose an ADR instead of merging logi
 - Answers must **explicitly distinguish** `project` / `build` and knowledge layer (`build` vs project `common` vs `global`) — see README [Retrieval Scope](README.md#retrieval-scope) and `prompts/_shared/scope_rules.md`.
 - When context is insufficient, return an explicit “insufficient knowledge” response — never invent part numbers, nets, or pin assignments.
 
+### Precision over latency
+
+- Prefer correct, refuse, or “insufficient” over a fast but invented answer.
+- Latency is acceptable; hallucinated nets, scopes, FA conclusions, or connectivity paths are not.
+- Use local LLM + `prompts/` for **semantic** intent (trace vs FA vs wiki; extracting net/refdes **including bus indices** such as `NAME<1>`).
+- Authoritative connectivity answers must be **exact** sidecar hits (or an explicit refusal with candidates). Never substring-expand a bus base name into `NAME<0>…NAME<n>`, and never rewrite pin lists into invented signal paths via hybrid RAG prose.
+
+#### Regex vs LLM (hard boundary)
+
+| Regex **may** do (structural tokens) | Regex **must not** do (semantic debt) |
+|--------------------------------------|----------------------------------------|
+| `rdar://` / Radar ids, URLs, path segments | Intent classification (trace vs chitchat, FA vs wiki, vague clarify) |
+| Own-output markdown headers (FA check-in / unbound) | Peeling net/refdes **meaning** from natural language (esp. bus `NAME<1>`) |
+| Designator / voltage **shapes** once a token is known | Judging log/doc lines as PASS vs FAIL / failure-mode semantics |
+| Markdown / citation / figure structural parse | FA turn verbs (“开案”, “下一步”, “下载 vs 看内容”) as the sole router |
+| Config-driven scope **alias** string match (after TurnScope lock) | Keyword lists that preempt an existing LLM classifier |
+
+Repo scale (audit snapshot): ~100+ `re.compile` / `re.search` sites; **~8 groups / ~14 sites** are semantic and must migrate to LLM + `prompts/`. Do not add new semantic regex gates.
+
+#### Semantic regex debt — must modify
+
+Migrate in this order unless an ADR says otherwise. Prefer structured LLM lines (`KIND:` / `NET:` / `MODE:`) with golden tests on real Chinese+EN utterances.
+
+| Pri | Location | Current regex job | Failure mode | Target |
+|-----|----------|-------------------|--------------|--------|
+| **1** | `connectivity/intent.py` — `_CONNECT_PATTERNS`, `detect_trace_intent` | Full-trace vs chitchat; promote net | Chinese `\btrace\b` boundary; paraphrase miss; bus index stripped when capture wrong | LLM: `KIND: net_trace\|pins` + `NET:` (keep `NAME<1>`) + optional `PIN:`; keep `_NET_TOKEN` / `_REFDES_TOKEN` only as **candidate extractors**, not sole decider |
+| **1** | `agents/fa_mode.py` — `_WIKI_CONNECTIVITY`, `_FA_FAILURE_CUES` | FA vs Wiki before `classify_fa_mode` | Preempts existing LLM gate; wiki trace ↔ FA misroute | Keep structural fast path only (`rdar://`, own FA headers); ambiguous → `classify_fa_mode` alone |
+| **2** | `integrations/radar/attachments.py` — `_PASS_LINE`, `_FAIL_LINE` | Line PASS/FAIL | Non-literal / Chinese / “erase ok but verify not FF” miss | LLM line verdict + summary for “分析 log” |
+| **2** | `integrations/radar/attachments.py` — `_DOWNLOAD_INTENT`, `_CONTENT_INTENT` | Download vs read-content | Phrase drift | LLM FA action / slot classify |
+| **2** | `integrations/fa_chat.py` — `_CHECKIN_VERB`, `_EVIDENCE_MARKERS`, `_ATTACHMENT_LINE`, `_ABOUT_DIAGNOSIS_STEPS`, inline log/证据/下一步 | FA turn routing | Synonym miss | LLM `KIND:` for FA turns (already partially started) |
+| **3** | `retrieval/query_intent.py` — `is_board_interface_pin_query` | Board pin vs datasheet pin | Keyword drift; “pin” in datasheet Q | LLM `query_kind` |
+| **3** | `agents/clarify.py` — `_VAGUE` / `needs_vague_clarify` | Underspecified utterance | “帮我看看这个”+attachment false vague | LLM + history: enough info? |
+| **3** | `retrieval/index_inventory.py` — project/build count patterns | Inventory questions | Paraphrase miss | LLM `inventory{build\|project}` |
+| **4** | `ingestion/keywords.py` — `_FAILURE_MODE_RE`, `_SYMPTOM_RE` | FA keyword tags | EN-hyphen only; CN symptoms miss | Offline ingest LLM tags (batch OK) |
+
+#### Keep as regex (do not “LLM-wash”)
+
+- Radar id / URL / path: e.g. `integrations/fa_chat.py`, `integrations/paths.py`, tool argument parses.
+- Own markdown headers: `fa_mode.py` bound/unbound headers, `fa_session.py` symptom/scope lines.
+- Designator/voltage shapes: `graph/power.py`, shape filters in `ingestion/keywords.py`.
+- Chunker / citation / figure / datasheet structural parse.
+- Scope alias maps in `scope_extract.py` / `scope_from_question.py` / `project_aliases.py` (config-driven, read-only after lock).
+- **TurnScope locks once at chat** (ADR 0012 §6; see **ADR 0013**): `merge_scope_from_question` infers at most once at the chat entry, then locks. `ensure_fa_session`, ToolBus handlers, and all downstream paths **read** the locked scope via `ctx.resolve_scope()` and **must not** perform a second NL inference for the same turn. Header-parse inheritance from a prior FA `**EE-Wiki scope:**` line is allowed only when the caller left that axis unset (DialogScope, not NL inference).
+
+#### Borderline
+
+- `connectivity/intent.py` `_NET_TOKEN` / `_REFDES_TOKEN`: keep for **deterministic candidate spans** used in exact sidecar lookup; LLM chooses **which** candidate is the target and whether `NAME<1>` was intended.
+- Schematic PDF OCR / VLM path: vision LLM already upstream; regex as post-filter for token shapes is OK.
+
+#### Recommended follow-up work
+
+1. ADR (e.g. **0013**) — codify “regex = structural tokens only” + this inventory as the migration checklist.
+2. Refactor `detect_trace_intent` → LLM structured output (candidates from net/refdes regex optional).
+3. Strip `_WIKI_CONNECTIVITY` / `_FA_FAILURE_CUES` so `classify_fa_mode` owns FA/Wiki.
+4. Replace attachment PASS/FAIL and download/content intents with FA semantic classify (fixes “分析 log” root).
+
 ### Offline first
 
 - No required cloud APIs, telemetry, or external model hosts.
@@ -133,7 +189,7 @@ Apply to all Python under `src/` and `tests/`:
 - Explicit error types from `common/errors.py`; catch narrowly, log with context, re-raise or map to API errors.
 - Prefer composition and `typing.Protocol` over deep inheritance.
 - Prefer configuration (`config/default.yaml`) over hardcoded constants.
-- Prefer local LLM + `prompts/` for **semantic** intent (evidence vs chat, task/role route); reserve regex for **structural** tokens (Radar ids, URLs, path segments).
+- Prefer local LLM + `prompts/` for **semantic** intent; reserve regex for **structural** tokens only. Full boundary + migration inventory: §2 **Precision over latency**.
 - Keep functions focused; extract when a file exceeds ~300 lines or a class has more than one reason to change.
 
 ### Public function checklist
@@ -292,6 +348,7 @@ When your change affects structure or behavior, update the minimal set:
 | Pipeline or data contract | `docs/architecture/data-flow.md` |
 | New HTTP endpoint | `docs/architecture/api-overview.md`, `docs/usage/mcp.md` (V2 tools) |
 | Technology choice | New file under `docs/adr/` |
+| Regex vs LLM semantic boundary / migration checklist | this file §2 **Precision over latency**; follow-up ADR when migrating A1–A3 |
 | User-facing vision shift | `README.md` (only when asked) |
 
 ---
@@ -366,4 +423,4 @@ V1 baseline is decided — do not re-litigate without a new ADR:
 
 ---
 
-*Last updated: V3 P5 — graph HTTP/MCP suite, graph-aware prompts, optional retrieval↔graph enrichment (V3 wrap-up).*
+*Last updated: Precision-over-latency + regex/LLM debt inventory (A1–A3 migrate; structural regex keep).*

@@ -204,7 +204,7 @@ def test_trace_net_handler(app_config: AppConfig, monkeypatch: pytest.MonkeyPatc
         "query": "EDP_AUXP",
         "kind": "trace_net",
         "found": True,
-        "pins": [{"refdes": "U1", "pin": "1", "net": "EDP_AUXP", "evidence": "boardview"}],
+        "pins": [{"refdes": "U1", "pin": "1", "net": "EDP_AUXP", "evidence": "cad_netlist"}],
         "pin_count": 1,
         "documents": [],
         "limitations": "test",

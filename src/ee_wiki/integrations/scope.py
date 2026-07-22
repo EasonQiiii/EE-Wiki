@@ -175,6 +175,9 @@ def resolve_scope_from_problem(
 ) -> ScopeResolution:
     """Resolve scope from a full :class:`RadarProblem` snapshot.
 
+    Priority: user override → component alias → **title / configuration
+    summary** alias match → foundInBuild heuristics → unknown.
+
     Args:
         problem: Normalized Radar problem.
         project_aliases: Alias → canonical project (or product/project) map.
@@ -189,7 +192,7 @@ def resolve_scope_from_problem(
         found_in_builds=problem.found_in_builds,
         configuration_summary=problem.configuration_summary,
     )
-    return resolve_scope_from_component(
+    resolved = resolve_scope_from_component(
         problem.component,
         project_aliases=project_aliases,
         hint=hint,
@@ -197,6 +200,30 @@ def resolve_scope_from_problem(
         user_project=user_project,
         user_build=user_build,
     )
+    if resolved.project is not None:
+        return resolved
+
+    # Component name often has no EE-Wiki slug (e.g. "B5xx HW Build FATP").
+    # Titles like "Ruby,P0,Scarif …" still carry program tokens — scan them.
+    aliases = project_aliases or {}
+    title = (problem.title or "").strip()
+    if title:
+        product, project = match_scope_in_text(title, aliases)
+        build = resolved.build
+        if build is None:
+            build_match = _BUILD_TOKEN.search(title)
+            if build_match:
+                build = normalize_build(build_match.group("build"))
+        if project is not None:
+            return ScopeResolution(
+                product=product,
+                project=project,
+                build=build,
+                source="title_alias",
+                confidence="high" if product and project and build else "medium",
+                notes=f"Matched project alias in title {title!r}",
+            )
+    return resolved
 
 
 # Re-export helpers used by tests and callers.

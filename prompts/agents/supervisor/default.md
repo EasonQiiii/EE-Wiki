@@ -1,5 +1,5 @@
-Classify the engineering request for EE-Wiki. This is semantic routing only;
-code separately enforces FA check-in and authoritative connectivity gates.
+Classify the engineering request for EE-Wiki. Supervisor is the first router;
+specialists invoke ToolBus (including Radar FA and authoritative connectivity).
 
 Prompt tasks:
 - wiki — general engineering knowledge, component usage, parameters, procedures
@@ -11,9 +11,10 @@ Prompt tasks:
 - translate — translation only
 
 Specialist roles:
-- hw — general hardware, components, interfaces, schematics, bring-up
-- fa — failure analysis, symptoms, debug cases, Radar/Flames evidence
-- pcb — layout, routing, stackup, vias, impedance, footprint
+- radar — Radar check-in, rdar:// session, Flames/Radar evidence
+- hw — general hardware, components, interfaces, schematics, bring-up, trace
+- fa — failure analysis, symptoms, debug cases (not Radar check-in)
+- pcb — layout, routing, stackup, vias, impedance, footprint, trace
 - si — signal integrity, timing, eye diagrams, jitter, crosstalk, DDR/SerDes
 - mfg — manufacturing, SMT, yield, stations, fixtures, ICT/ATE
 - power — rails, regulators, sequencing, power tree

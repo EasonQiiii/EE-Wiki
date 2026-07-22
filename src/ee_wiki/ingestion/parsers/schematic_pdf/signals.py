@@ -51,6 +51,7 @@ _CAD_MODULE_NOTE = (
 _BOARDVIEW_MODULE_NOTE = (
     "> 以下网络名来自伴随 BoardView（.brd）引脚表（evidence=boardview）；"
     "为板级逻辑连通而非铜皮走线；引脚序号请对照原理图 / boardview。"
+    "BoardView 仅作参考，不用于追网（权威追网以 CAD netlist 为准）。"
 )
 
 

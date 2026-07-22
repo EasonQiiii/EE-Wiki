@@ -118,7 +118,7 @@ Section key = `chunk_id` with trailing `__wNN` removed.
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `retrieval.expand_sections` | `true` | Merge sibling chunks before prompt assembly |
-| `retrieval.top_k_final` | `5` | Number of chunk *hits* before section merge |
+| `retrieval.top_k_final` | `8` | Number of chunk *hits* before section merge |
 
 Why both chunking and expansion?
 
@@ -151,7 +151,7 @@ The generator sees **question + history + these blocks only** — no direct inde
 
 After generation, citations are enriched with public URLs (config: `api.public_base_url`):
 
-- `url` → `GET /v1/sources/{processed-path}#{section}` opens the processed document
+- `url` → `GET /v1/raw/{raw-path}` **downloads the original source document** (citation provenance; the processed Markdown mirror is still served at `GET /v1/sources/{processed-path}`)
 - `images[]` → `GET /v1/assets/{processed-path}` serves images referenced in the chunk Markdown
 
 Inline ``[N]`` markers stay in the LLM answer as plain text. Chat completions also return an Open WebUI-compatible ``sources`` array so the UI can render clickable citation chips.

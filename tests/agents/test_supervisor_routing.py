@@ -20,8 +20,9 @@ from ee_wiki.tools.bus import ToolBus
 
 def test_load_shipped_roles(repo_root: Path) -> None:
     roles = load_all_roles(repo_root / "config" / "agents" / "roles")
-    assert set(roles) >= {"fa", "hw", "power", "pcb", "si", "mfg"}
+    assert set(roles) >= {"radar", "fa", "hw", "power", "pcb", "si", "mfg"}
     assert "engineering_search" in roles["hw"].tools
+    assert "fa_session_turn" in roles["radar"].tools
 
 
 def test_role_rejects_banned_tool(tmp_path: Path) -> None:
@@ -191,3 +192,44 @@ def test_supervisor_passthrough_when_no_keywords(repo_root: Path) -> None:
     result = sup.handle("hello what time is it")
     assert result.kind == "passthrough"
     assert result.task == "wiki"
+
+
+def test_supervisor_forces_radar_on_checkin(repo_root: Path) -> None:
+    config = load_config(repo_root=repo_root)
+    roles = load_all_roles(config.agents_roles_dir)
+    bus = MagicMock(spec=ToolBus)
+    bus.call.return_value = MagicMock(
+        ok=True,
+        text="## FA check-in\n\nRadar **123456** stub summary.",
+        error=None,
+    )
+    sup = Supervisor(config, bus, roles)
+    result = sup.handle("帮我FA一下radar://123456")
+    assert result.kind == "respond"
+    assert "FA check-in" in result.markdown
+    assert "Agent evidence" not in result.markdown
+    assert result.markdown.count("FA check-in") == 1
+    assert sup.last_route_mode == "rules"
+    bus.call.assert_called_once()
+
+
+def test_supervisor_clarify_vague(repo_root: Path) -> None:
+    config = load_config(repo_root=repo_root)
+    roles = load_all_roles(config.agents_roles_dir)
+    bus = MagicMock(spec=ToolBus)
+    sup = Supervisor(config, bus, roles)
+    result = sup.handle("帮我看看")
+    assert result.kind == "clarify"
+    assert result.markdown
+    bus.call.assert_not_called()
+
+
+def test_supervisor_clarify_trace_without_scope(repo_root: Path) -> None:
+    config = load_config(repo_root=repo_root)
+    roles = load_all_roles(config.agents_roles_dir)
+    bus = MagicMock(spec=ToolBus)
+    sup = Supervisor(config, bus, roles)
+    result = sup.handle("J1 第3脚连到哪")
+    assert result.kind == "clarify"
+    assert "product" in result.markdown.lower() or "project" in result.markdown
+    bus.call.assert_not_called()

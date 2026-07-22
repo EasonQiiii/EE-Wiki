@@ -102,6 +102,28 @@ class RadarBackend(Protocol):
         """List attachment and picture metadata for ``radar_id``."""
         ...
 
+    def download_attachment(
+        self,
+        radar_id: str,
+        file_name: str,
+        *,
+        dest_path: Path,
+    ) -> Path:
+        """Download one attachment by file name into ``dest_path``.
+
+        Stub backends may write a synthetic placeholder. Live backends fetch
+        bytes from Radar.
+
+        Args:
+            radar_id: Target problem id.
+            file_name: Exact ``fileName`` as listed on the problem.
+            dest_path: Local file path to write (parent dirs created).
+
+        Returns:
+            ``dest_path`` after a successful write.
+        """
+        ...
+
     def add_diagnosis(
         self,
         radar_id: str,

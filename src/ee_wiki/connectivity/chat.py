@@ -15,10 +15,11 @@ from ee_wiki.connectivity.query import ConnectivityQuery
 
 _NO_SIDECAR = (
     "**无法追踪连接（缺少权威连接数据）**\n\n"
-    "当前范围没有可用的 `*.connectivity.json` 侧车（CAD netlist / BoardView）。"
+    "当前范围没有可用的 `*.connectivity.json` 侧车（CAD netlist）。"
+    "BoardView（`.brd`）仅作参考，不作为权威追网依据。"
     "原理图 PDF 的 VLM/OCR 文本不足以可靠追踪连接关系，为避免给失效分析提供"
     "错误依据，这里不返回任何 trace。\n\n"
-    "请为该原理图补充 CAD netlist（`.net` / KiCad）或 BoardView（`.brd`）"
+    "请为该原理图补充 CAD netlist（`.net` / KiCad / Altium）"
     "companion 后重新 ingest，或直接在板上确认。"
 )
 
@@ -53,19 +54,40 @@ def _format_documents(documents: list[dict]) -> str:
 
 def _format_found(intent: TraceIntent, result: dict) -> str:
     pins = list(result.get("pins") or [])
+    evidence_tags = sorted(
+        {
+            str(p.get("evidence") or "")
+            for p in pins
+            if p.get("evidence")
+        }
+    )
     if intent.kind == "net":
         resolved = result.get("resolved_net") or intent.query
-        header = f"**Net `{resolved}` 连接（board-verified）**"
+        header = f"**Net `{resolved}` — pin list (board-verified)**"
     else:
         resolved = result.get("resolved_refdes") or intent.query
-        header = f"**`{resolved}` 引脚连接（board-verified）**"
+        header = f"**`{resolved}` — pin list (board-verified)**"
         if intent.pin:
-            pins = [p for p in pins if str(p.get("pin", "")).upper() == intent.pin.upper()] or pins
+            pins = [
+                p
+                for p in pins
+                if str(p.get("pin", "")).upper() == intent.pin.upper()
+            ] or pins
     table = _format_pins_table(pins) if pins else "_(no pin bindings)_"
     limitations = result.get("limitations", "")
     docs = _format_documents(result.get("documents") or [])
+    evidence_line = (
+        f"\n\n**Evidence tags:** {', '.join(f'`{t}`' for t in evidence_tags)}"
+        if evidence_tags
+        else ""
+    )
+    disclaimer = (
+        "\n\n_同一 net 上的 pin 列表，不是有向信号路径。"
+        "禁止把上表拼成「A 经 B 到 C」的故事；"
+        "模块页码 / 接口叙事若不在上表 evidence 中，一律不算。_"
+    )
     tail = f"\n\n> {limitations}" if limitations else ""
-    return f"{header}\n\n{table}{docs}{tail}"
+    return f"{header}\n\n{table}{evidence_line}{docs}{disclaimer}{tail}"
 
 
 def answer_trace_question(
@@ -108,10 +130,18 @@ def answer_trace_question(
     )
     if result.get("authority") == "insufficient":
         reason = (
-            f"仅在几何/OCR 层（pdf_geometry / ocr_spatial）找到 `{intent.query}` 的"
-            "线索，没有 CAD netlist / BoardView 级别的验证数据。"
+            f"仅在几何/OCR 层（pdf_geometry / ocr_spatial）或 BoardView 参考层找到 "
+            f"`{intent.query}` 的线索，没有 CAD netlist 级别的验证数据"
+            "（BoardView 仅作参考，不用于追网）。"
         )
         return _refusal(reason)
+    if result.get("error") and not result.get("found"):
+        candidates = result.get("candidates") or []
+        extra = ""
+        if candidates:
+            listed = ", ".join(f"`{c}`" for c in candidates[:12])
+            extra = f"\n\n可选网络：{listed}"
+        return _refusal(f"{result['error']}{extra}")
     if not result.get("found"):
         return _refusal(
             f"在权威连接侧车中未找到 `{intent.query}`（net/designator 不存在或范围不匹配）。"

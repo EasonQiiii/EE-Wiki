@@ -221,6 +221,35 @@ def _build_registry() -> dict[str, Callable[[ToolContext, dict[str, Any]], str]]
             page=a.get("page"),
         )
 
+    def fa_start_checkin(ctx: ToolContext, a: dict[str, Any]) -> str:
+        return handlers_mod.fa_start_checkin(
+            ctx,
+            str(a.get("query") or ""),
+            product=a.get("product"),
+            project=a.get("project"),
+            build=a.get("build"),
+        )
+
+    def fa_session_turn(ctx: ToolContext, a: dict[str, Any]) -> str:
+        return handlers_mod.fa_session_turn(
+            ctx,
+            str(a.get("query") or ""),
+            product=a.get("product"),
+            project=a.get("project"),
+            build=a.get("build"),
+            history_json=a.get("history_json"),
+        )
+
+    def radar_get_problem(ctx: ToolContext, a: dict[str, Any]) -> str:
+        return handlers_mod.radar_get_problem(ctx, str(a.get("query") or ""))
+
+    def radar_download_attachment(ctx: ToolContext, a: dict[str, Any]) -> str:
+        return handlers_mod.radar_download_attachment(
+            ctx,
+            str(a.get("query") or ""),
+            radar_id=a.get("radar_id"),
+        )
+
     return {
         "engineering_search": engineering_search,
         "query_schematic": query_schematic,
@@ -238,6 +267,10 @@ def _build_registry() -> dict[str, Callable[[ToolContext, dict[str, Any]], str]]
         "trace_net": trace_net,
         "connector_pins": connector_pins,
         "module_nets": module_nets,
+        "fa_start_checkin": fa_start_checkin,
+        "fa_session_turn": fa_session_turn,
+        "radar_get_problem": radar_get_problem,
+        "radar_download_attachment": radar_download_attachment,
     }
 
 

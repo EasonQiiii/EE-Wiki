@@ -124,3 +124,97 @@ def test_trace_net_missing(tmp_path: Path) -> None:
     result = cq.trace_net("NO_SUCH_NET", product="iphone", project="logan", build="p1")
     assert result["found"] is False
     assert result["pins"] == []
+
+
+def _write_bus_sidecar(path: Path) -> None:
+    connectivity = SchematicConnectivity(
+        source_file="data/raw/ipad/logan/p1/sch/board.pdf",
+        companions=CompanionManifest(boardview="board.brd"),
+        sources_used=["boardview"],
+        nets={
+            "DP_TBTSNK1_ML_C_N<0>": [
+                PinNetBinding("C2831", "1", "DP_TBTSNK1_ML_C_N<0>", "boardview"),
+                PinNetBinding("U9750", "3", "DP_TBTSNK1_ML_C_N<0>", "boardview"),
+            ],
+            "DP_TBTSNK1_ML_C_N<1>": [
+                PinNetBinding("C2833", "1", "DP_TBTSNK1_ML_C_N<1>", "boardview"),
+                PinNetBinding("U9750", "4", "DP_TBTSNK1_ML_C_N<1>", "boardview"),
+            ],
+            "DP_TBTSNK1_ML_C_N<2>": [
+                PinNetBinding("C2835", "1", "DP_TBTSNK1_ML_C_N<2>", "boardview"),
+            ],
+        },
+        parts={},
+        pages=[],
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(connectivity.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def test_trace_net_bus_index_exact_only(tmp_path: Path) -> None:
+    """Asking for ``NAME<1>`` must not dump ``NAME<0>``…``NAME<2>``."""
+    processed = tmp_path / "processed"
+    _write_bus_sidecar(
+        processed / "ipad" / "logan" / "p1" / "sch" / "board.connectivity.json"
+    )
+    cq = open_connectivity_query(
+        processed_dir=processed,
+        layout=_layout(processed),
+    )
+    result = cq.trace_net(
+        "DP_TBTSNK1_ML_C_N<1>",
+        product="ipad",
+        project="logan",
+        build="p1",
+    )
+    assert result["found"] is True
+    assert result["resolved_net"] == "DP_TBTSNK1_ML_C_N<1>"
+    assert result["match"] == "exact"
+    nets = {p["net"] for p in result["pins"]}
+    assert nets == {"DP_TBTSNK1_ML_C_N<1>"}
+    assert {p["refdes"] for p in result["pins"]} == {"C2833", "U9750"}
+
+
+def test_trace_net_wrong_bus_index_refuses(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write_bus_sidecar(
+        processed / "ipad" / "logan" / "p1" / "sch" / "board.connectivity.json"
+    )
+    cq = open_connectivity_query(
+        processed_dir=processed,
+        layout=_layout(processed),
+    )
+    result = cq.trace_net(
+        "DP_TBTSNK1_ML_C_N<9>",
+        product="ipad",
+        project="logan",
+        build="p1",
+    )
+    assert result["found"] is False
+    assert result["pins"] == []
+    assert "DP_TBTSNK1_ML_C_N<1>" in (result.get("candidates") or [])
+    assert "No exact net" in (result.get("error") or "")
+
+
+def test_trace_net_bare_bus_base_refuses_without_index(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write_bus_sidecar(
+        processed / "ipad" / "logan" / "p1" / "sch" / "board.connectivity.json"
+    )
+    cq = open_connectivity_query(
+        processed_dir=processed,
+        layout=_layout(processed),
+    )
+    result = cq.trace_net(
+        "DP_TBTSNK1_ML_C_N",
+        product="ipad",
+        project="logan",
+        build="p1",
+    )
+    assert result["found"] is False
+    assert result["match"] == "ambiguous_bus"
+    assert result["pins"] == []
+    assert len(result.get("candidates") or []) >= 2

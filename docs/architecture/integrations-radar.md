@@ -134,7 +134,9 @@ Writes **must** refuse when `confirm` is false (draft-only path returns preview 
 | `stub` | Default; CI; no Apple network |
 | `radarclient` | Host has Kerberos ticket + `radarclient` importable; implemented in `integrations/radar/client.py` |
 
-Stub returns synthetic problems so FA session UX can be developed offline. Live mapping is covered by `integrations/radar/map_problem.py`.
+**Stub fixture:** offline copy of lab sample **`rdar://101493937`** (`Ruby,P0,Scarif flash erase issue` — flash erase / standby / `pwr_state set factory`, real attachment names from `radar.log`). Prefer that id in Open WebUI smoke. Other radar ids reuse the same narrative; `fa.radar.stub_component_*` only remaps component for non-canonical ids (EE-Wiki scope tests).
+
+Live mapping is covered by `integrations/radar/map_problem.py`.
 
 ## Security
 

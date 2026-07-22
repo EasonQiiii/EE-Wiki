@@ -825,3 +825,163 @@ def module_nets(
             page=page,
         )
     )
+
+
+def fa_start_checkin(
+    ctx: ToolContext,
+    query: str,
+    *,
+    product: str | None = None,
+    project: str | None = None,
+    build: str | None = None,
+) -> str:
+    """Start or refresh an FA check-in for a Radar id in ``query``.
+
+    Args:
+        ctx: Tool context (``config``; optional ``llm`` for Radar extract).
+        query: User text containing a Radar id or check-in intent.
+        product: Optional scope product.
+        project: Optional scope project.
+        build: Optional scope build.
+
+    Returns:
+        Check-in markdown summary.
+    """
+    from ee_wiki.integrations.fa_chat import parse_fa_checkin_radar_id
+    from ee_wiki.integrations.fa_tools import fa_start_checkin_markdown
+
+    rid = parse_fa_checkin_radar_id(query)
+    if rid is None:
+        return (
+            "No Radar id found in query. Use `rdar://problem/101493937`, "
+            "`radar://101493937`, or `new checkin rdar://12345678`."
+        )
+    product, project, build = ctx.resolve_scope(product, project, build)
+    llm = getattr(ctx, "llm", None)
+    return fa_start_checkin_markdown(
+        ctx.config,
+        rid,
+        user_product=product,
+        user_project=project,
+        user_build=build,
+        llm=llm,
+    )
+
+
+def fa_session_turn(
+    ctx: ToolContext,
+    query: str,
+    *,
+    product: str | None = None,
+    project: str | None = None,
+    build: str | None = None,
+    history_json: str | None = None,
+) -> str:
+    """Handle one FA session turn (check-in, locked session, evidence paste).
+
+    Args:
+        ctx: Tool context.
+        query: Current user message.
+        product: Optional scope product.
+        project: Optional scope project.
+        build: Optional scope build.
+        history_json: Optional JSON list of ``{role, content}`` prior turns.
+
+    Returns:
+        Markdown when handled on FA path; otherwise a short not-applicable note.
+    """
+    import json
+
+    from ee_wiki.integrations.fa_tools import fa_handle_turn
+    from ee_wiki.retrieval.rewrite import ConversationTurn
+
+    history: list[ConversationTurn] = []
+    if history_json:
+        try:
+            raw = json.loads(history_json)
+            if isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, dict):
+                        role = str(item.get("role", ""))
+                        content = str(item.get("content", ""))
+                        if role in ("user", "assistant") and content.strip():
+                            history.append(
+                                ConversationTurn(role=role, content=content.strip())
+                            )
+        except json.JSONDecodeError:
+            pass
+
+    product, project, build = ctx.resolve_scope(product, project, build)
+    llm = getattr(ctx, "llm", None)
+    reply = fa_handle_turn(
+        ctx.config,
+        query,
+        history or None,
+        user_product=product,
+        user_project=project,
+        user_build=build,
+        llm=llm,
+    )
+    if reply is None:
+        return "FA session turn not applicable for this message."
+    return reply
+
+
+def radar_get_problem(
+    ctx: ToolContext,
+    query: str,
+) -> str:
+    """Fetch Radar title/description/diagnosis snapshot for ``query``.
+
+    Args:
+        ctx: Tool context.
+        query: Text containing a Radar id.
+
+    Returns:
+        Markdown Radar snapshot or error message.
+    """
+    from ee_wiki.integrations.fa_chat import parse_fa_checkin_radar_id
+    from ee_wiki.integrations.fa_tools import radar_get_problem_markdown
+
+    rid = parse_fa_checkin_radar_id(query)
+    if rid is None:
+        import re
+
+        match = re.search(r"(\d{5,})", query)
+        if not match:
+            return "No Radar id found in query."
+        rid = match.group(1)
+    return radar_get_problem_markdown(ctx.config, rid)
+
+
+def radar_download_attachment(
+    ctx: ToolContext,
+    query: str,
+    *,
+    radar_id: str | None = None,
+) -> str:
+    """Materialize Radar attachment(s) and return markdown download links.
+
+    Args:
+        ctx: Tool context.
+        query: User text naming a file or shorthand (e.g. MLB_1&2).
+        radar_id: Optional explicit Radar id; otherwise parsed from ``query``.
+
+    Returns:
+        Markdown with ``/v1/cache/…`` links.
+    """
+    from ee_wiki.integrations.fa_chat import parse_fa_checkin_radar_id
+    from ee_wiki.integrations.radar.attachments import (
+        format_attachment_download_markdown,
+    )
+
+    rid = radar_id or parse_fa_checkin_radar_id(query)
+    if rid is None:
+        import re
+
+        match = re.search(r"(\d{5,})", query)
+        if not match:
+            return "No Radar id found; open an FA session or include rdar://…"
+        rid = match.group(1)
+    return format_attachment_download_markdown(ctx.config, rid, query)
+

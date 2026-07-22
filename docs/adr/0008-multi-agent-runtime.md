@@ -206,11 +206,12 @@ Explicitly **not** decided or delivered by accepting this ADR alone:
 5. Optional HTTP route for orchestrated chat (document in `docs/architecture/api-overview.md` when added) — chat uses `/v1/chat/completions` behind `agents.enabled`
 6. Amend this ADR only if introducing agent write-back, debate default, or a second orchestration backend
 7. ~~Add local-LLM semantic task/role routing~~ — validated `TASK + ROLES` when
-   needed; deterministic FA/connectivity gates and specialist recipes remain
-   code-enforced. A free-form LLM tool planner is still out of scope.
-   **Amended by [ADR 0012](0012-chat-pipeline-grounding.md):** routing is
-   rules-first; semantic LLM only on ambiguity; knowledge answers must go through
-   hybrid RAG with citations (chat owns `RagService`, not Supervisor).
+   needed; FA/connectivity authority via ToolBus tools and specialist recipes
+   (Supervisor-first; **amended by [ADR 0012](0012-chat-pipeline-grounding.md)**).
+   A free-form LLM tool planner is still out of scope.
+   **ADR 0012:** routing is rules-first; semantic LLM only on ambiguity;
+   knowledge answers must go through hybrid RAG with citations (chat owns
+   `RagService`, not Supervisor). Chat-layer FA/connectivity hard gates removed.
 
 ## References
 

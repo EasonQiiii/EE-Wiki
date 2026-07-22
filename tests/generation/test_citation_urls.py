@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ee_wiki.generation.citation_urls import (
+    _encode_path,
     asset_url,
     citation_image_urls,
     parse_markdown_image_refs,
@@ -35,7 +36,11 @@ def test_source_document_url_includes_fragment(app_config) -> None:
         target_file="data/processed/iphone/logan/p1/note/iPadManual.md",
         chunk_id="iPadManual__get-dut-sn",
     )
-    assert url.endswith("/v1/sources/iphone/logan/p1/note/iPadManual.md#get-dut-sn")
+    assert url.endswith(
+        "/v1/sources/"
+        + _encode_path("iphone/logan/p1/note/iPadManual.md")
+        + "#get-dut-sn"
+    )
 
 
 def test_raw_relative_path_strips_data_raw_prefix(app_config) -> None:
@@ -51,7 +56,7 @@ def test_raw_document_url_points_at_raw_route(app_config) -> None:
         app_config,
         source_file="data/raw/iphone/logan/p1/datasheet/STM32F4.pdf",
     )
-    assert url.endswith("/v1/raw/iphone/logan/p1/datasheet/STM32F4.pdf")
+    assert url.endswith("/v1/raw/" + _encode_path("iphone/logan/p1/datasheet/STM32F4.pdf"))
     assert "#" not in url
 
 
@@ -78,7 +83,7 @@ def test_resolve_asset_relative_path(app_config, tmp_path: Path) -> None:
     rel = resolve_asset_relative_path(str(target), "iPadManual.assets/screen.png", processed)
     assert rel == "iphone/logan/p1/note/iPadManual.assets/screen.png"
     assert asset_url(config, asset_rel=rel).endswith(
-        "/v1/assets/iphone/logan/p1/note/iPadManual.assets/screen.png"
+        "/v1/assets/" + _encode_path("iphone/logan/p1/note/iPadManual.assets/screen.png")
     )
 
 
@@ -98,8 +103,11 @@ def test_page_image_url_finds_saved_page_render(app_config, tmp_path: Path) -> N
     url = page_image_url(config, target_file=str(target), page=4)
     assert url is not None
     assert url.endswith(
-        "/v1/assets/iphone/logan/p1/sch/images/explorer_stm32f4_v2_2_sch/"
-        "explorer_stm32f4_v2_2_sch_p4_page.png"
+        "/v1/assets/"
+        + _encode_path(
+            "iphone/logan/p1/sch/images/explorer_stm32f4_v2_2_sch/"
+            "explorer_stm32f4_v2_2_sch_p4_page.png"
+        )
     )
     assert page_image_url(config, target_file=str(target), page=9) is None
     assert page_image_url(config, target_file=str(target), page=0) is None
@@ -123,7 +131,9 @@ def test_citation_image_urls_from_chunk_content(app_config, tmp_path: Path) -> N
         content="![diag](manual.assets/diag.png)",
     )
     assert len(urls) == 1
-    assert urls[0].endswith("/v1/assets/iphone/logan/p1/note/manual.assets/diag.png")
+    assert urls[0].endswith(
+        "/v1/assets/" + _encode_path("iphone/logan/p1/note/manual.assets/diag.png")
+    )
 
 
 def test_resolve_asset_relative_path_with_repo_relative_target(tmp_path: Path) -> None:

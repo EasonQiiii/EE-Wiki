@@ -108,15 +108,44 @@ If your Open WebUI build cannot send custom fields on chat requests, use `POST /
 python scripts/ask.py "RMII 接口说明" --product iphone --project logan --build p1
 ```
 
-Without scope fields, EE-Wiki can **infer scope from the question** when `generation.scope_inference` is enabled (default: `true`). Examples:
+Without scope fields, EE-Wiki **locks TurnScope once at the chat entry** (before
+FaAgent / Supervisor / ToolBus / hybrid RAG) by inferring from the question when
+`generation.scope_inference` is enabled (default: `true`). Examples:
 
-- `Logan p1 lcd的pin有哪些` → product `logan`, revision `p1`, build-layer retrieval
+- `Logan p1 lcd的pin有哪些` → product/project/build filled for **tools and RAG**
 - `logan common 架构` → project-wide `common` knowledge for `logan`
 - `global CH340` → enterprise `global` layer (not a product name)
 
-`global` and `common` are **knowledge layers**, not product or revision names. API `project` / `build` fields still override inferred scope when provided.
+`global` and `common` are **knowledge layers**, not product or revision names. API
+`product` / `project` / `build` fields still override inferred scope when provided.
 
-When scope cannot be inferred, retrieval searches the **entire index**; answers should list findings **per scope** and recommend specifying scope for build-level conclusions.
+**History note:** Before the chat-entry lock, only `RagService` inferred scope
+internally. Open WebUI body fields were usually empty, so Supervisor / ToolBus /
+FaAgent saw `None` and connectivity/component tools degraded to unscoped or
+global search. Pure knowledge RAG still worked because inference lived inside
+`stream_answer`. That split is closed: one lock, all paths consume it.
+
+**Cross-turn carry (multi-worker safe):** When `api.carry_scope_across_turns`
+is enabled (default), the locked `(product, project, build)` is written into the
+assistant reply as a hidden HTML comment (`<!-- ee-wiki-scope: … -->`). On the
+next turn Open WebUI echoes that reply in `history`, and EE-Wiki recovers the
+marker to fill scope axes the new question omitted — so follow-ups like
+"那它的电源是怎么供电的？" stay scoped to the same board. Because the marker
+travels with the conversation, the carry works under `uvicorn --workers N`
+(no shared in-memory store). Explicit body/question scope always wins.
+
+**No `conversation_id` needed:** Open WebUI's standard OpenAI-compatible
+`/v1/chat/completions` request does **not** send `conversation_id`. Carry is
+therefore driven purely by `messages` history (Open WebUI always echoes the
+prior turns), not by `conversation_id`. Do **not** rely on `conversation_id`
+being present — the marker in `history` is what makes the carry work in
+production. The same marker is also read by the FA path, so a Wiki→FA
+follow-up (e.g. "是否有针对该走线的EMI/EMC测试数据或建议？") inherits the prior
+board's scope instead of opening an unbound `none/none/none` FA session.
+
+When scope cannot be inferred, build-sensitive tools should clarify or refuse
+rather than silently search the entire index; hybrid RAG may still list findings
+**per scope** and recommend specifying scope for build-level conclusions.
 
 ## MCP / engineering tools from Open WebUI
 

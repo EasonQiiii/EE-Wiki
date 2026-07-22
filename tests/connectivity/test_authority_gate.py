@@ -23,12 +23,24 @@ def _net_result(evidence: str) -> dict:
     }
 
 
-def test_authoritative_evidence_passes() -> None:
-    gated = apply_authority_gate(_net_result("boardview"), AuthorityPolicy())
+def test_cad_netlist_is_authoritative() -> None:
+    gated = apply_authority_gate(_net_result("cad_netlist"), AuthorityPolicy())
     assert gated["authoritative"] is True
     assert gated["authority"] == "authoritative"
     assert gated["found"] is True
     assert len(gated["pins"]) == 1
+
+
+def test_boardview_is_advisory_not_authoritative() -> None:
+    """BoardView (.brd) is advisory reference only — a trace with only
+    boardview evidence must be refused, not returned as verified."""
+    gated = apply_authority_gate(_net_result("boardview"), AuthorityPolicy())
+    assert gated["authoritative"] is False
+    assert gated["authority"] == "insufficient"
+    assert gated["found"] is False
+    assert gated["pins"] == []
+    assert gated["advisory_pins"][0]["evidence"] == "boardview"
+    assert gated["note"]
 
 
 def test_advisory_only_is_refused() -> None:
@@ -86,6 +98,16 @@ def test_detect_trace_intent_net() -> None:
     assert intent is not None
     assert intent.kind == "net"
     assert intent.query == "EDP_AUXP"
+
+
+def test_detect_trace_intent_chinese_full_trace() -> None:
+    """``完整trace`` must match — ``\\btrace\\b`` fails after Chinese chars."""
+    intent = detect_trace_intent(
+        "logan p1 原理图DP_TBTSNK1_ML_C_N<1>的完整trace"
+    )
+    assert intent is not None
+    assert intent.kind == "net"
+    assert intent.query == "DP_TBTSNK1_ML_C_N<1>"
 
 
 def test_detect_trace_intent_pins() -> None:

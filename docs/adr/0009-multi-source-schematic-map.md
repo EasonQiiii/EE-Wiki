@@ -30,6 +30,9 @@ Parse every available companion independently. Merge into one document-level map
 
 Absent file or unsupported format → empty layer + structured log; continue.
 
+Priority here is **merge-fill order only**; trace *authority* is governed solely
+by `connectivity.authoritative_evidence` (§5) — currently `cad_netlist` alone.
+
 ### 2. Discovery (once per PDF)
 
 Same search order as ADR 0007, with extensions grouped by kind in config:
@@ -70,10 +73,15 @@ Failure Analysis: a half-correct trace from `pdf_geometry` / `ocr_spatial` is
 worse than no answer because it silently misleads the analyst. Therefore
 **answer-grade** trace (chat, MCP, HTTP, and any FA flow) is gated:
 
-- Only `cad_netlist` / `boardview` (config `connectivity.authoritative_evidence`)
-  may ground a returned net/pin trace.
+- Only `cad_netlist` (config `connectivity.authoritative_evidence`) may ground a
+  returned net/pin trace. `boardview` (BoardView `.brd`) is **intentionally
+  excluded** from the authoritative set: it is retained as an *advisory
+  reference* (net-membership / probe-point hints) but must never ground a trace.
+  BoardView is a logical pin↔net list, not copper geometry, and cannot deliver
+  accurate physical track routing — so presenting it as verified trace would
+  overstate its reliability (decision 2026-07-21).
 - When `connectivity.require_authority_for_trace` (default `true`) and only
-  advisory (geometry/OCR) evidence exists, the trace is **refused**
+  advisory (boardview / geometry / OCR) evidence exists, the trace is **refused**
   (`authority = "insufficient"`), not returned. Advisory data is surfaced
   separately under `advisory_pins` / `advisory_connectors` for transparency.
 - `module_nets` is a page **locator**, not a trace; it is always tagged

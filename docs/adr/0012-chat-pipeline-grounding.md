@@ -33,37 +33,55 @@ changing ToolBus write bans or role-pack configuration.
 
 ## Decision
 
-### 1. Target pipeline
+### 1. Target pipeline (amended: Supervisor-first + FaMode)
+
+**WikiMode** (default engineering Q&A):
 
 ```text
 question
-  → TurnScope lock (API body > FA session > single infer > none)
-  → pre_rag_gates()          # FA | connectivity | None  (chat owns; once)
-  → cheap_route()            # rules / keywords first
-       ├─ clear wiki / no specialist → passthrough (task set or default)
-       └─ likely specialist or ambiguous → semantic_route (TASK + ROLES)
-            → specialists + fuse
-                 ├─ evidence (may be empty) ─┐
-                 └──────────────────────────┴→ hybrid via RagService
-                      evidence? + retrieve + one generate + citations
+  → TurnScope lock once (API body → NL infer if incomplete → lock)
+  → connectivity answer_trace_question (trace intents only; refuse or pin table)
+  → FaMode gate (radar / FA session / FA intent) — else stay wiki
+  → Supervisor (when agents.enabled)
+       ├─ clarify — underspecified / needs scope (no RAG)
+       ├─ respond — FA transitional (no RAG)
+       ├─ passthrough — no specialist → hybrid RAG
+       └─ hybrid — specialists + ToolBus → fuse → hybrid RAG + citations
   → RequestTrace spans for the turn
 ```
 
+**FaMode** (FA assistant — target; see [fa-session.md](../architecture/fa-session.md)):
+
+```text
+question
+  → FaMode if: radar:// | FA session in history | FA intent (LLM MODE classify)
+  → FaAgent on shared ToolBus (radar_id may be null → unbound session)
+       Act → Exec → EvidenceBundle → Say
+  → respond (no silent RAG); later message may bind radar://
+```
+
+FA / Flames / authoritative connectivity are **ToolBus skills** (allowlist per agent).
+Authority and reject rules are enforced in tools (ADR 0009/0010). **In addition**,
+chat re-applies the deterministic :func:`answer_trace_question` gate for detected
+trace intents so hybrid RAG / Supervisor prose can never invent pin paths when
+intent detection fails to reach tools, or rewrite a pin list into a fake
+「起点→终点」narrative.
+
 | Branch | User-visible citations | Notes |
 |--------|------------------------|-------|
-| Gate `direct` (FA session, connectivity) | Structured / authoritative; chunk citations optional | Whitelisted exceptions to hybrid RAG |
+| `clarify` / `respond` | Optional; no KB chunk requirement | Supervisor-produced; not hybrid RAG |
 | Open WebUI auxiliary bypass | None | Unchanged; no knowledge claim |
-| `passthrough` / `hybrid` | Required from retrieval chunks when chunks exist | Sole knowledge-answer path when agents run |
-| True insufficient | N/A | Only after hybrid retrieve yields nothing (and no policy exception) |
+| `passthrough` / `hybrid` | Required from retrieval chunks when chunks exist | Knowledge-answer path |
+| True insufficient | N/A | Only after hybrid retrieve yields nothing |
 
 ### 2. Orchestration ownership (no `agents → generation` hard dependency)
 
-- **`api/` (chat)** owns: `pre_rag_gates`, calling Supervisor, and **all** calls into
+- **`api/` (chat)** owns: calling Supervisor, and **all** calls into
   `RagService.answer` / `stream_answer` for knowledge answers.
 - **`agents/`** returns intent only: `SupervisorResult.kind` ∈
-  `{passthrough, hybrid}` for post-gate turns (plus `direct` only if a gate is
-  ever delegated—preferred: gates never enter Supervisor).
+  `{clarify, respond, passthrough, hybrid}`.
 - Supervisor **must not** import or call `RagService`. Chat maps:
+  - `clarify` / `respond` → stream markdown only (no RAG)
   - `hybrid` → `stream_answer(..., task=..., agent_evidence=..., task_owner=supervisor)`
   - `passthrough` → same without evidence (or empty evidence)
   - fused insufficient → still `hybrid` with empty evidence (RAG fallback), **not**
@@ -96,25 +114,26 @@ Order inside Supervisor (after gates removed):
 Thresholds prefer **false negative on specialists** (extra passthrough RAG) over
 false positive tool fan-out.
 
-### 5. Shared `pre_rag_gates()`
+### 5. Connectivity answer-grade gate (amended)
 
-Single function used by chat for both `agents.enabled` true and false:
+Trace intents (``完整trace`` / ``追网`` / …) are answered by the deterministic
+:func:`answer_trace_question` gate in chat **before** FaMode / Supervisor /
+hybrid RAG. ToolBus ``trace_net`` / ``connector_pins`` remain authoritative for
+agent turns; the chat gate exists so hybrid prose can never invent pin paths
+when intent would otherwise miss tools.
 
-- FA check-in / evidence (`try_fa_chat_reply`)
-- Authoritative connectivity (`answer_trace_question` when enabled)
-
-Supervisor **deletes** its internal copies of these gates. Behavior must stay
-aligned with ADR 0009/0010 (connectivity authority; FA session).
+FA check-in remains FaMode / ``radar`` tools (not a duplicate chat hard gate).
 
 ### 6. TurnScope vs DialogScope
 
 | Concept | Lifetime | Rule |
 |---------|----------|------|
-| **TurnScope** | One HTTP `/chat/completions` request | Locked after gates (and before tools/RAG). Prepare and ToolBus `ScopeEnvelope` **read** it; they do not re-discover conflicting product/project/build for the same turn when the envelope is set. |
-| **DialogScope** | Multi-turn session (future / FA) | Default inherit; change only on explicit override (API fields, user utterance, FA check-in). **Out of scope for the first implementation cut** beyond existing FA session behavior. |
+| **TurnScope** | One HTTP `/chat/completions` request | Locked once in chat (`API body` → `merge_scope_from_question` when incomplete) **before** connectivity / FaAgent / Supervisor / tools / RAG. Downstream **reads** it; FaSession and ToolBus must **not** re-infer conflicting product/project/build for the same turn. |
+| **DialogScope** | Multi-turn session (future / FA) | Default inherit from prior FA header axes when caller left them unset; change only on explicit override (API fields, caller-locked utterance). **No second NL infer inside** `ensure_fa_session`. |
 
-API-supplied scope (after `project_aliases`) wins for TurnScope. Inference runs at
-most once when API scope is empty, then locks.
+API-supplied scope (after `project_aliases`) wins for TurnScope. Natural-language
+inference runs **at most once** at the chat lock point when API scope is empty,
+then locks.
 
 ### 7. Hybrid generation contract
 
@@ -130,20 +149,20 @@ For `passthrough` and `hybrid`:
    evidence with empty chunk citations **and** log `evidence_only=true` (interim);
    follow-up work should promote tool hit provenance into `Citation` objects.
 
-`stream_direct` remains only for Open WebUI auxiliary tasks and gate `direct`
-replies.
+`stream_direct` remains only for Open WebUI auxiliary tasks and Supervisor
+``clarify`` / ``respond`` replies (no hybrid RAG).
 
 ### 8. RequestTrace / PipelineSpan
 
 Every knowledge turn records a structured span (local log / existing agents span
 log), at minimum:
 
-- `gate` (fa | connectivity | none)
+- `gate` (deprecated; always `none` under Supervisor-first)
 - `route_mode` (rules | semantic | explicit | none)
 - `task_owner`, `task`, `roles`
 - `llm_calls` count or list
 - `scope_source` (api | infer | fa | none)
-- `branch` (direct | hybrid | passthrough | insufficient)
+- `branch` (clarify | respond | hybrid | passthrough | insufficient)
 - `phase_ms` for gate / route / tools / retrieve / generate
 
 No required cloud telemetry (offline-first).

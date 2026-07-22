@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import re
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from ee_wiki.common.logging import get_logger
 from ee_wiki.protocols.llm import LlmBackend
+from ee_wiki.retrieval.rewrite import ConversationTurn
 
 logger = get_logger(__name__)
 
@@ -30,10 +32,14 @@ VALID_TASKS: frozenset[str] = frozenset({
 MAX_CLASSIFY_TOKENS = 16
 MAX_AGENT_ROUTE_TOKENS = 48
 MAX_FA_MESSAGE_TOKENS = 16
+MAX_FA_SESSION_REPLY_TOKENS = 512
 _ROLES_LINE = re.compile(r"^ROLES:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 _TASK_LINE = re.compile(r"^TASK:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 _FA_KIND_LINE = re.compile(r"^KIND:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
-VALID_FA_MESSAGE_KINDS: frozenset[str] = frozenset({"evidence", "stay"})
+_SKILLS_LINE = re.compile(r"^SKILLS:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+VALID_FA_MESSAGE_KINDS: frozenset[str] = frozenset(
+    {"evidence", "question", "stay"}
+)
 
 
 @dataclass(frozen=True)
@@ -92,7 +98,7 @@ def classify_fa_message(
     repo_root: Path,
     cancel_event: threading.Event | None = None,
 ) -> str | None:
-    """Classify an FA-session turn as ``evidence`` or ``stay`` (prompt-driven).
+    """Classify an FA-session turn as ``evidence``, ``question``, or ``stay``.
 
     Used when a chat is already bound to a Radar id so the session stays on
     the FA path (no silent RAG fallthrough). Semantic judgment lives in
@@ -106,8 +112,8 @@ def classify_fa_message(
         cancel_event: Optional cancellation signal.
 
     Returns:
-        ``evidence`` or ``stay``, or ``None`` when output is unusable so the
-        caller can default to ``stay`` (session lock, ask again).
+        ``evidence``, ``question``, or ``stay``, or ``None`` when output is
+        unusable so the caller can default to a grounded dialogue reply.
     """
     if cancel_event and cancel_event.is_set():
         return None
@@ -149,7 +155,7 @@ def classify_fa_message(
             radar_id,
         )
         return cleaned
-    for kind in VALID_FA_MESSAGE_KINDS:
+    for kind in ("evidence", "question", "stay"):
         if kind in cleaned:
             logger.info(
                 "FA message kind (containment): %r -> %s (rdar://%s)",
@@ -160,6 +166,191 @@ def classify_fa_message(
             return kind
     logger.warning("FA message kind unrecognized: %r", raw_output)
     return None
+
+
+def generate_fa_session_reply(
+    question: str,
+    *,
+    radar_id: str,
+    checkin_markdown: str,
+    llm: LlmBackend,
+    repo_root: Path,
+    cancel_event: threading.Event | None = None,
+) -> str | None:
+    """Generate a grounded FA dialogue reply from the last check-in context.
+
+    Args:
+        question: Engineer's follow-up in the FA session.
+        radar_id: Bound Radar id.
+        checkin_markdown: Prior FA check-in assistant markdown.
+        llm: Local LLM backend.
+        repo_root: Repository root for the prompt template.
+        cancel_event: Optional cancellation signal.
+
+    Returns:
+        Assistant markdown, or ``None`` when generation fails.
+    """
+    if cancel_event and cancel_event.is_set():
+        return None
+
+    path = repo_root / "prompts" / "fa" / "session_reply.md"
+    template = path.read_text(encoding="utf-8")
+    prompt = (
+        template.replace("{{radar_id}}", radar_id)
+        .replace("{{checkin}}", checkin_markdown.strip()[:6000])
+        .replace("{{question}}", question)
+        .strip()
+    )
+
+    try:
+        text = _generate_short_output(
+            llm,
+            prompt,
+            max_new_tokens=MAX_FA_SESSION_REPLY_TOKENS,
+            cancel_event=cancel_event,
+        )
+    except Exception:
+        logger.warning("FA session reply generation failed", exc_info=True)
+        return None
+
+    if cancel_event and cancel_event.is_set():
+        return None
+    if not text or not text.strip():
+        return None
+    return text.strip()
+
+
+def classify_fa_mode(
+    question: str,
+    *,
+    history: Sequence[ConversationTurn] | None = None,
+    llm: LlmBackend,
+    repo_root: Path,
+    cancel_event: threading.Event | None = None,
+) -> str | None:
+    """Classify a turn as FA mode or Wiki mode (fa-session.md entry C).
+
+    Args:
+        question: Latest user utterance.
+        history: Optional prior turns (rendered as a short summary).
+        llm: Local LLM backend.
+        repo_root: Repository root for loading the prompt template.
+        cancel_event: Optional cancellation signal.
+
+    Returns:
+        ``"fa"``, ``"wiki"``, or ``None`` when output is unusable so the caller
+        can fall back to the conservative Wiki default.
+    """
+    if cancel_event and cancel_event.is_set():
+        return None
+
+    path = repo_root / "prompts" / "fa" / "classify_mode.md"
+    template = path.read_text(encoding="utf-8")
+    history_md = ""
+    if history:
+        bits = [
+            f"{turn.role}: {turn.content[:200]}"
+            for turn in history[-4:]
+            if turn.role in ("user", "assistant") and turn.content.strip()
+        ]
+        history_md = "\n".join(bits)
+    prompt = (
+        template.replace("{{history}}", history_md).replace("{{question}}", question).strip()
+    )
+
+    try:
+        raw_output = _generate_short_output(
+            llm,
+            prompt,
+            max_new_tokens=MAX_CLASSIFY_TOKENS,
+            cancel_event=cancel_event,
+        )
+    except Exception:
+        logger.warning("FA mode classification failed", exc_info=True)
+        return None
+
+    if cancel_event and cancel_event.is_set():
+        return None
+    if not raw_output:
+        return None
+
+    match = re.search(r"MODE:\s*(\w+)", raw_output, re.IGNORECASE)
+    raw_mode = match.group(1) if match else raw_output
+    cleaned = raw_mode.strip().lower()
+    if cleaned.startswith("fa"):
+        return "fa"
+    if cleaned.startswith("wiki"):
+        return "wiki"
+    return None
+
+
+def select_fa_skills(
+    question: str,
+    *,
+    product: str | None,
+    project: str | None,
+    build: str | None,
+    allowlist: set[str] | frozenset[str],
+    llm: LlmBackend,
+    repo_root: Path,
+    cancel_event: threading.Event | None = None,
+) -> list[str] | None:
+    """Select 0..N FaAgent tools for one FA turn (allowlist-validated).
+
+    Args:
+        question: Latest user utterance.
+        product: Current scope product (or ``None``).
+        project: Current scope project (or ``None``).
+        build: Current scope build (or ``None``).
+        allowlist: Tool names the FaAgent is permitted to call.
+        llm: Local LLM backend.
+        repo_root: Repository root for loading the prompt template.
+        cancel_event: Optional cancellation signal.
+
+    Returns:
+        Selected tool names (subset of ``allowlist``), or ``None`` when the LLM
+        output is unusable so the caller can use a deterministic default.
+    """
+    if cancel_event and cancel_event.is_set():
+        return None
+
+    path = repo_root / "prompts" / "fa" / "select_skills.md"
+    if not path.is_file():
+        return None
+    template = path.read_text(encoding="utf-8")
+    prompt = (
+        template.replace("{{allowlist}}", ", ".join(sorted(allowlist)))
+        .replace("{{product}}", product or "none")
+        .replace("{{project}}", project or "none")
+        .replace("{{build}}", build or "none")
+        .replace("{{question}}", question)
+        .strip()
+    )
+
+    try:
+        raw_output = _generate_short_output(
+            llm,
+            prompt,
+            max_new_tokens=48,
+            cancel_event=cancel_event,
+        )
+    except Exception:
+        logger.warning("FA skill selection failed", exc_info=True)
+        return None
+
+    if cancel_event and cancel_event.is_set():
+        return None
+    if not raw_output:
+        return None
+
+    match = _SKILLS_LINE.search(raw_output)
+    raw_line = match.group(1) if match else raw_output
+    parts = [p.strip() for p in raw_line.split(",") if p.strip()]
+    selected = [skill for skill in parts if skill in allowlist]
+    if not selected and parts:
+        logger.warning("FA skill selection produced no valid tools: %r", raw_output)
+        return None
+    return selected
 
 
 def classify_agent_route(

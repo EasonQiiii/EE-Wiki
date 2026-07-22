@@ -68,8 +68,10 @@ EE-Wiki/
 │       │   │   └── schematic_pdf/connectivity/  # ADR 0009: boardview/, netlist/, merge
 │       │
 │       ├── connectivity/       # Read-only query over *.connectivity.json (trace_net / pins)
-│       │   ├── path_metadata.py
-│       │   └── pipeline.py
+│       │   ├── authority.py     # Authoritative-only trace gate (ADR 0009): cad_netlist only
+│       │   ├── chat.py          # Trace question → gateway answer or refusal
+│       │   ├── intent.py        # Net / pins trace intent detection
+│       │   └── query.py         # Pin↔net / module-nets lookup
 │       │
 │       ├── knowledge/          # Persist and query stored knowledge assets
 │       │   ├── store/          # Processed mirror persistence

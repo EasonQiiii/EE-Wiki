@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from ee_wiki.common.types import DataLayoutConfig
@@ -18,10 +19,68 @@ from ee_wiki.ingestion.path_metadata import expand_retrieval_scope
 
 LIMITATIONS = (
     "Connectivity traces come from ingested *.connectivity.json sidecars "
-    "(netlist / boardview / PDF geometry / OCR). Evidence tags are not "
-    "board-verified copper; prefer cad_netlist > boardview > pdf_geometry > "
-    "ocr_spatial when sources disagree."
+    "(netlist / boardview / PDF geometry / OCR). Only cad_netlist is "
+    "board-verified trace evidence; boardview is advisory reference only and "
+    "must not ground a trace. Prefer cad_netlist > boardview(reference) > "
+    "pdf_geometry > ocr_spatial when sources disagree."
 )
+
+# Bus member: NAME<0>, NAME<12>, …
+_BUS_MEMBER = re.compile(r"^(?P<base>.+)<(?P<idx>\d+)>$", re.IGNORECASE)
+
+
+def _bus_base(token: str) -> str | None:
+    match = _BUS_MEMBER.match(token.strip())
+    return match.group("base") if match else None
+
+
+def _bus_family(net_names: list[str], base: str) -> list[str]:
+    """Return sorted bus members whose base equals ``base`` (case-insensitive)."""
+    base_upper = base.upper()
+    out: list[str] = []
+    for key in net_names:
+        match = _BUS_MEMBER.match(key)
+        if match and match.group("base").upper() == base_upper:
+            out.append(key)
+    return sorted(out)
+
+
+def _select_net_keys(
+    net_names: list[str], token: str
+) -> tuple[list[str], str | None, list[str]]:
+    """Pick net keys for a query without bleeding across bus indices.
+
+    Returns:
+        ``(hit_keys, match_kind, related_candidates)``.
+
+        * Exact ``NAME<1>`` → only that key.
+        * Missing ``NAME<1>`` when siblings exist → empty hits + sibling list
+          (caller must refuse, not dump ``NAME<0>``…``NAME<3>``).
+        * Bare ``NAME`` when only ``NAME<n>`` members exist → empty hits +
+          family list (ambiguous; require an index).
+        * Otherwise substring fuzzy for non-bus cases.
+    """
+    token_upper = token.strip().upper()
+    if not token_upper:
+        return [], None, []
+
+    keys = list(net_names)
+    exact = [k for k in keys if k.upper() == token_upper]
+    if exact:
+        return exact, "exact", []
+
+    base = _bus_base(token_upper)
+    if base is not None:
+        return [], None, _bus_family(keys, base)
+
+    family = _bus_family(keys, token_upper)
+    if family:
+        return [], "ambiguous_bus", family
+
+    fuzzy = sorted(k for k in keys if token_upper in k.upper())
+    if fuzzy:
+        return fuzzy, "substring", []
+    return [], None, []
 
 
 @dataclass
@@ -56,7 +115,7 @@ class ConnectivityQuery:
         This is the single choke point every consumer (chat trace intercept,
         MCP tools, HTTP routes, future FA auto-trace) must use so that
         connectivity conclusions are only ever grounded on board-verified
-        evidence (CAD netlist / BoardView).
+        evidence (CAD netlist; BoardView is advisory reference only).
 
         Args:
             kind: ``"net"`` (trace a net), ``"pins"`` (a connector/part), or
@@ -184,20 +243,22 @@ class ConnectivityQuery:
         exact: list[dict] = []
         fuzzy: list[dict] = []
         matched_docs: list[dict] = []
-        token_upper = token.upper()
+        related: list[str] = []
+        match_kind: str | None = None
 
         for doc in docs:
             nets = doc.connectivity.nets
-            hit_keys = [k for k in nets if k.upper() == token_upper]
-            if not hit_keys:
-                hit_keys = [k for k in nets if token_upper in k.upper()]
-                bucket = fuzzy
-            else:
-                bucket = exact
+            hit_keys, kind, candidates = _select_net_keys(list(nets.keys()), token)
+            if candidates:
+                related.extend(candidates)
+            if kind == "ambiguous_bus":
+                match_kind = "ambiguous_bus"
             if not hit_keys:
                 continue
+            match_kind = kind
+            bucket = exact if kind == "exact" else fuzzy
             matched_docs.append(_doc_summary(doc))
-            for key in sorted(hit_keys):
+            for key in hit_keys:
                 for binding in nets[key]:
                     bucket.append(
                         {
@@ -214,19 +275,70 @@ class ConnectivityQuery:
                     )
 
         pins = exact if exact else fuzzy
-        resolved = pins[0]["net"] if pins else None
+        if pins:
+            resolved = pins[0]["net"]
+            return {
+                "query": net,
+                "kind": "trace_net",
+                "resolved_net": resolved,
+                "found": True,
+                "match": "exact" if exact else ("substring" if fuzzy else None),
+                "product": product,
+                "project": project,
+                "build": build,
+                "pins": pins,
+                "pin_count": len(pins),
+                "documents": matched_docs,
+                "limitations": LIMITATIONS,
+            }
+
+        # No bindings — refuse bus bleed / missing index instead of dumping siblings.
+        related_unique = sorted(set(related))
+        if match_kind == "ambiguous_bus" or (
+            related_unique and _bus_base(token) is not None
+        ):
+            hint = ", ".join(f"`{n}`" for n in related_unique[:12])
+            if _bus_base(token) is None:
+                error = (
+                    f"`{token}` is a bus without an index. "
+                    f"Specify one member, e.g. {hint}."
+                )
+                match_out: str | None = "ambiguous_bus"
+            else:
+                error = (
+                    f"No exact net `{token}`. "
+                    f"Related bus members: {hint}. Re-query the exact member."
+                )
+                match_out = None
+            return {
+                "query": net,
+                "kind": "trace_net",
+                "resolved_net": None,
+                "found": False,
+                "match": match_out,
+                "candidates": related_unique,
+                "error": error,
+                "product": product,
+                "project": project,
+                "build": build,
+                "pins": [],
+                "pin_count": 0,
+                "documents": [],
+                "limitations": LIMITATIONS,
+            }
+
         return {
             "query": net,
             "kind": "trace_net",
-            "resolved_net": resolved,
-            "found": bool(pins),
-            "match": "exact" if exact else ("substring" if fuzzy else None),
+            "resolved_net": None,
+            "found": False,
+            "match": None,
             "product": product,
             "project": project,
             "build": build,
-            "pins": pins,
-            "pin_count": len(pins),
-            "documents": matched_docs,
+            "pins": [],
+            "pin_count": 0,
+            "documents": [],
             "limitations": LIMITATIONS,
         }
 

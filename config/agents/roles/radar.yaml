@@ -1,0 +1,20 @@
+id: radar
+display_name: Radar / FA Session
+routing:
+  keywords:
+    - radar
+    - rdar
+    - check-in
+    - checkin
+    - check in
+    - 开案
+    - rdar://
+    - radar://
+tools:
+  - fa_start_checkin
+  - fa_session_turn
+  - radar_get_problem
+recipe:
+  - tool: fa_session_turn
+    query_from: question
+max_tool_calls: 2

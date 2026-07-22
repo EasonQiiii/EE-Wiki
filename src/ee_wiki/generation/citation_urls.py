@@ -2,14 +2,38 @@
 
 from __future__ import annotations
 
+import base64
 import re
 from pathlib import Path, PurePosixPath
-from urllib.parse import quote
 
 from ee_wiki.common.config import ApiConfig, AppConfig
 from ee_wiki.ingestion.parsers.schematic_pdf.prompt import schematic_image_slug
 
 _MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+
+# URL-safe base64 of the (posix) relative path. No padding, no ``/`` or space,
+# so the result never needs percent-encoding and survives front-end URL decoding.
+_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _encode_path(rel: str) -> str:
+    """Encode a relative posix path into a URL-safe, space-free token."""
+    return base64.urlsafe_b64encode(rel.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _decode_path(token: str) -> str:
+    """Decode a :func:`_encode_path` token back to a relative posix path.
+
+    Falls back to treating ``token`` as a literal path when it is not a valid
+    base64url segment (legacy links generated before this scheme).
+    """
+    if _B64URL_RE.match(token):
+        try:
+            padded = token + "=" * (-len(token) % 4)
+            return base64.urlsafe_b64decode(padded).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            pass
+    return token
 
 
 def resolve_public_base_url(api: ApiConfig) -> str:
@@ -64,7 +88,7 @@ def source_document_url(config: AppConfig, *, target_file: str, chunk_id: str) -
     base = resolve_public_base_url(config.api)
     rel = processed_relative_path(target_file, config.processed_dir)
     fragment = section_fragment(chunk_id)
-    return f"{base}/v1/sources/{quote(rel, safe='/')}{fragment}"
+    return f"{base}/v1/sources/{_encode_path(rel)}{fragment}"
 
 
 def raw_document_url(config: AppConfig, *, source_file: str) -> str:
@@ -74,17 +98,22 @@ def raw_document_url(config: AppConfig, *, source_file: str) -> str:
     ``data/raw/`` (e.g. a ``.pdf`` or ``.docx``) rather than the processed
     ``.md`` mirror. The HTML section fragment is intentionally dropped because
     raw binary documents have no in-page anchors.
+
+    The path is base64url-encoded so the URL contains no reserved/space
+    characters. Some front-ends (e.g. Open WebUI) decode ``%20`` back to a
+    literal space before rendering the ``href``, which makes a
+    ``quote()``-encoded link unclickable; base64url avoids that entirely.
     """
     base = resolve_public_base_url(config.api)
     rel = raw_relative_path(source_file, config.raw_dir)
-    return f"{base}/v1/raw/{quote(rel, safe='/')}"
+    return f"{base}/v1/raw/{_encode_path(rel)}"
 
 
 def asset_url(config: AppConfig, *, asset_rel: str) -> str:
     """Build a public URL for a file under ``data/processed/``."""
     base = resolve_public_base_url(config.api)
     normalized = PurePosixPath(asset_rel.lstrip("/")).as_posix()
-    return f"{base}/v1/assets/{quote(normalized, safe='/')}"
+    return f"{base}/v1/assets/{_encode_path(normalized)}"
 
 
 def parse_markdown_image_refs(content: str) -> list[str]:

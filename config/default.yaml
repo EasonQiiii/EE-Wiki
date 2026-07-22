@@ -45,17 +45,13 @@ generation:
 ingestion:
   excel:
     output_format: markdown_table   # markdown_table | plain_text
-    max_rows_per_sheet: null
     include_empty_sheets: false
-  word: {}
-    # libreoffice_path: /Applications/LibreOffice.app/Contents/MacOS/soffice
   iwork:
     enabled: true                      # macOS only; .key / .numbers via Keynote/Numbers export
     keynote_export_timeout_seconds: 600
     numbers_export_timeout_seconds: 600
     quit_apps_after_export: false      # keep false for faster batch sync
   prose_pdf:
-    max_pages: null
     min_text_chars: 40       # per-page embedded text below this triggers OCR
     ocr_dpi: 200
     ocr_language: auto       # auto | eng | eng+chi_sim | other tesseract codes
@@ -74,8 +70,6 @@ ingestion:
     # Default ocr_only: FA-grade truth is netlist/.brd (ADR 0009 gate), not VLM
     # narrative. Use vlm_plus_ocr only when you need schematic prose for RAG recall.
     fidelity_mode: ocr_only   # ocr_only | vlm_plus_ocr (layout + VLM + OCR appendix)
-    # max_pages: null         # null = all pages
-    max_pages: null
     max_new_tokens: 1536
     vlm_max_image_side: 1280   # downscale full-page renders before VLM to save MPS memory
     temperature: 0.1
@@ -100,20 +94,13 @@ ingestion:
       # FA-grade trace gate (ADR 0009 / 0010): only these evidence tags count as
       # board-verified electrical truth. Advisory pdf_geometry / ocr_spatial never
       # grounds a trace answer — chat / MCP / FA refuse instead of guessing.
+      # BoardView (.brd) is intentionally NOT in this list: it is retained as
+      # advisory reference (net membership / probe points) but must not ground a
+      # trace (decision 2026-07-21).
       authoritative_evidence:
         - cad_netlist
-        - boardview
       require_authority_for_trace: true
-      # Legacy alias (same as companion_extensions.netlist) — kept for older configs
-      cad_extensions:
-        - .net
-        - .kicad_sch
-        - .kicad_pro
-        - .SchDoc
-        - .prjpcb
-        - .PrjPcb
   datasheet_pdf:
-    max_pages: null
     min_text_chars_for_skip: 500  # pages with more embedded text and few vector lines → text_only
     vector_line_threshold: 50     # pages with more drawing ops than this → table
     image_area_threshold: 0.6     # pages with raster images covering >60% → graph
@@ -192,6 +179,11 @@ data_layout:
   # 甲方 / 乙方等混用名 → EE-Wiki 路径 slug（bare project 或 product/project）
   project_aliases:
     H340: logan
+    # Stub / lab sample rdar://101493937 title carries Ruby / Scarif tokens;
+    # component name "B5xx HW Build FATP" alone does not match EE-Wiki slugs.
+    Scarif: ipad/logan
+    Ruby: ipad/logan
+    B5xx: ipad/logan
     # example: customer_code: iphone/logan
 
 # Multi-agent runtime (ADR 0008) — Supervisor + ToolBus + config-driven roles
@@ -211,9 +203,9 @@ fa:
   enabled: true
   radar:
     backend: stub              # stub | radarclient (live: Kerberos ticket + radarclient on PYTHONPATH)
-    # Qualified product/project so ADR 0011 scope is complete in lab stubs.
-    stub_component_name: ipad/logan
-    stub_component_version: P1
+    # Non-canonical radar ids only; rdar://101493937 always uses real B5xx/P0 from radar.log.
+    stub_component_name: B5xx HW Build FATP
+    stub_component_version: P0
     client_system_name: EE-Wiki
     client_system_version: "1.0"
   flames:
@@ -226,10 +218,24 @@ fa:
 api:
   host: 0.0.0.0
   port: 8080
-  public_base_url: http://192.168.0.155:8080
+  # Browser-reachable base for citation download links + inline images embedded
+  # in answers. Set to the machine's LAN IP (not localhost) when Open WebUI /
+  # browser may run on another device on the same network, so citation + image
+  # links resolve from those devices too. Current value = en1/IPv4 on this Mac.
+  # Caveat: a DHCP reassigned IP will break these links again — re-point this
+  # (or switch Open WebUI+EE-Wiki to the same host with localhost) when that happens.
+  public_base_url: http://172.20.10.2:8080
   warmup_on_startup: true
   request_timeout_seconds: 300  # whole RAG request cap; null or 0 disables
   max_concurrent_ingest_jobs: 1  # async POST /v1/ingest workers; extra jobs queue in-memory
+  # Cross-turn TurnScope carry (ADR 0012 §6). When ON, the locked
+  # (product, project, build) is embedded as a hidden marker in the assistant
+  # reply and recovered from history on the next turn, so follow-ups with no
+  # scope words inherit it. Stateless and multi-worker safe (works under
+  # ``uvicorn --workers N`` — no shared store). Deterministic (no NL
+  # re-inference); explicit body/question scope always wins. Open WebUI does not
+  # echo scope, so this is ON by default to fix follow-up scope loss.
+  carry_scope_across_turns: true
   concurrency:
     max_concurrent: 6       # MLX in-process: must stay 1; openai backend: try 6
     max_queue_depth: 12      # additional requests allowed to wait (openai: try 12)

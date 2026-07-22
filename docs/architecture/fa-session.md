@@ -1,79 +1,137 @@
-# FA Session (Radar-keyed)
+# FA Session — target architecture
 
-**Status:** Proposed contract ([ADR 0010](../adr/0010-fa-session-external-integrations.md)). Protocols and stub backends land first; live Radar/Flames when network access exists.
+**Status:** Target contract (amends ADR 0010 session keying; ADR 0012 mode split).  
+Implementation plan for Workbuddy: [fa-agent-implementation-plan.md](fa-agent-implementation-plan.md).
 
 ## Goal
 
-Replace the “look up Flames + Radar + similar FA + draft summary” portion of an FA engineer’s workflow inside **Open WebUI**, using **Radar id** as the only session identifier (`case_id = radar_id`).
+Open WebUI 上的 **FA Assistant**：同一对话 LLM，**FaMode** 由 **FaAgent** 按需调用共享 ToolBus（Radar / Flames / full trace / 相似 case 等）。
 
-Lab actions (bench, X-ray, T/A, probing) stay human-owned. EE-Wiki guides, retrieves, drafts, and (with confirm) writes Radar / exports Keynote.
+- 票面 / 产线 / 追网事实 → 工具 provenance 接地；写 Radar 须 **confirm**
+- **无 Radar 号也可进 FaMode**（现象 / 位号先查）；有票后再 bind
+- 能力在 ToolBus；FaAgent / 未来 FbAgent = 不同 allowlist，不复制 handlers
 
-## User journey
+## Mode split
 
 ```text
-1. Engineer opens a new Open WebUI chat (model → EE-Wiki /v1)
-2. User: "new checkin rdar://12345678"  or  "帮忙分析 radar 12345678"
-3. EE-Wiki:
-   a. Parse radar_id
-   b. Radar agent → problem + component → project/build
-   c. Evidence waterfall:
-      - Flames (live/stub/manual cache) when fail items exist
-      - else Radar title → description → diagnosis (LLM extract; skip History)
-      - else ask user to paste log / error list
-   d. Cache evidence under data/cache/fa/{radar_id}/ (incl. radar_corpus.txt)
-   e. Reply with fail list + downloadable links + Radar status
-      (or a short prompt if still awaiting paste)
-4. Interactive turns: true-fail judgment (human), module hints, similar cases,
-   next lab steps, draft diagnosis text
-   - Schematic pin/net traces are answered only from board-verified sidecars
-     (`cad_netlist` / `boardview`) via `ConnectivityQuery.resolve_trace`; when no
-     authoritative evidence exists the session refuses instead of guessing from
-     VLM/OCR text (ADR 0009 §5, ADR 0010). "Module hints" are advisory locators,
-     not verified connectivity.
-5. On request + confirm: append diagnosis / upload images to Radar
-6. On request: generate Keynote → data/exports/fa/{radar_id}/FA_summary.key
-   and return download URL under /v1/exports/...
+Open WebUI  →  POST /v1/chat/completions  →  EE-Wiki Chat Runtime
+                                                    │
+                         ┌──────────────────────────┴──────────────────────────┐
+                         │                                                      │
+                    WikiMode                                               FaMode
+                         │                                                      │
+                         ▼                                                      ▼
+              Supervisor → hybrid RAG                                 FaAgent + ToolBus
+              （答案绑检索 citations）                                  Act → Exec → Ground → Say
 ```
 
-## Session state (ephemeral)
+### FaMode 入口（必须同时支持）
 
-Minimum fields (implementation may use JSON on disk under `data/cache/fa/{id}/session.json` or in-memory):
+| # | 条件 | 行为 |
+|---|------|------|
+| A | 结构：`radar://` / `rdar://` / **`rdar://problem/{id}`**（真实网页格式） / `radar <digits>` | 开案或刷新；`case_id = radar_id` |
+| B | History 已是 FA 会话（见下） | 保持 FaMode，不静默 RAG |
+| C | **FA 调查意图**（无票也可） | 进 FaMode；`radar_id=null` 的 ephemeral case；可追问是否绑票 |
+| — | 以上皆否 | **WikiMode** |
+
+**C 的判定（合同）：**
+
+- **主路径**：本地 LLM + prompt（`prompts/fa/classify_mode.md` 或等价）→ `MODE: fa | wiki`  
+  - `fa` 例：帮我 FA / 失效分析 / 排查为什么某位号没输出 / 客退 / debug 这颗料…  
+  - `wiki` 例：某芯片核心参数、SOP 怎么写、翻译上一条（无调查意图）
+- **禁止**把「FA」两字正则当唯一主路由（换措辞即呆）
+- **兜底**（无 LLM / classify 失败）：保守 → WikiMode（或极窄结构启发，不得假阳性吞掉普通 wiki）
+
+绑定识别（B）不仅 `FA check-in — rdar://…`，还包括 **无票** 会话头，例如：
+
+```text
+**FA（未绑定 Radar）：** U8600 IIC 无输出
+## FA check-in — rdar://101493937
+```
+
+> 无票会话头已精简为一行可读文字（`**FA（未绑定 Radar）：** <symptom>`），
+> 不再输出 `## FA session — unbound` / `**Symptom:**` / `**EE-Wiki scope:**` 三行块，
+> 也不在回答里贴原始工具 JSON（`### Tool evidence`）。scope 通过不可见的
+> `<!-- ee-wiki-scope: product/project/build -->` marker 跨轮携带（见 ADR 0012 §6）。
+
+## FaMode 回合
+
+```mermaid
+flowchart TD
+  msg[UserMessage] --> gate{FaMode_entry_A_B_or_C}
+  gate -->|no| wiki[WikiMode_Supervisor_RAG]
+  gate -->|yes| sess[Ensure_FaSession]
+  sess --> act[Act_select_skills]
+  act --> exec[Exec_ToolBus]
+  exec --> ground[Ground_EvidenceBundle]
+  ground --> say[Say_from_bundle]
+  say --> out[Respond_no_silent_RAG]
+```
+
+1. **Ensure_FaSession** — 有 `radar_id` 则拉票/瀑布；无票则建立 ephemeral session（scope 可从问句推断 logan/p1）。
+2. **Act** — LLM 在封闭 skill 表选 0..N 工具（tool_calls 或结构化选技）。
+3. **Exec** — ToolBus；写操作无 confirm 不提交；无票时 Radar 写类 skill 不可用或返回「请先绑定 radar」。
+4. **Ground** — EvidenceBundle + provenance。
+5. **Say** — 仅基于 bundle；缺强制证据则追问/拒答，不编票面事实。
+
+无票时仍可：`trace_net` / `query_schematic` / `search_debug_case` / `engineering_search` / 请用户贴 log；并提示「有 Radar 号可绑票拉 diagnosis/附件」。
+
+## ToolBus 与 Agent 组装
+
+```text
+                    ToolBus（一份实现）
+  Radar | Flames | trace_net | search_debug_case | engineering_search | …
+              ▲ allowlist              ▲ allowlist
+         FaAgent                    FbAgent（例）
+         全套                        Radar+Trace only
+```
+
+追网 / Flames = FaAgent 调工具，不是再唤起 HW/PCB/Flames 人格 agent。
+
+## 有票开案瀑布（radar_id 已知时）
+
+```text
+get_problem → Flames fails → else Radar 文本抽 fail → else 请粘贴
+→ cache data/cache/fa/{radar_id}/
+```
+
+Stub 金样：`rdar://101493937`（Scarif / radar.log）。
+
+## Session 状态（ephemeral）
 
 | Field | Meaning |
 |-------|---------|
-| `radar_id` | Primary key / `case_id` |
-| `project` / `build` | EE-Wiki scope (from Radar component or override) |
-| `fail_items[]` | Extracted error strings + station + log path |
-| `log_refs[]` | Relative paths under `data/cache/fa/` for `/v1/exports` or cache download |
-| `true_fail` | User-confirmed subset / notes (optional) |
-| `radar_snapshot` | Title, state, last diagnosis preview |
-| `pending_writes` | Draft diagnosis / files awaiting `confirm` |
+| `case_id` | 稳定会话 id；有票时等于 `radar_id`，无票时为生成的 ephemeral id |
+| `radar_id` | `null` 或已绑定票号 |
+| `product` / `project` / `build` | EE-Wiki scope |
+| `symptom` / 开场问句 | 无票时的调查锚点（如 U8600 IIC 无输出） |
+| `fail_items[]` / `log_refs[]` | 证据 |
+| `radar_snapshot` | 有票时的票面摘要 |
+| `pending_writes` | 待 confirm |
+| `true_fail` | 人工确认（可选） |
 
-Not a knowledge-graph write. Closed cases become durable knowledge only if an operator ingests an FA doc under `fa/`.
+后续用户发 `radar://…` → **bind** 到当前 FA 会话（合并 scope/证据，再跑开案瀑布）。
 
-## Scope resolution
+## 与今日实现的差距
 
-See [integrations-radar.md](integrations-radar.md#project--build). Order: user override → component map → `foundInBuild` / summary hints → ask user.
+| 目标 | 今日 |
+|------|------|
+| 入口 A+B+C | 几乎只有 A + 部分 B（有票头） |
+| 「帮我FA一下 U8600…」→ FaMode | 落入 WikiMode / hw+RAG |
+| FaAgent 选技 | Supervisor → `radar` recipe / classify 补丁 |
+| `radar_id=null` session | 无 |
 
-## Open WebUI surface
+## 验收金句（Lab）
 
-| Need | Mechanism |
-|------|-----------|
-| Chat entry | `POST /v1/chat/completions` → `integrations/fa_chat.py` before RAG |
-| Check-in intents | `分析 radar …` / `new checkin rdar://…` / bare `rdar://…` |
-| Session lock | After assistant `FA check-in — rdar://…`, the chat stays on FA — no silent RAG fallthrough |
-| Evidence vs stay | Local LLM + `prompts/fa/classify_message.md` (`KIND: evidence|stay`); default `stay` if LLM unavailable |
-| Radar → fails | Local LLM + `prompts/fa/extract_radar_evidence.md` on title/description/diagnosis |
-| Evidence paste | Fallback when Flames + Radar yield nothing; optional `station: FQT` |
-| Download logs / Keynote | `GET /v1/exports/fa/{radar_id}/…` and `/v1/cache/…` with `api.public_base_url` |
-| Citations to wiki docs | Existing `/v1/sources` + `sources[]` chips (**new** chat for wiki Q&A; not this FA thread) |
-| Full agent supervisor | Still gated on ADR 0008 §8 — this path is intentional lightweight routing |
+1. `radar://101493937` → 有票 FA check-in  
+2. `帮我FA一下为什么U8600（logan p1）的IIC接口没有输出` → **FaMode**（unbound），不是纯 wiki 长文；可追网/搜 case/要 scope  
+3. 同一会话再发 `radar://101493937` → bind + 拉票  
+4. `STM32F407 核心参数`（无 FA 意图）→ WikiMode  
+5. FA 会话内「列出 diagnosis 步骤」→ 原文，不编 true-fail  
 
-Engineers should be able to click a link in the assistant message and download `FA_summary.key` or a cached `.log` without leaving the browser.
+## Related
 
-## Related docs
-
-- [integrations-radar.md](integrations-radar.md)
-- [integrations-flames.md](integrations-flames.md)
-- [open-webui.md](../usage/open-webui.md)
-- [ADR 0010](../adr/0010-fa-session-external-integrations.md)
+- [fa-agent-implementation-plan.md](fa-agent-implementation-plan.md) — Workbuddy 施工单  
+- [ADR 0010](../adr/0010-fa-session-external-integrations.md) — 有票时仍以 radar 为外部系统主键；无票 ephemeral 为增补  
+- [ADR 0012](../adr/0012-chat-pipeline-grounding.md) · [ADR 0008](../adr/0008-multi-agent-runtime.md)  
+- [agents.md](../usage/agents.md)

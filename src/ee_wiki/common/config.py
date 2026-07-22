@@ -64,8 +64,8 @@ class FaRadarConfig:
     """Radar connector settings for FA sessions (ADR 0010)."""
 
     backend: str = "stub"  # stub | radarclient
-    stub_component_name: str = "ipad/logan"
-    stub_component_version: str = "P1"
+    stub_component_name: str = "B5xx HW Build FATP"
+    stub_component_version: str = "P0"
     # ClientSystemIdentifier sent to live radarclient (SPNego).
     client_system_name: str = "EE-Wiki"
     client_system_version: str = "1.0"
@@ -316,6 +316,13 @@ class ApiConfig:
     max_concurrent_ingest_jobs: int = 1
     ingest_api_key: str | None = None
     concurrency: ApiConcurrencyConfig = field(default_factory=ApiConcurrencyConfig)
+    # Cross-turn TurnScope carry (ADR 0012 §6). When true, the locked
+    # (product, project, build) is embedded as a hidden marker in the assistant
+    # reply and recovered from history on the next turn, so follow-ups with no
+    # scope words inherit it. Stateless and multi-worker safe (no shared store,
+    # works under ``uvicorn --workers N``). Deterministic (no NL re-inference);
+    # explicit body/question scope always wins.
+    carry_scope_across_turns: bool = True
 
 
 @dataclass(frozen=True)
@@ -702,10 +709,10 @@ def load_config(
             radar=FaRadarConfig(
                 backend=str(fa_radar.get("backend", "stub")),
                 stub_component_name=str(
-                    fa_radar.get("stub_component_name", "ipad/logan")
+                    fa_radar.get("stub_component_name", "B5xx HW Build FATP")
                 ),
                 stub_component_version=str(
-                    fa_radar.get("stub_component_version", "P1")
+                    fa_radar.get("stub_component_version", "P0")
                 ),
                 client_system_name=str(
                     fa_radar.get("client_system_name", "EE-Wiki")
@@ -811,6 +818,9 @@ def load_config(
                 1, int(api.get("max_concurrent_ingest_jobs", 1))
             ),
             ingest_api_key=_optional_env_secret("EE_WIKI_INGEST_API_KEY"),
+            carry_scope_across_turns=bool(
+                api.get("carry_scope_across_turns", True)
+            ),
             concurrency=ApiConcurrencyConfig(
                 max_concurrent=int(concurrency.get("max_concurrent", 1)),
                 max_queue_depth=int(concurrency.get("max_queue_depth", 8)),

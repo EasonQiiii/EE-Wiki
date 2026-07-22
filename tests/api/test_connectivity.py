@@ -94,8 +94,8 @@ def _client(cq: ConnectivityQuery | None) -> TestClient:
     return TestClient(app)
 
 
-def test_trace_net_http_authoritative(tmp_path: Path) -> None:
-    client = _client(_real_cq(tmp_path))
+def test_trace_net_http_cad_netlist_authoritative(tmp_path: Path) -> None:
+    client = _client(_real_cq(tmp_path, evidence="cad_netlist"))
     response = client.get(
         "/v1/schematic/connectivity/net",
         params={"q": "EDP_AUXP", "product": "iphone", "project": "logan", "build": "p1"},
@@ -134,7 +134,7 @@ def test_trace_net_404(tmp_path: Path) -> None:
 
 
 def test_connector_pins_and_module_nets_http(tmp_path: Path) -> None:
-    client = _client(_real_cq(tmp_path))
+    client = _client(_real_cq(tmp_path, evidence="cad_netlist"))
 
     pins = client.get(
         "/v1/schematic/connectivity/pins",

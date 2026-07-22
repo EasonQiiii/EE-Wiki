@@ -18,6 +18,7 @@ class ToolContext:
 
     config: AppConfig
     engine: HybridRagEngine
+    llm: object | None = None  # LlmBackend | None — optional for FA Radar extract
 
     def resolve_scope(
         self,

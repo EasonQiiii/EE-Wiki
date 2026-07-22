@@ -16,7 +16,7 @@
 | 5 | [docs/usage/agents.md](agents.md) | 当前 chat 路由、lab checklist、手工 smoke 表 |
 | 6 | [docs/usage/open-webui.md](open-webui.md) | Open WebUI 怎么连本机 EE-Wiki |
 
-读完应能回答：知识放哪、问句怎么进系统、怎样判断是 gate / agent / RAG。
+读完应能回答：知识放哪、问句怎么进系统、怎样判断是 clarify / respond / agent / RAG。
 
 ---
 
@@ -34,7 +34,7 @@
 
 | 文档 | 用途 |
 |------|------|
-| [ADR 0012](../adr/0012-chat-pipeline-grounding.md) | gates → rules-first route → hybrid RAG + 引用 |
+| [ADR 0012](../adr/0012-chat-pipeline-grounding.md) | Supervisor-first → rules-first route → hybrid RAG + 引用 |
 | [ADR 0008](../adr/0008-multi-agent-runtime.md) | Supervisor + ToolBus、写禁令 |
 | [fa-session.md](../architecture/fa-session.md) | Radar 会话、Flames 手工粘贴 |
 | [integrations-radar.md](../architecture/integrations-radar.md) | stub vs live `radarclient`（SPNego）；开真票改 `fa.radar.backend` |
@@ -44,10 +44,10 @@
 
 | 文档 | 用途 |
 |------|------|
-| [ADR 0009](../adr/0009-multi-source-schematic-map.md) | PDF + `.net` + `.brd` 合并；权威证据 |
+| [ADR 0009](../adr/0009-multi-source-schematic-map.md) | PDF + `.net` + `.brd` 合并；`.net` 为权威追网证据，`.brd` 仅作参考 |
 | [ADR 0007](../adr/0007-schematic-connectivity-extraction.md) | CAD 优先、PDF geometry 回退 |
 
-**要点：** 没有同 stem 的 netlist/BoardView 时，pin–net **会权威拒绝**，不会拿 OCR 瞎猜。
+**要点：** 没有同 stem 的 CAD netlist（`.net` / KiCad / Altium）时，pin–net **会权威拒绝**，不会拿 OCR / BoardView 瞎猜（BoardView `.brd` 仅作参考，不用于追网）。
 
 ### 架构地图（需要改代码时）
 
@@ -74,11 +74,16 @@ data/indexes/  (+ data/graph/)
         ↓
 Open WebUI → POST /v1/chat/completions
         ↓
-pre_rag_gates (FA / connectivity)
+TurnScope 锁（进 chat 即锁 product/project/build；历史 marker 跨轮携带，ADR 0012 §6）
         ↓
-Supervisor (rules-first → optional semantic → specialists)
+connectivity 权威门（trace 问题 → 网关 pin–net 表或显式拒绝，不进 Supervisor）
         ↓
-hybrid RAG (证据 + 检索 + 一次生成 + citations)
+FA 模式门（fa.enabled 时 resolve_chat_mode → FaAgent；无 Radar 也可开 unbound FAQ）
+        ↓
+Supervisor（clarify | respond | rules-first → semantic → specialists）
+        ↓
+hybrid RAG（证据 + 检索 + 一次生成 + citations）
+        ↑ radar / hw / pcb 经 ToolBus（无 chat 硬门）
 ```
 
 配置总入口：`config/default.yaml`（`data_layout`、`agents`、`fa`、`schematic_pdf.connectivity`、`models`）。
@@ -90,7 +95,7 @@ hybrid RAG (证据 + 检索 + 一次生成 + citations)
 1. **环境** — 从 `.env.example` 导出 `EE_WIKI_DATA_DIR`、`EE_WIKI_MODELS_DIR`（仓库不自动 load `.env`）。
 2. **布局** — raw 若仍是两层 `{project}/{build}/…`，先按 [ingest.md](ingest.md#adr-0011-layout-migration) migrate，再清 processed/indexes/graph 后重 ingest。
 3. **最小知识包**（至少一个真实 scope）  
-   - `sch/*.pdf` + **同 stem** `.net` 和/或 `.brd`  
+   - `sch/*.pdf` + **同 stem** `.net`（CAD netlist，权威追网必需；`.brd` 仅作参考）  
    - 若干 `note/` / `sop/`（给 power/hw 检索用）  
    - 可选：`fa/`、公司 Keynote 模板见 `assets/templates/fa/`
 4. **ingest + index**（或 sync）。
@@ -104,10 +109,10 @@ hybrid RAG (证据 + 检索 + 一次生成 + citations)
 
 | 开关 | 位置 | 作用 |
 |------|------|------|
-| `agents.enabled: false` | `config/default.yaml` | 关掉 Supervisor，退回 gate → RAG |
+| `agents.enabled: false` | `config/default.yaml` | 关掉 Supervisor；路由退回：TurnScope 锁 → connectivity 权威门 → FA 模式门（`fa.enabled` 时）→ hybrid RAG passthrough（不再有专家路由）。注意 `fa.enabled` 是独立开关，关 Supervisor 不会关 FA |
 | `fa.radar.backend` | 同上 | **`stub`（默认）或 `radarclient`（真票）——二选一，见下节** |
 | `fa.flames.backend: manual` | 同上 | 无 Flames API 时靠用户粘贴 log |
-| `schematic_pdf.connectivity.enabled` | 同上 | 关则不做权威追网门 |
+| `schematic_pdf.connectivity.enabled` | 同上 | 关则 `trace_net` 等工具权威拒绝 |
 
 **不要**在 lab 把 agent 配成可写 graph/ingest；写禁令见 ADR 0008。Radar **写回**（diagnosis / 上传附件）另需 `confirm=true`（ADR 0010），与读票 backend 无关。
 
@@ -120,7 +125,7 @@ hybrid RAG (证据 + 检索 + 一次生成 + citations)
 
 | `fa.radar.backend` | 行为 |
 |--------------------|------|
-| `stub`（仓库默认） | 始终用假票（仿真实 shape 的 title/description/diagnosis）。**根本不调用** `radarclient`，本机环境再好也是假数据。 |
+| `stub`（仓库默认） | 始终用假票（**固定场景** `rdar://101493937` Scarif flash erase，来自 lab `radar.log`）。**根本不调用** `radarclient`。 |
 | `radarclient` | 始终走真 Apple Radar（SPNego + Kerberos 票）。缺包、没票、拉票失败 → **直接报错**，不会自动切回 stub。 |
 
 开真票 checklist：
@@ -148,8 +153,8 @@ fa:
 | 能力 | 状态 |
 |------|------|
 | V3 图 / cases / power tree / rules / MCP | 已有 |
-| V4 Supervisor + 六角色 ToolBus | 已有（`agents.enabled` 默认 true） |
-| ADR 0012：gates 一次、规则优先路由、hybrid 引用 | 已 accepted |
+| V4 Supervisor + 七角色 ToolBus（含 `radar`） | 已有（`agents.enabled` 默认 true） |
+| ADR 0012：Supervisor-first、规则优先路由、hybrid 引用 | 已 accepted（amended） |
 | ADR 0011：三层 scope + migrate | 已 accepted |
 | ADR 0009：netlist/BoardView 合并 sidecar | 已落地；lab 需放 companion 文件 |
 | FA Radar | **默认 stub**；live 已实现，需手动改 `fa.radar.backend: radarclient`（无自动回退） |
@@ -164,7 +169,7 @@ fa:
 | 环境 / 模型 | local-setup | 模型路径、API、Open WebUI 连通 |
 | 知识库 | README 布局 + knowledge-authoring + ingest | 迁布局、放文档、ingest/index |
 | FA | 上文 Radar 开关 + fa-session + integrations-radar | stub smoke；要真票再改 backend 并确认 Kerberos |
-| 原理图追网 | ADR 0009 + agents smoke | 确认 `.net`/`.brd` 与权威拒绝行为 |
+| 原理图追网 | ADR 0009 + agents smoke | 确认 `.net` 权威来源与 BoardView 仅参考；权威拒绝行为 |
 | 联调 / 排错 | ADR 0012 + RequestTrace | 对照 smoke 表看 branch/route |
 
 ---

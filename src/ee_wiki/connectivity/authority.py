@@ -5,10 +5,12 @@ Schematic connectivity has four provenance tiers (see
 
     cad_netlist > boardview > pdf_geometry > ocr_spatial
 
-Only ``cad_netlist`` / ``boardview`` are board-verified electrical truth. The
-lower two tiers are geometry/OCR *guesses*. Failure Analysis (FA) conclusions
-must be grounded on verified connectivity, so a half-correct guess is worse
-than an explicit refusal: it silently misleads the analyst.
+Only ``cad_netlist`` is board-verified trace evidence. ``boardview`` (BoardView
+``.brd``) is retained as an *advisory reference* (net-membership / probe-point
+hints) but is never treated as verified trace truth. The remaining tiers
+(``pdf_geometry`` / ``ocr_spatial``) are geometry/OCR *guesses*. Failure Analysis
+(FA) conclusions must be grounded on verified connectivity, so a half-correct
+guess is worse than an explicit refusal: it silently misleads the analyst.
 
 This module is the single enforcement point. Every answer-grade consumer
 (HTTP routes, MCP tools, chat trace intercept, and any future FA
@@ -24,21 +26,24 @@ from dataclasses import dataclass, field
 from ee_wiki.common.config import SchematicConnectivityConfig
 
 DEFAULT_AUTHORITATIVE_EVIDENCE: frozenset[str] = frozenset(
-    {"cad_netlist", "boardview"}
+    {"cad_netlist"}
 )
 
 ADVISORY_REFUSAL = (
-    "No board-verified connectivity (CAD netlist / BoardView) is available for "
-    "this scope. Only geometry/OCR guesses exist, which are not reliable enough "
-    "to trace connections for failure analysis. Re-ingest the schematic with a "
-    "CAD netlist (.net / KiCad) or BoardView (.brd) companion, or verify on the "
-    "board directly. No trace is returned to avoid a misleading answer."
+    "No board-verified connectivity (CAD netlist) is available for this scope. "
+    "BoardView (.brd) data is retained as an advisory reference only and is not "
+    "treated as verified trace evidence. Only geometry/OCR guesses would "
+    "remain, which are not reliable enough to trace connections for failure "
+    "analysis. Re-ingest the schematic with a CAD netlist (.net / KiCad / "
+    "Altium) companion, or verify on the board directly. No trace is returned "
+    "to avoid a misleading answer."
 )
 
 MODULE_ADVISORY_NOTE = (
     "Module zone labels come from PDF geometry / OCR and are locating hints, "
-    "not verified electrical connectivity. Confirm any net with a CAD netlist / "
-    "BoardView trace before using it as FA evidence."
+    "not verified electrical connectivity. BoardView (.brd) is advisory "
+    "reference only. Confirm any net with a CAD netlist trace before using it "
+    "as FA evidence."
 )
 
 

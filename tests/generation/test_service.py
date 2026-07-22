@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ee_wiki.generation.citation_urls import _encode_path
 from ee_wiki.generation.prepare import PREPARE_MAX_TOKENS
 from ee_wiki.generation.service import INSUFFICIENT_ANSWER, RagService
 from ee_wiki.retrieval.hybrid.engine import HybridChunk, RetrievalResult
@@ -184,7 +185,9 @@ def test_answer_generates_from_retrieved_chunks(rag_service, repo_root) -> None:
     assert "VBAT" in result.answer
     assert len(result.citations) == 1
     assert result.citations[0].chunk_id == "note__power"
-    assert result.citations[0].url.endswith("/v1/raw/iphone/logan/p1/note/note.md")
+    assert result.citations[0].url.endswith(
+        "/v1/raw/" + _encode_path("iphone/logan/p1/note/note.md")
+    )
     assert "[1]" in result.answer
     assert "<a href=" not in result.answer
     assert "**引用 / References**" not in result.answer
@@ -486,14 +489,14 @@ def test_finalize_appends_image_block_when_citations_have_images(
         chunks=[chunk], top_rerank_score=1.0,
     )
 
-    def _fake_stream(prompt: str, cancel_event=None):
+    def _fake_stream(prompt: str, cancel_event=None, max_new_tokens=None):
         yield "POWER SWITCH 原理说明 [1]。"
 
     rag_service.llm.generate_stream = _fake_stream
 
     result = rag_service.answer("POWER SWITCH", target_project="logan", target_build="p1")
     assert "相关截图" in result.answer
-    assert "board_p1_page.png" in result.answer
+    assert "/v1/assets/" in result.answer
     assert result.citations[0].images
 
 

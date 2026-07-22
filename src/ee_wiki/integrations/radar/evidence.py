@@ -36,6 +36,70 @@ def user_diagnosis_entries(problem: RadarProblem) -> list[DiagnosisItem]:
     ]
 
 
+def format_radar_diagnosis_steps(
+    problem: RadarProblem,
+    *,
+    include_history: bool = False,
+    preview_chars: int = 900,
+) -> str:
+    """Format Radar diagnosis as a numbered FA step list (source of truth).
+
+    Args:
+        problem: Normalized Radar snapshot.
+        include_history: When true, append a short Radar History footnote.
+        preview_chars: Max characters per user diagnosis step body.
+
+    Returns:
+        Markdown listing diagnosis steps; empty string when none.
+    """
+    rid = problem.radar_id
+    user_steps = user_diagnosis_entries(problem)
+    lines: list[str] = [
+        f"## FA check-in — rdar://{rid}",
+        "",
+        f"**Title:** {problem.title or '—'}",
+        f"**State:** {problem.state or '—'} / {problem.substate or '—'}",
+        "",
+        "### Radar diagnosis steps（原文，非 EE-Wiki 推断）",
+        "",
+    ]
+    if not user_steps:
+        lines.append("_No user diagnosis notes on this Radar yet._")
+    else:
+        lines.append(
+            "以下按时间顺序列出票上 **人工 diagnosis**（已跳过 "
+            "`<Radar History>` 系统行）。**不是** true-fail / 根因结论。"
+        )
+        lines.append("")
+        for i, item in enumerate(user_steps, start=1):
+            who = (item.added_by or "—").strip()
+            body = item.text.strip()
+            if len(body) > preview_chars:
+                body = body[: preview_chars - 1].rstrip() + "…"
+            lines.append(f"**{i}. {who}**")
+            lines.append("")
+            lines.append(body)
+            lines.append("")
+
+    if include_history:
+        hist = [
+            d
+            for d in problem.diagnosis
+            if is_radar_history_entry(d.text) or d.entry_type == "history"
+        ]
+        if hist:
+            lines.append("### Radar History（系统行，摘要）")
+            lines.append("")
+            for d in hist[-6:]:
+                snippet = _HISTORY_BLOCK.sub("", d.text).strip() or d.text.strip()
+                snippet = re.sub(r"\s+", " ", snippet)
+                if len(snippet) > 160:
+                    snippet = snippet[:157] + "…"
+                lines.append(f"- {snippet}")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def compose_radar_evidence_corpus(problem: RadarProblem) -> str:
     """Build a single text corpus from title, description, and user diagnosis.
 

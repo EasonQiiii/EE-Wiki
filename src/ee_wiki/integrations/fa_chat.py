@@ -3,9 +3,10 @@
 Lightweight intent routing — not the V4 agent supervisor. Full ``agents/``
 FA orchestration still waits on ADR 0008 §8.
 
-Semantic judgments (evidence vs stay inside an FA chat) use the local LLM and
-``prompts/fa/classify_message.md``. Regex here is only for structural tokens
-(Radar ids in headers / URLs), not for "does this look like a log?".
+Semantic judgments (evidence vs FA dialogue) use the local LLM and
+``prompts/fa/classify_message.md`` / ``session_reply.md``. Regex here is only
+for structural tokens (Radar ids in headers / URLs), not for "does this look
+like a log?".
 """
 
 from __future__ import annotations
@@ -24,23 +25,17 @@ from ee_wiki.retrieval.rewrite import ConversationTurn
 logger = get_logger(__name__)
 
 # Structural entry: Radar URL / id tokens (not semantic "is this FA?" NLP).
+# The scheme may be followed by an optional URL path segment such as
+# `problem/` (real Radar URLs look like `rdar://problem/{id}`).
 _CHECKIN_VERB = re.compile(
     r"(?:new\s+check\s*in|check\s*in|开案|"
     r"(?:帮(?:我|忙)\s*)?(?:做(?:个|一下)?\s*)?(?:FA|分析)(?:\s*一下)?|"
     r"FA(?:\s*一下)?)\s*"
-    r"(?:rdar://|radar://|radar\s+)?(?P<id>\d{5,})",
-    re.IGNORECASE,
-)
-_CHECKIN_BARE = re.compile(
-    r"^(?:rdar://|radar://|radar\s+)(?P<id>\d{5,})\s*$",
+    r"(?:rdar://|radar://|radar\s+)(?:[A-Za-z0-9_-]+/)?(?P<id>\d{5,})",
     re.IGNORECASE,
 )
 _CHECKIN_RADAR_ANYWHERE = re.compile(
-    r"(?:rdar://|radar://|radar\s+)(?P<id>\d{5,})",
-    re.IGNORECASE,
-)
-_CHECKIN_FA_HINT = re.compile(
-    r"(?:FA|分析|开案|check\s*in|失效|帮我|帮忙)",
+    r"(?:rdar://|radar://|radar\s+)(?:[A-Za-z0-9_-]+/)?(?P<id>\d{5,})",
     re.IGNORECASE,
 )
 _FA_SESSION_RADAR = re.compile(
@@ -51,31 +46,49 @@ _STATION_LINE = re.compile(
     r"^\s*station\s*[:=]\s*(?P<station>\S.+?)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
+_EVIDENCE_MARKERS = re.compile(
+    r"(?:ERROR|FAIL|NG\b|FAIL:|ERROR:)",
+    re.IGNORECASE,
+)
+_ATTACHMENT_LINE = re.compile(
+    r"\*\*Radar attachments:\*\*\s*(.+)",
+    re.IGNORECASE,
+)
+_ABOUT_DIAGNOSIS_STEPS = re.compile(
+    r"(?:diagnosis|诊断|步骤|timeline|进度|已完成|"
+    r"做了什么|列一下|列出|FA\s*步骤|排查步骤)",
+    re.IGNORECASE,
+)
 
 
 def parse_fa_checkin_radar_id(text: str) -> str | None:
-    """Extract a Radar id from an FA check-in style user message.
+    """Extract a Radar id from a user message for FA check-in.
+
+    Structural tokens (any of these, anywhere in the utterance):
+
+    - ``rdar://101493937`` / ``radar://101493937``
+    - ``rdar://problem/101493937`` (real Radar web / paste format)
+    - ``radar 101493937``
+
+    No Chinese verb like 「分析」 is required.
 
     Args:
         text: Latest user utterance.
 
     Returns:
-        Digits-only Radar id, or ``None`` when this is not a check-in intent.
+        Digits-only Radar id, or ``None`` when no Radar token is present.
     """
     stripped = text.strip()
     if not stripped:
         return None
+    # Prefer explicit URL / radar+digits anywhere (structural, not NLP).
+    match = _CHECKIN_RADAR_ANYWHERE.search(stripped)
+    if match:
+        return normalize_radar_id(match.group("id"))
+    # Verb + bare digits (e.g. 「分析 12345678」 without scheme).
     match = _CHECKIN_VERB.search(stripped)
     if match:
         return normalize_radar_id(match.group("id"))
-    match = _CHECKIN_BARE.fullmatch(stripped)
-    if match:
-        return normalize_radar_id(match.group("id"))
-    # radar://ID first, then “帮我分析一下” (or other FA hint) anywhere.
-    if _CHECKIN_FA_HINT.search(stripped):
-        match = _CHECKIN_RADAR_ANYWHERE.search(stripped)
-        if match:
-            return normalize_radar_id(match.group("id"))
     return None
 
 
@@ -133,6 +146,21 @@ def awaiting_radar_id_from_history(
     return None
 
 
+def last_fa_checkin_markdown(
+    history: Sequence[ConversationTurn] | None,
+) -> str | None:
+    """Return the most recent assistant FA check-in markdown from history."""
+    if not history:
+        return None
+    for turn in reversed(history):
+        if turn.role != "assistant":
+            continue
+        if _FA_SESSION_RADAR.search(turn.content):
+            return turn.content
+        return None
+    return None
+
+
 def try_fa_chat_reply(
     config: AppConfig,
     question: str,
@@ -147,8 +175,9 @@ def try_fa_chat_reply(
     """Handle FA check-in / session turns; otherwise return ``None`` for RAG.
 
     When history already contains an FA check-in, the reply stays on the FA
-    path. Evidence vs stay is classified by the local LLM (prompt-driven);
-    without an LLM the session defaults to ``stay`` (ask again, never RAG).
+    path. Turns are ``evidence`` (ingest paste), ``question`` (dialogue from
+    check-in context), or ``stay`` (short redirect). Without an LLM, short
+    messages default to grounded dialogue — never silent RAG.
 
     Args:
         config: Application configuration (``fa.enabled`` gates this path).
@@ -157,8 +186,8 @@ def try_fa_chat_reply(
         user_product: Optional explicit API product filter.
         user_project: Optional explicit API project filter.
         user_build: Optional explicit API build filter.
-        llm: Optional local LLM for in-session message classification.
-        cancel_event: Optional cancellation for the classify call.
+        llm: Optional local LLM for classify + dialogue.
+        cancel_event: Optional cancellation for LLM calls.
 
     Returns:
         Markdown reply for Open WebUI, or ``None`` only when this chat is not
@@ -216,8 +245,20 @@ def try_fa_chat_reply(
         )
         return result.summary_markdown
 
-    logger.info("FA chat session-locked stay radar=%s", session_id)
-    return _session_stay_reply(session_id)
+    checkin = last_fa_checkin_markdown(history) or ""
+    if kind == "stay" and _looks_offtopic_wiki(question):
+        logger.info("FA chat session stay (off-topic) radar=%s", session_id)
+        return _session_offtopic_reply(session_id)
+
+    logger.info("FA chat session dialogue radar=%s kind=%s", session_id, kind)
+    return _session_dialogue_reply(
+        config,
+        question,
+        radar_id=session_id,
+        checkin_markdown=checkin,
+        llm=llm,
+        cancel_event=cancel_event,
+    )
 
 
 def _classify_session_message(
@@ -228,15 +269,20 @@ def _classify_session_message(
     llm: LlmBackend | None,
     cancel_event: threading.Event | None,
 ) -> str:
-    """Return ``evidence`` or ``stay`` for a bound FA session turn."""
+    """Return ``evidence``, ``question``, or ``stay`` for a bound FA turn."""
     if llm is None:
+        if _looks_like_evidence_paste(question):
+            logger.info(
+                "FA session classify (no LLM) → evidence rdar://%s",
+                radar_id,
+            )
+            return "evidence"
         logger.info(
-            "FA session classify skipped (no LLM) — default stay rdar://%s",
+            "FA session classify (no LLM) → question rdar://%s",
             radar_id,
         )
-        return "stay"
+        return "question"
 
-    # Lazy import: integrations may call generation only when an LLM is wired.
     from ee_wiki.generation.classify import classify_fa_message
 
     kind = classify_fa_message(
@@ -246,20 +292,198 @@ def _classify_session_message(
         repo_root=config.repo_root,
         cancel_event=cancel_event,
     )
-    return kind if kind == "evidence" else "stay"
+    if kind in {"evidence", "question", "stay"}:
+        return kind
+    # Unusable classify → dialogue, not the old rigid paste nag.
+    return "question"
 
 
-def _session_stay_reply(radar_id: str) -> str:
-    """Markdown when the user stays in FA but did not paste evidence."""
+def _session_dialogue_reply(
+    config: AppConfig,
+    question: str,
+    *,
+    radar_id: str,
+    checkin_markdown: str,
+    llm: LlmBackend | None,
+    cancel_event: threading.Event | None,
+) -> str:
+    """Answer an FA follow-up from check-in / Radar (diagnosis is authoritative)."""
+    # Diagnosis timeline is Radar source-of-truth — never leave to LLM freestyle.
+    if _ABOUT_DIAGNOSIS_STEPS.search(question):
+        from ee_wiki.integrations.factory import build_radar_backend
+        from ee_wiki.integrations.radar.evidence import format_radar_diagnosis_steps
+
+        problem = build_radar_backend(config).get_problem(radar_id)
+        return format_radar_diagnosis_steps(problem, include_history=True)
+
+    enriched = checkin_markdown
+    if not re.search(r"Radar diagnosis steps", checkin_markdown, re.IGNORECASE):
+        from ee_wiki.integrations.factory import build_radar_backend
+        from ee_wiki.integrations.radar.evidence import format_radar_diagnosis_steps
+
+        problem = build_radar_backend(config).get_problem(radar_id)
+        steps = format_radar_diagnosis_steps(problem)
+        if steps.strip():
+            enriched = f"{checkin_markdown.rstrip()}\n\n{steps}"
+
+    if llm is not None and enriched.strip():
+        from ee_wiki.generation.classify import generate_fa_session_reply
+
+        generated = generate_fa_session_reply(
+            question,
+            radar_id=radar_id,
+            checkin_markdown=enriched,
+            llm=llm,
+            repo_root=config.repo_root,
+            cancel_event=cancel_event,
+        )
+        if generated:
+            if "FA check-in" not in generated:
+                return (
+                    f"## FA check-in — rdar://{normalize_radar_id(radar_id)}\n\n"
+                    f"{generated}"
+                )
+            return generated
+
+    return _deterministic_session_reply(radar_id, question, enriched)
+
+
+def _deterministic_session_reply(
+    radar_id: str,
+    question: str,
+    checkin_markdown: str,
+) -> str:
+    """Grounded FA dialogue without LLM (attachments / next steps / logs)."""
+    rid = normalize_radar_id(radar_id)
+    lines = [f"## FA check-in — rdar://{rid}", ""]
+    q = question.strip()
+    attachments = _parse_attachment_names(checkin_markdown)
+    has_fail_items = bool(
+        re.search(r"### Fail items\n(?:- .+\n)+", checkin_markdown)
+    )
+    needs_paste = "Need test evidence" in checkin_markdown
+    about_log = bool(
+        re.search(r"log|日志|附件|attachment|evidence|证据", q, re.IGNORECASE)
+    )
+    about_next = bool(
+        re.search(r"下一步|接下来|next|怎么继续|然后呢|继续", q, re.IGNORECASE)
+    )
+
+    if about_log:
+        if attachments:
+            names = ", ".join(f"`{n}`" for n in attachments)
+            lines.append(
+                f"有的——Radar 上已经挂了附件名：{names}。"
+            )
+            lines.append("")
+            lines.append(
+                "不过当前路径只拉了 **附件元数据 / 标题 / description / diagnosis**，"
+                "**没有把 `.log` 正文下载进聊天**。"
+                "Flames 产线 log 是另一条链路（默认 manual 时靠粘贴）。"
+            )
+            if has_fail_items:
+                lines.append("")
+                lines.append(
+                    "这张票里已经从 Radar 文本抽出了 fail items；"
+                    "若你要对照原始 log 正文，需要打开 Radar 下载附件，"
+                    "或把相关片段贴到这里。"
+                )
+        elif needs_paste:
+            lines.append(
+                "这张票的 check-in 里还没有列出可用的 Radar 附件名，"
+                "Flames 也还没拿到 fail items。可以贴一段带 ERROR/FAIL 的 log，"
+                "或 bullet 失败项，我再继续整理。"
+            )
+        else:
+            lines.append(
+                "当前 check-in 没有列出 Radar 附件名。"
+                "若票上确实有 log，可在 Radar 客户端打开下载，或把关键片段贴到这里。"
+            )
+        return "\n".join(lines)
+
+    if about_next or not q:
+        if has_fail_items:
+            lines.append("目前 check-in 里 **已经有 fail items**（来自 Radar 文本/诊断）。")
+            lines.append("")
+            lines.append("建议下一步：")
+            lines.append("1. 标出哪些是 **true fail**（相对 fixture / SW / setup）")
+            lines.append("2. 选定要追的模块 / 网络 / 位号，我再帮你对 EE-Wiki 知识库或追网")
+            if attachments:
+                lines.append(
+                    "3. 若要核对原始数据：Radar 附件 "
+                    + ", ".join(f"`{n}`" for n in attachments)
+                    + "（需在 Radar 下载正文；本聊天默认不自动拉附件内容）"
+                )
+        elif needs_paste:
+            lines.append(
+                "下一步：补测试证据。优先贴 **ERROR/FAIL 行** 或失败 bullet 列表；"
+                "可选 `station: <工站>`。"
+            )
+        else:
+            lines.append(
+                "下一步：确认 scope / 现象，或贴 fail 列表后继续模块排查。"
+            )
+        return "\n".join(lines)
+
+    # Generic grounded summary of what we already know
+    lines.append("还在这张 FA 会话里。根据上一轮 check-in：")
+    lines.append("")
+    if attachments:
+        lines.append(
+            "- Radar 附件名："
+            + ", ".join(f"`{n}`" for n in attachments)
+            + "（元数据；正文未自动下载）"
+        )
+    if has_fail_items:
+        lines.append("- 已抽出 fail items — 请指出 true fail 以继续")
+    elif needs_paste:
+        lines.append("- 仍缺结构化 fail 证据 — 可贴 ERROR/FAIL log 或 bullet 列表")
+    lines.append("")
+    lines.append("你可以直接问「有没有 log」「下一步做什么」，或点名某个 fail item。")
+    return "\n".join(lines)
+
+
+def _session_offtopic_reply(radar_id: str) -> str:
+    """Short redirect when the user asks a general wiki question in FA chat."""
     rid = normalize_radar_id(radar_id)
     return (
         f"## FA check-in — rdar://{rid}\n\n"
-        "This chat is locked to the FA session above. "
-        "Paste the **test log** (preferred) or a bullet list of "
-        "**error / fail** items to continue triage.\n\n"
-        "Optional: `station: <name>` and serial (SN).\n\n"
-        "For general wiki questions (part parameters, procedures, etc.), "
-        "open a **new** Open WebUI chat — this thread will not fall back to RAG."
+        "这句更像通用 wiki / 器件查询，和本张 FA 票的 triage 无关。\n\n"
+        "- 继续本票：问 fail items、Radar 附件、下一步排查，或贴 ERROR/FAIL log\n"
+        "- 查通用知识：请 **新开** 一个 Open WebUI 对话（本线程不会静默切到 RAG）"
+    )
+
+
+def _parse_attachment_names(checkin_markdown: str) -> list[str]:
+    match = _ATTACHMENT_LINE.search(checkin_markdown)
+    if not match:
+        return []
+    raw = match.group(1)
+    return [n.strip("` ") for n in re.findall(r"`([^`]+)`", raw)]
+
+
+def _looks_like_evidence_paste(text: str) -> bool:
+    """Structural hint when no LLM: multi-line paste with fail markers."""
+    stripped = text.strip()
+    if len(stripped) < 40:
+        return False
+    if _EVIDENCE_MARKERS.search(stripped):
+        return True
+    lines = [ln for ln in stripped.splitlines() if ln.strip()]
+    return len(lines) >= 8 and len(stripped) >= 200
+
+
+def _looks_offtopic_wiki(text: str) -> bool:
+    """Conservative off-topic hint (wiki params) when classify returns stay."""
+    stripped = text.strip()
+    if len(stripped) < 4:
+        return False
+    return bool(
+        re.search(
+            r"(?:核心参数|datasheet|数据手册|怎么翻译|what is|pinout 是什么)",
+            stripped,
+            re.IGNORECASE,
+        )
     )
 
 

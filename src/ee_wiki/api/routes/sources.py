@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 
 from ee_wiki.api.deps import get_config
 from ee_wiki.common.config import AppConfig
+from ee_wiki.generation.citation_urls import _decode_path
 
 router = APIRouter(prefix="/v1", tags=["sources"])
 
@@ -50,7 +51,7 @@ def get_source_document(
     config: AppConfig = Depends(get_config),
 ) -> FileResponse:
     """Return a processed Markdown or text document for citation links."""
-    path = _resolve_processed_path(config, file_path)
+    path = _resolve_processed_path(config, _decode_path(file_path))
     media_type, _ = mimetypes.guess_type(path.name)
     return FileResponse(
         path,
@@ -65,7 +66,7 @@ def get_raw_document(
     config: AppConfig = Depends(get_config),
 ) -> FileResponse:
     """Return an original raw document for citation download links."""
-    path = _resolve_raw_path(config, file_path)
+    path = _resolve_raw_path(config, _decode_path(file_path))
     media_type, _ = mimetypes.guess_type(path.name)
     return FileResponse(
         path,
@@ -80,7 +81,7 @@ def get_processed_asset(
     config: AppConfig = Depends(get_config),
 ) -> FileResponse:
     """Return an image or other asset stored under ``data/processed/``."""
-    path = _resolve_processed_path(config, file_path)
+    path = _resolve_processed_path(config, _decode_path(file_path))
     media_type, _ = mimetypes.guess_type(path.name)
     return FileResponse(
         path,

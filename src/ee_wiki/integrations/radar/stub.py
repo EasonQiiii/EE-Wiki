@@ -1,4 +1,9 @@
-"""Offline stub Radar backend for FA session development and tests."""
+"""Offline stub Radar backend for FA session development and tests.
+
+Canonical fixture is a faithful offline copy of lab sample
+``rdar://problem/101493937`` (Scarif flash erase / standby), captured from
+``radarclient`` in ``radar.log``. Stub never calls Apple services.
+"""
 
 from __future__ import annotations
 
@@ -17,34 +22,54 @@ from ee_wiki.protocols.radar import (
 
 logger = get_logger(__name__)
 
+# Lab sample id from radar.log — preferred smoke / Open WebUI check-in target.
+CANONICAL_STUB_RADAR_ID = "101493937"
 
-def _sample_problem(
+_REAL_COMPONENT_NAME = "B5xx HW Build FATP"
+_REAL_COMPONENT_VERSION = "P0"
+_REAL_COMPONENT_ID = 1457538
+
+
+def _history(text: str, *, added_by: str) -> DiagnosisItem:
+    return DiagnosisItem(
+        text=f"<Radar History>\n{text}\n</Radar History>",
+        added_by=added_by,
+        entry_type="history",
+    )
+
+
+def _scarif_flash_erase_problem(
     rid: str,
     *,
     component_name: str,
     component_version: str,
+    component_id: int | None = None,
 ) -> RadarProblem:
-    """Build a redacted stub shaped like a real radarclient snapshot.
+    """Build the Scarif flash-erase ticket snapshot from radar.log.
 
-    Based on lab sample rdar://101493937 (flash erase / standby) so offline
-    FA check-in can exercise Radar title → description → diagnosis evidence
-    without Apple network access.
+    Narrative, diagnosis thread, and attachment names match
+    ``rdar://101493937``. ``component_*`` may be overridden for EE-Wiki scope
+    tests; the canonical id uses the real B5xx / P0 component by default.
     """
+    eason = "Eason Qi (eason.qi@byd.com)"
+    fei = "Fei Gao (f_gao@apple.com)"
+    kevin = "Kevin Abas (kabas@apple.com)"
+
     return RadarProblem(
         radar_id=rid,
-        title=f"[stub] Scarif flash erase issue ({rid})",
-        state="Analyze",
-        substate="Investigate",
+        title="Ruby,P0,Scarif flash erase issue",
+        state="Verify",
+        substate="",
         component=RadarComponentRef(
-            id=1,
+            id=component_id if component_id is not None else _REAL_COMPONENT_ID,
             name=component_name,
             version=component_version,
         ),
         found_in_builds=(component_version,),
         configuration_summary=(
-            f"stub unit for radar {rid}; build {component_version}"
+            f"Ruby / Scarif FATP; component {component_name} {component_version}"
         ),
-        assignee="stub.user@example.com",
+        assignee="Fei Gao (f_gao@apple.com)",
         priority="3",
         description=(
             DescriptionItem(
@@ -52,49 +77,165 @@ def _sample_problem(
                     "Summary:\n"
                     "This rdar is for the Scarif flash cannot erase fully"
                 ),
-                added_by="stub",
+                added_by=eason,
             ),
         ),
         diagnosis=(
+            _history("New information added to Problem diagnosis.", added_by=eason),
+            _history(
+                "1 file(s) added to Attachments.\n"
+                "1 file(s) added to Attachments.",
+                added_by=eason,
+            ),
             DiagnosisItem(
                 text=(
                     "The external flash cannot been erased fully"
                     "(turn to all `0xff`) after issue command "
                     "`imu -d gyro save xxx`.\n\n"
+                    "Check attachment  "
+                    "`Flash not erased fully after imu -d gyro save xxx.png` "
+                    "for quick compare review.\n\n"
                     "Raw fail log please check "
-                    "`UNIT_save_100_NG.log` and `UNIT_save_500_NG.log`."
+                    "`H9H242500041JJY1A_save_100_NG.log` and "
+                    "`H9H242500041JJY1A_save_500_NG.log`."
                 ),
-                added_by="stub",
+                added_by=eason,
                 entry_type="user",
             ),
-            DiagnosisItem(
-                text=(
-                    "<Radar History>\n"
-                    "Assignee was changed.\n"
-                    "</Radar History>"
-                ),
-                added_by="stub",
-                entry_type="history",
+            _history(
+                "Picture 'Flash not erased fully after`imu -d gyro save xxx`.png' "
+                "added.",
+                added_by=eason,
+            ),
+            _history(
+                'Assignee was changed from "Fei Gao" to "Kevin Abas".',
+                added_by=fei,
+            ),
+            _history(
+                "Added Relation: this problem is related to "
+                "rdar://problem/99757923.",
+                added_by=fei,
+            ),
+            _history("New information added to Problem diagnosis.", added_by=kevin),
+            _history(
+                'Assignee was changed from "Kevin Abas" to "Fei Gao".',
+                added_by=kevin,
             ),
             DiagnosisItem(
                 text=(
+                    "Hi Eason,\n\n"
                     "It looks like system is entering standby during test\n\n"
-                    "> Enter Standby\n"
+                    "\n"
+                    "  1003f0 :ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff "
+                    "| ................\n"
+                    "--------------------------------------------------------"
+                    "------------------------\n"
+                    "> Enter Standby                                          "
+                    "<——————————————————————————HERE\n"
                     "MSG:  IMUProcessor State: Extended Idle\n\n"
+                    "> imu -d gyro start\n"
+                    "- Start Streaming ---------------------------------------"
+                    "-----------------------\n"
+                    "Success!\n"
+                    "--------------------------------------------------------"
+                    "------------------------\n"
+                    "> imu -d gyro print 1\n"
+                    "- Print Enable ------------------------------------------"
+                    "-----------------------\n"
+                    "Print set to 1\n"
+                    "----------------------------------------------------"
+                    "MSG: PrintData, 94: Gyro  66 temperature (raw) 442\n"
+                    "MSG: PrintData, 43: Gyro  66 accel (raw) "
+                    "[    6, -2003,   17]\n\n"
+                    "\n\n"
                     "Before running any test can you please try "
-                    "`pwr_state set factory` then continue with full test."
+                    "‘pwr_state set factory’ \n"
+                    "Then continue with full test."
                 ),
-                added_by="stub",
+                added_by=kevin,
                 entry_type="user",
+            ),
+            _history("New information added to Problem diagnosis.", added_by=eason),
+            _history(
+                "1 file(s) added to Attachments.\n"
+                "1 file(s) added to Attachments.",
+                added_by=eason,
+            ),
+            DiagnosisItem(
+                text=(
+                    "Ran total 40x times same sequence with 2x MLBs with "
+                    "setting `pwr_state set factory` .\n\n"
+                    "No previous failure found, will keep monitoring this "
+                    "issue.\n\n"
+                    "Detail pass log please see "
+                    "`sensor_flash_test_PASS_with_MLB_1&2.log`"
+                ),
+                added_by=eason,
+                entry_type="user",
+            ),
+            _history(
+                'Substate was changed from "Screen" to "".\n'
+                'Resolution was changed from "Unresolved" to '
+                '"Process Changed".\n'
+                'Resolver was changed from null to "Fei Gao".\n'
+                'State was changed from "Analyze" to "Verify".\n'
+                "Read by assignee check box was checked.",
+                added_by=fei,
             ),
         ),
         attachments=(
-            AttachmentMeta(file_name="UNIT_save_100_NG.log", kind="attachment"),
-            AttachmentMeta(file_name="UNIT_save_500_NG.log", kind="attachment"),
             AttachmentMeta(
-                file_name="sensor_flash_test_PASS.log", kind="attachment"
+                file_name="H9H242500041JJY1A_save_100_NG.log",
+                kind="attachment",
+                added_by=eason,
+            ),
+            AttachmentMeta(
+                file_name="H9H242500041JJY1A_save_500_NG.log",
+                kind="attachment",
+                added_by=eason,
+            ),
+            AttachmentMeta(
+                file_name="sensor_flash_test_PASS_with_MLB_1.log",
+                kind="attachment",
+                added_by=eason,
+            ),
+            AttachmentMeta(
+                file_name="sensor_flash_test_PASS_with_MLB_2.log",
+                kind="attachment",
+                added_by=eason,
+            ),
+            AttachmentMeta(
+                file_name=(
+                    "Flash not erased fully after imu -d gyro save xxx.png"
+                ),
+                kind="picture",
+                added_by=eason,
             ),
         ),
+    )
+
+
+def _sample_problem(
+    rid: str,
+    *,
+    component_name: str,
+    component_version: str,
+) -> RadarProblem:
+    """Return the Scarif fixture; canonical id keeps real B5xx/P0 component."""
+    if rid == CANONICAL_STUB_RADAR_ID:
+        return _scarif_flash_erase_problem(
+            rid,
+            component_name=_REAL_COMPONENT_NAME,
+            component_version=_REAL_COMPONENT_VERSION,
+            component_id=_REAL_COMPONENT_ID,
+        )
+    # Other ids reuse the same narrative so unit tests / casual ids still work;
+    # component comes from config for EE-Wiki scope aliasing.
+    return _scarif_flash_erase_problem(
+        rid,
+        component_name=component_name,
+        component_version=component_version,
+        component_id=1,
     )
 
 
@@ -104,14 +245,14 @@ class StubRadarBackend:
     def __init__(
         self,
         *,
-        default_component_name: str = "demo_product",
-        default_component_version: str = "P1",
+        default_component_name: str = _REAL_COMPONENT_NAME,
+        default_component_version: str = _REAL_COMPONENT_VERSION,
     ) -> None:
         """Initialize the stub store.
 
         Args:
-            default_component_name: Synthetic component name for new problems.
-            default_component_version: Synthetic component version / build.
+            default_component_name: Component name for non-canonical radar ids.
+            default_component_version: Component version / build for those ids.
         """
         self._default_component_name = default_component_name
         self._default_component_version = default_component_version
@@ -120,7 +261,7 @@ class StubRadarBackend:
         self._attachments: dict[str, list[AttachmentMeta]] = {}
 
     def get_problem(self, radar_id: str) -> RadarProblem:
-        """Return a synthetic or previously mutated problem snapshot."""
+        """Return the Scarif fixture (or a previously mutated copy)."""
         rid = normalize_radar_id(radar_id)
         if rid not in self._problems:
             sample = _sample_problem(
@@ -131,6 +272,13 @@ class StubRadarBackend:
             self._problems[rid] = sample
             self._diagnosis[rid] = list(sample.diagnosis)
             self._attachments[rid] = list(sample.attachments)
+            logger.info(
+                "Stub Radar seeded rdar://%s title=%r component=%s|%s",
+                rid,
+                sample.title,
+                sample.component.name if sample.component else "?",
+                sample.component.version if sample.component else "?",
+            )
         problem = self._problems[rid]
         return RadarProblem(
             radar_id=problem.radar_id,
@@ -158,6 +306,37 @@ class StubRadarBackend:
         rid = normalize_radar_id(radar_id)
         self.get_problem(rid)
         return list(self._attachments.get(rid, []))
+
+    def download_attachment(
+        self,
+        radar_id: str,
+        file_name: str,
+        *,
+        dest_path: Path,
+    ) -> Path:
+        """Write a synthetic stub file for download-link UX (not live bytes)."""
+        rid = normalize_radar_id(radar_id)
+        self.get_problem(rid)
+        names = {a.file_name for a in self._attachments.get(rid, [])}
+        if file_name not in names:
+            from ee_wiki.common.errors import IntegrationError
+
+            raise IntegrationError(
+                f"Attachment {file_name!r} not found on stub rdar://{rid}"
+            )
+        dest_path = Path(dest_path)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        body = (
+            f"# EE-Wiki stub Radar attachment\n"
+            f"# rdar://{rid}\n"
+            f"# file: {file_name}\n"
+            f"# NOTE: placeholder for /v1/cache download UX; not live Radar bytes.\n"
+            f"PASS: flash erase sequence completed\n"
+            f"PASS: no standby under pwr_state set factory\n"
+        ).encode("utf-8")
+        dest_path.write_bytes(body)
+        logger.info("Stub Radar attachment written %s -> %s", file_name, dest_path)
+        return dest_path
 
     def add_diagnosis(
         self,

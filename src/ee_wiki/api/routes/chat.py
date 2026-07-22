@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -15,7 +16,6 @@ from fastapi.responses import StreamingResponse
 from ee_wiki.api.cancel import start_disconnect_watcher
 from ee_wiki.api.chat_pipeline import (
     RequestTrace,
-    pre_rag_gates,
     scope_source_label,
 )
 from ee_wiki.api.citation_models import citation_to_model
@@ -39,6 +39,11 @@ from ee_wiki.api.open_webui_auxiliary import (
 )
 from ee_wiki.api.open_webui_sources import citations_to_open_webui_sources
 from ee_wiki.api.rag_handler import raise_queue_full_http_error
+from ee_wiki.api.scope_marker import (
+    CarriedScope,
+    format_scope_marker,
+    parse_scope_marker,
+)
 from ee_wiki.api.scope_params import resolve_request_scope
 from ee_wiki.api.stream_cancel import iter_sync_text_chunks
 from ee_wiki.api.stream_status import (
@@ -53,16 +58,27 @@ from ee_wiki.api.timeout import (
     raise_request_timeout_http_error,
     run_sync_with_request_timeout,
 )
+from ee_wiki.common.errors import EEWikiError
 from ee_wiki.common.logging import get_logger
 from ee_wiki.connectivity.query import ConnectivityQuery
+from ee_wiki.generation.citations import (
+    StreamingCitationMarkerRemapper,
+    compact_citations,
+    remap_citation_markers,
+)
 from ee_wiki.generation.elapsed import RagPhaseTiming, format_phase_timing_footer
 from ee_wiki.generation.inline_images import build_image_block
 from ee_wiki.generation.llm.errors import LlmLoadError, LlmTimeoutError
 from ee_wiki.generation.service import INSUFFICIENT_ANSWER, AnswerStreamResult, RagService
+from ee_wiki.integrations.fa_errors import format_fa_error
 from ee_wiki.retrieval.rewrite import ConversationTurn
 
 router = APIRouter(prefix="/v1", tags=["chat"])
 logger = get_logger(__name__)
+
+# Strips any echoed scope marker so _emit appends exactly one (a tool/LLM may
+# copy the invisible `<!-- ee-wiki-scope: -->` comment into its output).
+_SCOPE_MARKER_STRIP_RE = re.compile(r"<!--\s*ee-wiki-scope:[^>]*-->")
 
 
 def _extract_user_question(messages: list) -> str:
@@ -114,6 +130,7 @@ def _fetch_stream_result(
     task: str | None,
     history: list[ConversationTurn] | None,
     connectivity_query: ConnectivityQuery | None = None,
+    conversation_id: str | None = None,
 ) -> AnswerStreamResult:
     """Run gates, supervisor intent, then hybrid RAG (ADR 0012)."""
     if bypass_rag:
@@ -134,41 +151,174 @@ def _fetch_stream_result(
             build=target_build,
         ),
     )
-    gate_started = time.monotonic()
-    gate = pre_rag_gates(
-        service.config,
-        question,
-        history,
-        product=target_product,
-        project=target_project,
-        build=target_build,
-        connectivity_query=connectivity_query,
-        llm=service.llm,
-        cancel_event=cancel_event,
-    )
-    trace.mark_phase("gate", gate_started)
-    if gate is not None:
-        trace.gate = gate.kind
-        trace.branch = "direct"
-        trace.roles = gate.roles_used
-        trace.log()
-        return AnswerStreamResult(
-            citations=[],
-            text_chunks=iter([gate.markdown]),
+
+    # Open WebUI rarely sends body.product/project/build. Lock TurnScope once
+    # here (ADR 0012 §6) before connectivity / FA / Supervisor / tools.
+    # Downstream must not re-infer conflicting product/project/build.
+    if not (target_product and target_project and target_build):
+        from ee_wiki.retrieval.scope_from_question import merge_scope_from_question
+
+        target_product, target_project, target_build = merge_scope_from_question(
+            question,
+            config=service.config,
+            engine=getattr(service, "engine", None),
+            product=target_product,
+            project=target_project,
+            build=target_build,
         )
+        trace.scope_source = scope_source_label(
+            product=target_product,
+            project=target_project,
+            build=target_build,
+        )
+
+    # Cross-turn scope carry via a history-embedded marker (ADR 0012 §6,
+    # multi-worker safe). Instead of a per-process memory store (which drops the
+    # carry when consecutive turns hit different uvicorn workers), the locked
+    # (product, project, build) is embedded as a hidden HTML comment in the
+    # assistant reply and recovered from `history` next turn. Explicit
+    # body/question scope already won above; the carry only backfills axes the
+    # new question left blank. No NL re-inference, no shared state. The carry is
+    # driven by `history` (the prior turns Open WebUI echoes back), NOT by
+    # `conversation_id` — Open WebUI's standard OpenAI-compatible
+    # /v1/chat/completions request does not send `conversation_id`, so gating on
+    # it would silently disable carry in production. Both steps are gated by
+    # `carry_scope_across_turns`.
+    if service.config.api.carry_scope_across_turns and history:
+        carried = parse_scope_marker(history)
+        if carried is not None:
+            if not target_product and carried.product:
+                target_product = carried.product
+            if not target_project and carried.project:
+                target_project = carried.project
+            if not target_build and carried.build:
+                target_build = carried.build
+            if target_product or target_project or target_build:
+                trace.scope_source = scope_source_label(
+                    product=target_product,
+                    project=target_project,
+                    build=target_build,
+                    carried=True,
+                )
+
+    # Prepare this turn's scope marker. It is a hidden comment appended to the
+    # assistant reply (see `_emit`) so the next turn can recover it from history.
+    # Only emitted when carrying is enabled, a conversation id exists, and the
+    # locked scope is non-empty. `_emit` attaches it to every answer branch
+    # uniformly, so connectivity / FA / supervisor / hybrid answers all carry it.
+    _scope_marker: str | None = None
+    if service.config.api.carry_scope_across_turns:
+        _locked = CarriedScope(target_product, target_project, target_build)
+        if not _locked.empty:
+            _scope_marker = format_scope_marker(
+                target_product, target_project, target_build
+            )
+
+    def _emit(text_chunks: Iterator[str], *, citations: list) -> AnswerStreamResult:
+        if not _scope_marker:
+            return AnswerStreamResult(citations=list(citations), text_chunks=text_chunks)
+
+        def _stream() -> Iterator[str]:
+            for chunk in text_chunks:
+                # Strip any echoed marker (a tool/LLM may copy the invisible
+                # comment) so we append exactly one at the end.
+                yield _SCOPE_MARKER_STRIP_RE.sub("", chunk)
+            yield _scope_marker
+
+        return AnswerStreamResult(citations=list(citations), text_chunks=_stream())
+
+    # Authoritative connectivity gate (ADR 0009): trace questions must return
+    # gated pin tables or an explicit refusal — never hybrid-RAG prose that
+    # invents 起点→终点 paths from VLM/OCR text.
+    conn_cfg = getattr(
+        getattr(service.config, "schematic_pdf", None), "connectivity", None
+    )
+    if conn_cfg is not None and getattr(conn_cfg, "enabled", False):
+        from ee_wiki.connectivity.chat import answer_trace_question
+
+        trace_md = answer_trace_question(
+            question,
+            cq=connectivity_query,
+            connectivity_enabled=True,
+            product=target_product,
+            project=target_project,
+            build=target_build,
+        )
+        if trace_md is not None:
+            trace.gate = "connectivity_authority"
+            trace.branch = "respond"
+            trace.task_owner = "connectivity"
+            trace.task = "trace"
+            trace.log()
+            return _emit(iter([trace_md]), citations=[])
 
     routed_task = task
     agent_evidence: str | None = None
     task_owner = "legacy"
     agents_cfg = getattr(service.config, "agents", None)
 
+    # FA mode gate (fa-session.md A/B/C): runs before the Wiki Supervisor so an
+    # FA-intent turn (with or without a Radar id) never silently falls through
+    # to hybrid RAG. When fa.enabled and mode == "fa", route to FaAgent.
+    # Use ``is True`` so a bare-MagicMock test service (where service.config is
+    # not a real bool) cannot accidentally enter the LLM path — mirrors the
+    # supervisor guard below.
+    mode = "wiki"
+    if service.config.fa.enabled is True and not bypass_rag:
+        from ee_wiki.agents.fa_mode import resolve_chat_mode
+
+        mode = resolve_chat_mode(
+            question,
+            history,
+            llm=service.llm,
+            config=service.config,
+            cancel_event=cancel_event,
+        )
+    trace.mode = mode
+
+    if service.config.fa.enabled is True and mode == "fa":
+        from ee_wiki.agents.fa_agent import FaAgentResult, open_fa_agent
+        from ee_wiki.tools.context import ToolContext
+
+        fa_ctx = ToolContext(config=service.config, engine=service.engine)
+        fa_ctx.llm = service.llm
+        fa_agent = open_fa_agent(service.config, tool_context=fa_ctx, llm=service.llm)
+        try:
+            fa_result = fa_agent.handle(
+                question,
+                product=target_product,
+                project=target_project,
+                build=target_build,
+                history=history,
+                cancel_event=cancel_event,
+            )
+        except EEWikiError as exc:
+            # Radar integration failure (no Kerberos, ACL/403, ticket missing,
+            # attachment download). Surface a friendly Chinese reply instead of
+            # letting the exception escape to an HTTP 500. Details are logged.
+            logger.warning("FA agent error; returning friendly message", exc_info=True)
+            fa_result = FaAgentResult(
+                markdown=format_fa_error(exc),
+                citations=[],
+                routed_skills=(),
+                branch="fa_agent_error",
+            )
+        trace.gate = "fa_mode"
+        trace.branch = fa_result.branch
+        trace.task_owner = "fa_agent"
+        trace.task = "fa"
+        trace.roles = fa_result.routed_skills
+        trace.log()
+        return _emit(iter([fa_result.markdown]), citations=fa_result.citations)
+
     # V4 supervisor path (ADR 0008 / 0012). Require real bool True so MagicMock
-    # configs in unit tests fall through to legacy RAG after gates.
+    # configs in unit tests fall through to legacy RAG.
     if agents_cfg is not None and agents_cfg.enabled is True:
         from ee_wiki.agents.supervisor import open_supervisor
         from ee_wiki.tools.context import ToolContext
 
         tool_ctx = ToolContext(config=service.config, engine=service.engine)
+        tool_ctx.llm = service.llm
         supervisor = open_supervisor(
             service.config,
             tool_context=tool_ctx,
@@ -193,6 +343,11 @@ def _fetch_stream_result(
         task_owner = "supervisor"
         trace.task_owner = "supervisor"
         trace.task = routed_task
+
+        if result.kind in ("clarify", "respond"):
+            trace.branch = result.kind
+            trace.log()
+            return _emit(iter([result.markdown]), citations=[])
 
         if result.kind == "hybrid":
             agent_evidence = result.markdown or None
@@ -230,7 +385,7 @@ def _fetch_stream_result(
     if agent_evidence and not stream.citations:
         trace.evidence_only = True
     trace.log()
-    return stream
+    return _emit(stream.text_chunks, citations=stream.citations)
 
 
 def _elapsed_footer(
@@ -394,6 +549,7 @@ async def chat_completions(
                     request_started=request_started,
                     show_elapsed_time=show_elapsed_time,
                     connectivity_query=connectivity_query,
+                    conversation_id=body.conversation_id,
                 ):
                     yield chunk
             finally:
@@ -439,6 +595,7 @@ async def chat_completions(
                     task=body.task,
                     history=history,
                     connectivity_query=connectivity_query,
+                    conversation_id=body.conversation_id,
                     timeout_seconds=remaining_timeout,
                 )
             except (RequestTimeoutError, LlmTimeoutError) as exc:
@@ -483,8 +640,12 @@ async def chat_completions(
                 return Response(status_code=204)
 
             content = "".join(fragments).strip() or INSUFFICIENT_ANSWER
-            citation_models = [citation_to_model(citation) for citation in stream_result.citations]
-            sources = citations_to_open_webui_sources(stream_result.citations)
+            # Compact duplicate citations (same document) and remap the LLM's
+            # dense [N] markers so Open WebUI's sources stay 1:1 with the text.
+            _compacted, _marker_map = compact_citations(stream_result.citations)
+            content = remap_citation_markers(content, _marker_map)
+            citation_models = [citation_to_model(citation) for citation in _compacted]
+            sources = citations_to_open_webui_sources(_compacted)
             insufficient = content == INSUFFICIENT_ANSWER and not stream_result.citations
             try:
                 if config.generation.inline_citation_images and not insufficient:
@@ -557,6 +718,7 @@ async def _stream_answer(
     request_started: float | None = None,
     show_elapsed_time: bool = False,
     connectivity_query: ConnectivityQuery | None = None,
+    conversation_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Yield OpenAI-compatible SSE chunks for a streamed RAG answer."""
     cancel = threading.Event()
@@ -609,6 +771,7 @@ async def _stream_answer(
             task=task,
             history=history,
             connectivity_query=connectivity_query,
+            conversation_id=conversation_id,
             timeout_seconds=remaining_timeout,
         )
         retrieval_done_at = time.monotonic()
@@ -629,7 +792,11 @@ async def _stream_answer(
                 description=GENERATION_STATUS,
             )
 
-        sources = citations_to_open_webui_sources(stream_result.citations)
+        # Compact duplicate citations (same document) and remap the LLM's dense
+        # [N] markers so Open WebUI's sources stay 1:1 with the answer text and
+        # clicking [N] opens the document the text actually references.
+        _compacted, _marker_map = compact_citations(stream_result.citations)
+        sources = citations_to_open_webui_sources(_compacted)
         if sources:
             yield _sse_chunk(
                 chat_id=chat_id,
@@ -646,6 +813,7 @@ async def _stream_answer(
                 raise RequestTimeoutError("Request timed out before generation")
 
         generation_status_active = True
+        _remapper = StreamingCitationMarkerRemapper(_marker_map)
         async for fragment in iter_sync_text_chunks(
             stream_result.text_chunks,
             cancel=cancel,
@@ -660,12 +828,22 @@ async def _stream_answer(
                 generation_status_active = False
             if first_char_at is None:
                 first_char_at = time.monotonic()
-            fragments.append(fragment)
+            remapped = _remapper.feed(fragment)
+            fragments.append(remapped)
             yield _sse_chunk(
                 chat_id=chat_id,
                 model=model,
                 created=created,
-                delta={"content": fragment},
+                delta={"content": remapped},
+            )
+        _flush = _remapper.finish()
+        if _flush:
+            fragments.append(_flush)
+            yield _sse_chunk(
+                chat_id=chat_id,
+                model=model,
+                created=created,
+                delta={"content": _flush},
             )
 
         if cancel.is_set():

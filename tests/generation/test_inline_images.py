@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from ee_wiki.common.types import Citation
+from ee_wiki.generation.citation_urls import _encode_path
 from ee_wiki.generation.inline_images import build_image_block
+
+
+def _asset(url_path: str) -> str:
+    """Build a public asset URL the same way the app does (base64url path)."""
+    return "http://localhost:8080/v1/assets/" + _encode_path(url_path)
 
 
 def _citation(idx: int, images: tuple[str, ...] = ()) -> Citation:
@@ -12,26 +18,30 @@ def _citation(idx: int, images: tuple[str, ...] = ()) -> Citation:
         chunk_id=f"board__p{idx:03d}",
         page=idx,
         excerpt="...",
-        url=f"http://localhost:8080/v1/sources/iphone/logan/p1/sch/board.md#p{idx:03d}",
+        url="http://localhost:8080/v1/sources/"
+        + _encode_path("iphone/logan/p1/sch/board.md")
+        + f"#p{idx:03d}",
         images=images,
     )
 
 
 def test_collects_images_from_referenced_citations() -> None:
+    p1 = _asset("iphone/logan/p1/sch/images/board/board_p1_page.png")
+    p2 = _asset("iphone/logan/p1/sch/images/board/board_p2_page.png")
     citations = [
-        _citation(1, ("http://localhost:8080/v1/assets/iphone/logan/p1/sch/images/board/board_p1_page.png",)),
-        _citation(2, ("http://localhost:8080/v1/assets/iphone/logan/p1/sch/images/board/board_p2_page.png",)),
+        _citation(1, (p1,)),
+        _citation(2, (p2,)),
         _citation(3),
     ]
     block = build_image_block("POWER SWITCH 原理 [1] 以及 [2] 相关。", citations)
-    assert "board_p1_page.png" in block
-    assert "board_p2_page.png" in block
+    assert p1 in block
+    assert p2 in block
     assert "相关截图" in block
 
 
 def test_returns_empty_when_no_markers() -> None:
     citations = [
-        _citation(1, ("http://localhost:8080/v1/assets/img1.png",)),
+        _citation(1, (_asset("img1.png"),)),
         _citation(2),
     ]
     block = build_image_block("No citation markers here.", citations)
@@ -49,26 +59,24 @@ def test_returns_empty_when_no_citations() -> None:
 
 
 def test_respects_max_images() -> None:
+    a, b, c = _asset("a.png"), _asset("b.png"), _asset("c.png")
     citations = [
-        _citation(1, (
-            "http://localhost:8080/v1/assets/a.png",
-            "http://localhost:8080/v1/assets/b.png",
-            "http://localhost:8080/v1/assets/c.png",
-        )),
+        _citation(1, (a, b, c)),
     ]
     block = build_image_block("[1]", citations, max_images=2)
     assert block.count("![") == 2
-    assert "a.png" in block
-    assert "b.png" in block
-    assert "c.png" not in block
+    assert a in block
+    assert b in block
+    assert c not in block
 
 
 def test_deduplicates_images_across_citations() -> None:
-    shared = "http://localhost:8080/v1/assets/shared.png"
+    shared = _asset("shared.png")
+    unique = _asset("unique.png")
     citations = [
         _citation(1, (shared,)),
-        _citation(2, (shared, "http://localhost:8080/v1/assets/unique.png")),
+        _citation(2, (shared, unique)),
     ]
     block = build_image_block("[1] and [2].", citations)
     assert block.count(shared) == 1
-    assert "unique.png" in block
+    assert unique in block

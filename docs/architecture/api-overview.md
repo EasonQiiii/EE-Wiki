@@ -21,7 +21,8 @@ When all three are set with `retrieval.scope_inheritance: true` (default), searc
 |--------|------|---------|
 | `GET` | `/health` | Liveness for deployment |
 | `GET` | `/v1/models` | OpenAI-compatible model list |
-| `GET` | `/v1/sources/{path}` | Processed Markdown/text document for citation links |
+| `GET` | `/v1/sources/{path}` | Processed Markdown/text document mirror (citation `url` now points at `/v1/raw`) |
+| `GET` | `/v1/raw/{path}` | Original raw document for citation **download** links |
 | `GET` | `/v1/assets/{path}` | Image or asset under `data/processed/` |
 | `POST` | `/v1/query` | Explicit RAG query with citation payload |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat (retrieval + generation); set `"stream": true` for SSE |
@@ -80,7 +81,7 @@ Query params for `GET /v1/graph/path`: `source` and `target` (required), optiona
 
 Query params for `GET /v1/graph/nodes`: optional `project`, `build`, `node_types` (comma-separated), `limit` (default 200). Scope inheritance follows `graph.scope_inheritance`.
 
-Query params for `GET /v1/schematic/connectivity/net`: `q` (required — net name), optional `project`, `build`, `source_file` (path substring). Returns pin bindings with `evidence` tags (`cad_netlist` / `boardview` / …). **Authoritative-only gate (ADR 0009 §5):** with `connectivity.require_authority_for_trace` (default `true`), a trace is returned only when grounded on `cad_netlist` / `boardview`; if only geometry/OCR evidence exists the route returns **409** (`authority: "insufficient"`) and lists suppressed data under `advisory_pins`. Requires re-ingested schematic sidecars; 503 if none loaded, 404 if net not found in any tier. Response adds `authoritative` (bool), `authority` (`authoritative` / `advisory` / `insufficient` / `not_found`), `advisory_pins`, `advisory_connectors`, `note`.
+Query params for `GET /v1/schematic/connectivity/net`: `q` (required — net name), optional `project`, `build`, `source_file` (path substring). Returns pin bindings with `evidence` tags (`cad_netlist` / …). **Authoritative-only gate (ADR 0009 §5):** with `connectivity.require_authority_for_trace` (default `true`), a trace is returned only when grounded on `cad_netlist` (BoardView `.brd` is advisory-only and never grounds a trace); if only geometry/OCR evidence exists the route returns **409** (`authority: "insufficient"`) and lists suppressed data under `advisory_pins`. Requires re-ingested schematic sidecars; 503 if none loaded, 404 if net not found in any tier. Response adds `authoritative` (bool), `authority` (`authoritative` / `advisory` / `insufficient` / `not_found`), `advisory_pins`, `advisory_connectors`, `note`.
 
 Query params for `GET /v1/schematic/connectivity/pins`: `q` (required — designator), optional `project`, `build`, `source_file`. Returns `pins` from document-level parts (authoritative) plus optional page-level `connectors` (advisory). Same authoritative-only gate as `/net` (409 when only advisory evidence).
 
@@ -247,7 +248,7 @@ When the queue is full, the API returns **`503`** with JSON `detail.error = "que
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `retrieval.top_k_final` | `5` | Chunk hits after rerank (before section merge) |
+| `retrieval.top_k_final` | `8` | Chunk hits after rerank (before section merge) |
 | `retrieval.expand_sections` | `true` | Merge sibling chunks from the same section for LLM context |
 | `api.public_base_url` | `http://localhost:8080` | Base URL for clickable citation links in answers |
 
@@ -263,7 +264,7 @@ Each citation may include:
 | `chunk_id` | Indexed chunk identifier |
 | `page` | Page number when applicable (schematics) |
 | `excerpt` | Short preview of the retrieved text |
-| `url` | Clickable link to the processed document (`GET /v1/sources/...`) |
+| `url` | Clickable download link to the **original** source document (`GET /v1/raw/...`) |
 | `images` | Public URLs for images referenced in the chunk (`GET /v1/assets/...`) |
 
 Inline markers like ``[1]`` stay as plain text in the assistant answer. Open WebUI renders them as clickable source chips when the chat completion response includes a parallel ``sources`` array (see below).
@@ -297,7 +298,7 @@ Response:
       "chunk_id": "board__p001",
       "page": 1,
       "excerpt": "...",
-      "url": "http://localhost:8080/v1/sources/acme/demo/p2/sch/board.md#p001",
+      "url": "http://localhost:8080/v1/raw/acme/demo/p2/sch/board.pdf",
       "images": [
         "http://localhost:8080/v1/assets/acme/demo/p2/sch/images/board_p001_crop_0.png"
       ]
@@ -310,7 +311,7 @@ Response:
 
 OpenAI-compatible request with EE-Wiki metadata filters.
 
-When `agents.enabled` is true (default), the request is routed by the V4 Supervisor (ADR 0008): FA check-in → authoritative connectivity → keyword-scored specialists (`fa`/`hw`/`power`/`pcb`/`si`/`mfg`) → hybrid RAG passthrough. See [docs/usage/agents.md](../usage/agents.md). Set `agents.enabled: false` to use the legacy FA/trace/RAG cascade only.
+When `agents.enabled` is true (default), each chat turn first **locks TurnScope** (product/project/build) at the chat entry (ADR 0012 §6; carried across turns via a history marker), then an **authoritative connectivity gate** answers trace/net questions directly (or refuses), then an **FA-mode gate** routes FA-intent turns to `FaAgent` (works without a Radar id as an unbound FAQ). Remaining turns go to the **V4 Supervisor** (ADR 0008): clarify → keyword-scored specialists (`fa`/`hw`/`power`/`pcb`/`si`/`mfg`) → hybrid RAG. See [docs/usage/agents.md](../usage/agents.md). With `agents.enabled: false`, routing falls back to: TurnScope lock → connectivity gate → FA mode gate (`fa.enabled`) → hybrid RAG passthrough (no specialist routing).
 
 Set `"stream": true` to receive Server-Sent Events: retrieval status updates during search, then token chunks in OpenAI `chat.completion.chunk` shape. Cancellation is supported when the client disconnects.
 
@@ -345,10 +346,10 @@ Response shape:
   "sources": [
     {
       "document": ["..."],
-      "metadata": [{"source": "http://localhost:8080/v1/sources/...", "name": "[1] manual.md"}],
+      "metadata": [{"source": "http://localhost:8080/v1/raw/...", "name": "[1] manual.md"}],
       "source": {
         "name": "[1] manual.md",
-        "url": "http://localhost:8080/v1/sources/..."
+        "url": "http://localhost:8080/v1/raw/..."
       }
     }
   ],
@@ -406,7 +407,7 @@ python scripts/mcp_serve.py
 | `connector_pins_tool` | Pin↔net for a designator | `GET /v1/schematic/connectivity/pins` |
 | `module_nets_tool` | Module zone → nets | `GET /v1/schematic/connectivity/module-nets` |
 
-All tools accept optional `project` and `build` filters and honor `retrieval.scope_inheritance` (graph tools honor `graph.scope_inheritance`). Results are JSON with `scope` labels (`build`, `common`, `global`). Graph tools require `python scripts/build_graph.py`. Connectivity tools require `*.connectivity.json` from schematic ingest (ADR 0009). `trace_net_tool` / `connector_pins_tool` enforce the authoritative-only gate: `authority: "insufficient"` (no `cad_netlist` / `boardview` evidence) returns a refusal rather than a geometry/OCR guess.
+All tools accept optional `project` and `build` filters and honor `retrieval.scope_inheritance` (graph tools honor `graph.scope_inheritance`). Results are JSON with `scope` labels (`build`, `common`, `global`). Graph tools require `python scripts/build_graph.py`. Connectivity tools require `*.connectivity.json` from schematic ingest (ADR 0009). `trace_net_tool` / `connector_pins_tool` enforce the authoritative-only gate: `authority: "insufficient"` (no `cad_netlist` evidence — BoardView `.brd` is advisory only) returns a refusal rather than a geometry/OCR guess.
 
 Example Cursor MCP config:
 

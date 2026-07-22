@@ -18,8 +18,6 @@ routing:
 tools:
   - search_debug_case
   - engineering_search
-  - trace_net
-  - connector_pins
 recipe:
   - tool: search_debug_case
     query_from: question

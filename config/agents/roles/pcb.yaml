@@ -13,13 +13,22 @@ routing:
     - via
     - 过孔
     - footprint
+    - trace
+    - 追网
+    - 引脚
+    - 连到
 tools:
   - engineering_search
   - connector_pins
+  - trace_net
   - module_nets
 recipe:
   - tool: engineering_search
     query_from: question
+  - tool: trace_net
+    query_from: tokens
+  - tool: connector_pins
+    query_from: tokens
   - tool: module_nets
     query_from: tokens
 max_tool_calls: 3

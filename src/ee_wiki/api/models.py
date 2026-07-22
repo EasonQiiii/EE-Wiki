@@ -372,6 +372,12 @@ class ChatCompletionRequest(BaseModel):
     document_type: str | None = None
     top_k: int | None = None
     task: str | None = None
+    # Optional Open WebUI field. NOTE: Open WebUI's standard OpenAI-compatible
+    # /v1/chat/completions request does NOT send this, so cross-turn scope carry
+    # (api.carry_scope_across_turns) is driven purely by `messages` history, not
+    # by `conversation_id`. Kept for clients that do send it, but it is not
+    # required for carry.
+    conversation_id: str | None = None
 
 
 class ChatChoiceMessage(BaseModel):

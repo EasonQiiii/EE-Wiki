@@ -20,8 +20,10 @@ from dataclasses import dataclass
 
 # Phrases that signal the user wants pin-level electrical connectivity, not a
 # generic fact. Mix of EN + zh-CN because FA users write in both.
+# Do not rely on ``\btrace\b`` alone — Chinese prefixes like ``完整trace`` keep
+# the Unicode word class open so ``\b`` never fires before ``trace``.
 _CONNECT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\btrace\b", re.IGNORECASE),
+    re.compile(r"(?:完整\s*)?trace", re.IGNORECASE),
     re.compile(r"\bnet\s*list\b", re.IGNORECASE),
     re.compile(r"\bconnect(?:ed|s|ion|ivity)?\s+to\b", re.IGNORECASE),
     re.compile(r"\bwhat\s+(?:is\s+)?(?:it\s+)?connect", re.IGNORECASE),
@@ -30,17 +32,26 @@ _CONNECT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"连(?:接|到|去|向)"),
     re.compile(r"接(?:到|去|入|了)"),
     re.compile(r"接在(?:哪|什么)"),
-    re.compile(r"(?:走线|布线|连线|连通|通路|网表|连接关系|连接情况)"),
+    re.compile(r"(?:走线|布线|连线|连通|通路|网表|连接关系|连接情况|追网)"),
     re.compile(r"引脚.*(?:连|接)|(?:连|接).*引脚"),
     re.compile(r"哪(?:些|几)?(?:个|根)?(?:引脚|管脚|pin)"),
+    re.compile(r"原理图.{0,40}(?:trace|追网|连通)", re.IGNORECASE | re.DOTALL),
 )
 
 # A net name: uppercase/underscore token with at least one letter, length >= 3
-# (for example EDP_AUXP, ETH_MDIO, VBAT). Avoid matching plain words.
-_NET_TOKEN = re.compile(r"\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+|[A-Z]{2,}\d+[A-Z0-9_]*)\b")
+# (for example EDP_AUXP, ETH_MDIO, VBAT). Bus index ``<1>`` is part of the
+# captured query — stripping it causes base-name substring hits on the whole
+# bus (``NET<0>``…``NET<3>``) when the user asked for ``NET<1>`` only.
+_NET_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_])("
+    r"(?:[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+|[A-Z]{2,}\d+[A-Z0-9_]*)"
+    r"(?:<\d+>)?"
+    r")(?![A-Za-z0-9_<])"
+)
 # A designator, optionally with a pin: U502, J1, U0500.7, R12.A12
 _REFDES_TOKEN = re.compile(
-    r"\b((?:U|J|P|R|C|L|D|Q|Y|X|SW|CN|FB|TP|RN)\d+[A-Z]?)(?:[.\-]([A-Z0-9]+))?\b"
+    r"(?<![A-Za-z0-9_])((?:U|J|P|R|C|L|D|Q|Y|X|SW|CN|FB|TP|RN)\d+[A-Z]?)"
+    r"(?:[.\-]([A-Z0-9]+))?(?![A-Za-z0-9_])"
 )
 # Explicit `net X` / `网络 X` naming that promotes an otherwise ambiguous token.
 _NET_KEYWORD = re.compile(r"(?:net|网络|信号)\s*[:：]?\s*", re.IGNORECASE)

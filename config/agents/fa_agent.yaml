@@ -1,0 +1,18 @@
+id: fa_agent
+display_name: Failure Analysis Agent
+# Single FA agent (fa-session.md). These are the ALLOWED ToolBus tools — the
+# same shared handlers used by the Wiki specialists. The FaAgent never copies
+# handler logic; it calls the ToolBus by name and isValid against this list.
+tools:
+  - radar_get_problem
+  - radar_download_attachment
+  - fa_start_checkin
+  - fa_session_turn
+  - trace_net
+  - connector_pins
+  - module_nets
+  - query_schematic
+  - search_component
+  - search_debug_case
+  - engineering_search
+  - search_datasheet

@@ -1,26 +1,25 @@
 # EE-Wiki RAG golden QA dataset (machine-readable).
 # Human-readable guide: docs/eval/qa.md
 # Schema: config/schema/qa_eval.schema.json
+#
+# Post ADR 0011 (synced 2026-07-20):
+#   logan/elias/kingboo → product=ipad
+#   ruby → product=pencil
+# logan/p1 schematic corpus is Apple MacBookPro A1502 820-3536-A (OCR fidelity).
 
-version: "1.0"
-# Post ADR 0011: paths are product/project/build.
-# Assumed migrate map for this golden set: logan→iphone;
-# kingboo remains a product with product-common docs at kingboo/common/.
-# Remap + re-ingest live corpus before scoring against production indexes.
-
+version: '1.0'
 corpus:
   manifest: data/indexes/manifest.json
-  chunk_count: 4676
-  built_at: "2026-07-11T08:37:00Z"
+  chunk_count: 9313
+  built_at: '2026-07-20T06:14:52.893581+00:00'
   coverage:
-    - global
-    - kingboo/common
-    - iphone/logan/p1
-
+  - global
+  - ipad/kingboo/common
+  - ipad/logan/p1
 scoring:
   dimensions:
     retrieval:
-      weight: 0.30
+      weight: 0.3
       max_score: 2
       description: Top chunks hit required_sources; scope correct
     answer_accuracy:
@@ -28,7 +27,7 @@ scoring:
       max_score: 2
       description: Key facts match expected_answer; no hallucinated parts/nets/values
     citation_scope:
-      weight: 0.20
+      weight: 0.2
       max_score: 2
       description: Citations correct; answer labels build/common/global layer
     stability:
@@ -36,524 +35,501 @@ scoring:
       max_score: 2
       description: Paraphrase variants score consistently (stability cases only)
   pass_thresholds:
-    mandatory_accuracy: 0.90
+    mandatory_accuracy: 0.9
     weighted_mean: 1.6
     negative_refusal_rate: 1.0
-
 cases:
-  - id: Q-001
-    title: STM32F407 核心参数
-    category: datasheet
-    mandatory: true
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: global
-    question: STM32F407ZGT6 的最高 CPU 主频、Flash 和 SRAM 容量分别是多少？
-    expected_answer: |
-      最高 CPU 频率 168 MHz；嵌入式 Flash 最高 1 Mbyte；嵌入式 SRAM 最高 192 Kbytes（含 64 Kbytes CCM）。
-    expected_facts:
-      - "168 MHz"
-      - "1 Mbyte"
-      - "192 Kbytes"
-    required_sources:
-      - data/processed/global/datasheet/STM32F407ZGT6.md
-    must_not_contain:
-      - "200 MHz"
-      - "2 Mbyte"
+- id: Q-001
+  title: STM32F407 核心参数
+  category: datasheet
+  mandatory: true
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: global
+  question: STM32F407ZGT6 的最高 CPU 主频、Flash 和 SRAM 容量分别是多少？
+  expected_answer: '最高 CPU 频率 168 MHz；嵌入式 Flash 最高 1 Mbyte；嵌入式 SRAM 最高 192 Kbytes（含 64 Kbytes CCM）。
 
-  - id: Q-003
-    title: Logan P1 以太网 PHY
-    category: schematic
-    mandatory: true
-    filters:
-      product: iphone
-      project: logan
-      build: p1
-    scope_label: build
-    question: Explorer STM32F4 V2.2 原理图中，以太网接口使用哪款 PHY 芯片？MCU 与 PHY 之间采用什么接口？参考时钟频率是多少？
-    expected_answer: |
-      PHY 芯片 LAN8720A；MCU 与 PHY 通过 RMII 连接（含 TXD0/1、RXD0/1、TXEN、MDIO/MDC、ETH_RESET 等）；参考时钟 25 MHz 晶振。
-    expected_facts:
-      - LAN8720A
-      - RMII
-      - "25 MHz"
-    required_sources:
-      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
-    must_not_contain:
-      - 千兆 PHY
+    '
+  expected_facts:
+  - 168 MHz
+  - 1 Mbyte
+  - 192 Kbytes
+  required_sources:
+  - data/processed/global/datasheet/STM32F407ZGT6.md
+  must_not_contain:
+  - 200 MHz
+  - 2 Mbyte
+- id: Q-003
+  title: Logan P1 MacBook 板号与主总线
+  category: schematic
+  mandatory: true
+  filters:
+    product: ipad
+    project: logan
+    build: p1
+  scope_label: build
+  question: ipad/logan/p1 原理图 Apple MacBookPro A1502 820-3536-A 中，图纸项目代号是什么？板上是否出现电源总线网络 PPBUS_G3H？
+  expected_answer: 项目代号为 Apple MacBookPro A1502 820-3536-A；OCR 网络清单中包含电源总线网络 PPBUS_G3H。
+  expected_facts:
+  - 820-3536-A
+  - PPBUS_G3H
+  - A1502
+  required_sources:
+  - data/processed/ipad/logan/p1/sch/Apple MacBookPro A1502 820-3536-A.md
+  must_not_contain:
+  - LAN8720A
+  - Explorer STM32
+- id: Q-004
+  title: Logan P1 主要器件位号
+  category: schematic
+  mandatory: true
+  filters:
+    product: ipad
+    project: logan
+    build: p1
+  scope_label: build
+  question: 同一份 MacBookPro A1502 820-3536-A 原理图 OCR 的主要器件位号清单中，是否包含 U5000 与 U3900？
+  expected_answer: 是。主要器件位号（OCR）清单包含 U5000 与 U3900。
+  expected_facts:
+  - U5000
+  - U3900
+  required_sources:
+  - data/processed/ipad/logan/p1/sch/Apple MacBookPro A1502 820-3536-A.md
+- id: Q-005
+  title: LAN_PHY 电源控制网络
+  category: schematic
+  mandatory: false
+  filters:
+    product: ipad
+    project: logan
+    build: p1
+  scope_label: build
+  question: logan p1 MacBook 原理图网络名清单中是否出现网络 LAN_PHY_PWR_CTRL？
+  expected_answer: 是，OCR 网络名清单包含 LAN_PHY_PWR_CTRL。
+  expected_facts:
+  - LAN_PHY_PWR_CTRL
+  required_sources:
+  - data/processed/ipad/logan/p1/sch/Apple MacBookPro A1502 820-3536-A.md
+- id: Q-006
+  title: Mahi PingPong 测试
+  category: scope
+  mandatory: true
+  filters:
+    product: ipad
+    project: kingboo
+    build: common
+  scope_label: common
+  question: Kingboo 项目中 Mahi PingPong Test 的目的是什么？Feature 0x43 返回的数据里，前 4 字节和后 4 字节分别代表什么？
+  expected_answer: '目的：Unit Tx 端发送固定包数（OOK），与 Rx 端接收包数（ASK）对比，验证收发包数一致。
 
-  - id: Q-004
-    title: Logan P1 音频 Codec
-    category: schematic
-    mandatory: true
-    filters:
-      product: iphone
-      project: logan
-      build: p1
-    scope_label: build
-    question: 同一块 Explorer 开发板原理图里，I2S 音频编解码用的是什么芯片？I2S 总线有哪些信号？
-    expected_answer: |
-      音频 Codec WM8978；I2S 信号 LRCK、MCLK、SCLK、SDIN、SDOUT；可选补充 PHONE/SPEAKER/LINE_IN/MIC 等模拟接口。
-    expected_facts:
-      - WM8978
-      - LRCK
-      - MCLK
-      - SCLK
-      - SDIN
-      - SDOUT
-    required_sources:
-      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+    Feature 43,A0,00,00,00,A0,00,00,00,00,00,00,00 中：第一组 4 字节为 PingPong package send number；
 
-  - id: Q-005
-    title: 以太网 MDIO 网络名
-    category: schematic
-    mandatory: false
-    filters:
-      product: iphone
-      project: logan
-      build: p1
-    scope_label: build
-    question: logan p1 原理图里以太网 MDIO 信号的网络名是什么？
-    expected_answer: ETH_MDIO（RMII 以太网相关网络）。
-    expected_facts:
-      - ETH_MDIO
-    required_sources:
-      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
+    第二组 4 字节为 PingPong package receive number；后续 00,00,00,00 为 PingPong package error number。
 
-  - id: Q-006
-    title: Mahi PingPong 测试
-    category: scope
-    mandatory: true
-    filters:
-      product: kingboo
-      project: common
-      build: common
-    scope_label: common
-    question: Kingboo 项目中 Mahi PingPong Test 的目的是什么？Feature 0x43 返回的数据里，前 4 字节和后 4 字节分别代表什么？
-    expected_answer: |
-      目的：Unit Tx 端发送固定包数（OOK），与 Rx 端接收包数（ASK）对比，验证收发包数一致。
-      Feature 43,A0,00,00,00,A0,00,00,00,00,00,00,00 中：第一组 4 字节为 PingPong package send number；
-      第二组 4 字节为 PingPong package receive number；后续 00,00,00,00 为 PingPong package error number。
-    expected_facts:
-      - OOK
-      - ASK
-      - send number
-      - receive number
-      - error number
-    required_sources:
-      - data/processed/kingboo/common/note/mahi_info.md
+    '
+  expected_facts:
+  - OOK
+  - ASK
+  - send number
+  - receive number
+  - error number
+  required_sources:
+  - data/processed/ipad/kingboo/common/note/mahi_info.md
+- id: Q-007
+  title: Mahi OOK 干扰测试
+  category: scope
+  mandatory: true
+  filters:
+    product: ipad
+    project: kingboo
+    build: common
+  scope_label: common
+  question: Mahi OOK Test 中，Unit 作为 Aggressor 会发送哪三种频率的 OOK-PRBS 信号？最恶劣条件下 VDDPA 和 SignalScale 设置是多少？
+  expected_answer: 三种频率 53k、70k、105k；worse case 下 VDDPA=7.2 V，SignalScale=50%；目的为以 Mahi OOK 作为干扰源检测对 Victim
+    的影响。
+  expected_facts:
+  - 53k
+  - 70k
+  - 105k
+  - '7.2'
+  - 50%
+  required_sources:
+  - data/processed/ipad/kingboo/common/note/mahi_info.md
+- id: Q-008
+  title: Mahi LPCD
+  category: scope
+  mandatory: false
+  filters:
+    product: ipad
+    project: kingboo
+    build: common
+  scope_label: common
+  question: Mahi CoEx 文档中 LPCD 是什么？NFC Reader 发送 LPCD 脉冲的频率是多少？
+  expected_answer: 'LPCD 为 Low Power Card Detection（低功耗卡检测）；NFC Reader 发送 LPCD 脉冲频率 10 Hz。
 
-  - id: Q-007
-    title: Mahi OOK 干扰测试
-    category: scope
-    mandatory: true
-    filters:
-      product: kingboo
-      project: common
-      build: common
-    scope_label: common
-    question: Mahi OOK Test 中，Unit 作为 Aggressor 会发送哪三种频率的 OOK-PRBS 信号？最恶劣条件下 VDDPA 和 SignalScale 设置是多少？
-    expected_answer: |
-      三种频率 53 kHz、70 kHz、105 kHz；worse case 下 VDDPA=7.2 V，SignalScale=50%；
-      目的为以 Mahi OOK 作为干扰源检测对 Victim 的影响。
-    expected_facts:
-      - "53"
-      - "70"
-      - "105"
-      - "7.2 V"
-      - "50%"
-    required_sources:
-      - data/processed/kingboo/common/note/mahi_info.md
+    '
+  expected_facts:
+  - Low Power Card Detection
+  - 10 Hz
+  required_sources:
+  - data/processed/ipad/kingboo/common/note/mahi_info.md
+- id: Q-009
+  title: Mahi 充电倍率
+  category: scope
+  mandatory: false
+  filters:
+    product: ipad
+    project: kingboo
+    build: common
+  scope_label: common
+  question: Mahi CoEx 工站 Pencil 额定容量 50 mAh 时，三种充电电流 5 mA / 50 mA / 200 mA 分别对应多少 C 倍率？
+  expected_answer: '5 mA → 0.1 C；50 mA → 1 C；200 mA → 4 C；公式为充电倍率 = 充电电流 / 额定容量。
 
-  - id: Q-008
-    title: Mahi LPCD
-    category: scope
-    mandatory: false
-    filters:
-      product: kingboo
-      project: common
-      build: common
-    scope_label: common
-    question: Mahi CoEx 文档中 LPCD 是什么？NFC Reader 发送 LPCD 脉冲的频率是多少？
-    expected_answer: |
-      LPCD 为 Low Power Card Detection（低功耗卡检测）；NFC Reader 发送 LPCD 脉冲频率 10 Hz。
-    expected_facts:
-      - Low Power Card Detection
-      - "10 Hz"
-    required_sources:
-      - data/processed/kingboo/common/note/mahi_info.md
+    '
+  expected_facts:
+  - 0.1 C
+  - 1 C
+  - 4 C
+  required_sources:
+  - data/processed/ipad/kingboo/common/note/mahi_info.md
+- id: Q-010
+  title: TI 8D 客退分析
+  category: fa
+  mandatory: true
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: global
+  question: QEM-CCR-2311-00781 报告中，客户反馈的 TI 器件型号和客户料号是什么？TI 判定的根因是什么？是否存在系统性批次风险？
+  expected_answer: 'TI P/N XTPS612994YBHR；Customer P/N 353S03433；客户问题 output abnormally。
 
-  - id: Q-009
-    title: Mahi 充电倍率
-    category: scope
-    mandatory: false
-    filters:
-      product: kingboo
-      project: common
-      build: common
-    scope_label: common
-    question: Mahi CoEx 工站 Pencil 额定容量 50 mAh 时，三种充电电流 5 mA / 50 mA / 200 mA 分别对应多少 C 倍率？
-    expected_answer: |
-      5 mA → 0.1 C；50 mA → 1 C；200 mA → 4 C；公式为充电倍率 = 充电电流 / 额定容量。
-    expected_facts:
-      - "0.1 C"
-      - "1 C"
-      - "4 C"
-    required_sources:
-      - data/processed/kingboo/common/note/mahi_info.md
+    根因 Electrically Induced Physical Damage (EIPD)，最可能由 EOS 导致；无证据表明批次系统性问题。
 
-  - id: Q-010
-    title: TI 8D 客退分析
-    category: fa
-    mandatory: true
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: global
-    question: QEM-CCR-2311-00781 报告中，客户反馈的 TI 器件型号和客户料号是什么？TI 判定的根因是什么？是否存在系统性批次风险？
-    expected_answer: |
-      TI P/N XTPS612994YBHR；Customer P/N 353S03433；客户问题 output abnormally。
-      根因 Electrically Induced Physical Damage (EIPD)，最可能由 EOS 导致；无证据表明批次系统性问题。
-    expected_facts:
-      - XTPS612994YBHR
-      - "353S03433"
-      - EIPD
-      - EOS
-    required_sources:
-      - data/processed/global/fa/QEM-CCR-2311-00781_XTPS612994YBHR.md
-    must_not_contain:
-      - 设计缺陷
-      - 硅片批次不良
+    '
+  expected_facts:
+  - XTPS612994YBHR
+  - 353S03433
+  - EIPD
+  - EOS
+  required_sources:
+  - data/processed/global/fa/QEM-CCR-2311-00781_XTPS612994YBHR.md
+  must_not_contain:
+  - 设计缺陷
+  - 硅片批次不良
+- id: Q-011
+  title: E4980A 探头端子
+  category: sop
+  mandatory: false
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: global
+  question: E4980A LCR 测量仪的 HCUR、HPOT、LPOT、LCUR 四个端子分别是什么作用？
+  expected_answer: 'HCUR 电流发生端子；HPOT HI 侧电压检测端子；LPOT LO 侧电压检测端子；LCUR 电流检测端子。
 
-  - id: Q-011
-    title: E4980A 探头端子
-    category: sop
-    mandatory: false
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: global
-    question: E4980A LCR 测量仪的 HCUR、HPOT、LPOT、LCUR 四个端子分别是什么作用？
-    expected_answer: |
-      HCUR 电流发生端子；HPOT HI 侧电压检测端子；LPOT LO 侧电压检测端子；LCUR 电流检测端子。
-    expected_facts:
-      - HCUR
-      - HPOT
-      - LPOT
-      - LCUR
-    required_sources:
-      - data/processed/global/sop/E4980A LCR 使用.md
+    '
+  expected_facts:
+  - HCUR
+  - HPOT
+  - LPOT
+  - LCUR
+  required_sources:
+  - data/processed/global/sop/E4980A LCR 使用.md
+- id: Q-012
+  title: iPad USB SSH 隧道
+  category: platform
+  mandatory: false
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: global
+  question: iPad 工程手册中，通过 USB 建立 SSH 时，Mac 端应执行什么命令开启隧道？连接端口是多少？
+  expected_answer: '命令 tcprelay --portoffset 10000 ssh；监听 localhost:10022；
 
-  - id: Q-012
-    title: iPad USB SSH 隧道
-    category: platform
-    mandatory: false
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: global
-    question: iPad 工程手册中，通过 USB 建立 SSH 时，Mac 端应执行什么命令开启隧道？连接端口是多少？
-    expected_answer: |
-      命令 tcprelay --portoffset 10000 ssh；监听 localhost:10022；
-      连接示例 ssh -o NoHostAuthenticationForLocalhost=yes -p 10022 root@localhost。
-    expected_facts:
-      - "tcprelay --portoffset 10000 ssh"
-      - "10022"
-    required_sources:
-      - data/processed/global/note/ipadmanal.md
+    连接示例 ssh -o NoHostAuthenticationForLocalhost=yes -p 10022 root@localhost。
 
-  - id: Q-013
-    title: iPad 运行模式
-    category: platform
-    mandatory: false
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: global
-    question: iPad 工程手册里 Diags 模式和 iBoot 模式分别用于什么场景？
-    expected_answer: |
-      iBoot（Recovery Mode）用于系统修复、固件升级、还原设备；
-      Diags（Diagnostics Mode）用于工厂测试/维修、硬件自检、传感器校准、日志抓取等。
-    expected_facts:
-      - iBoot
-      - Diags
-    required_sources:
-      - data/processed/global/note/ipadmanal.md
+    '
+  expected_facts:
+  - tcprelay --portoffset 10000 ssh
+  - '10022'
+  required_sources:
+  - data/processed/global/note/ipadmanal.md
+- id: Q-013
+  title: iPad 运行模式
+  category: platform
+  mandatory: false
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: global
+  question: iPad 工程手册里 Diags 模式和 iBoot 模式分别用于什么场景？
+  expected_answer: 'iBoot（Recovery Mode）用于系统修复、固件升级、还原设备；
 
-  - id: Q-015
-    title: build 检索应优先原理图
-    category: scope
-    mandatory: true
-    filters:
-      product: iphone
-      project: logan
-      build: p1
-    scope_label: build
-    question: logan p1 Explorer 原理图中以太网 PHY 芯片型号是什么？
-    expected_answer: |
-      LAN8720A；板级结论应来自 iphone/logan/p1 原理图（build 级真相），
-      可补充 global LAN8720A datasheet 作器件参考，但不得用 datasheet 替代原理图。
-    expected_facts:
-      - LAN8720A
-    required_sources:
-      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
-    must_not_contain:
-      - kingboo
+    Diags（Diagnostics Mode）用于工厂测试/维修、硬件自检、传感器校准、日志抓取等。
 
-  - id: Q-016
-    title: 跨项目隔离
-    category: scope
-    mandatory: true
-    filters:
-      product: iphone
-      project: logan
-      build: p1
-    scope_label: build
-    question: logan p1 Explorer 以太网 PHY 是 LAN8720A，是否与 kingboo Mahi CoEx 有关？
-    expected_answer: |
-      否。logan p1 原理图为 STM32F407 + LAN8720A 以太网方案，与 Mahi CoEx 无关；
-      Mahi CoEx 属于 kingboo 项目。
-    expected_facts:
-      - LAN8720A
-    forbidden_sources:
-      - data/processed/kingboo/common/note/mahi_info.md
-    required_sources:
-      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
-    must_not_contain:
-      - logan 使用 Mahi
-      - PingPong Test 在 logan p1
+    '
+  expected_facts:
+  - iBoot
+  - Diags
+  required_sources:
+  - data/processed/global/note/ipadmanal.md
+- id: Q-015
+  title: build 检索应优先原理图
+  category: scope
+  mandatory: true
+  filters:
+    product: ipad
+    project: logan
+    build: p1
+  scope_label: build
+  question: 在 product=ipad project=logan build=p1 范围内，MacBookPro A1502 原理图的板号后缀 820-3536-A 是什么？
+  expected_answer: 820-3536-A；板级结论应来自 ipad/logan/p1 原理图（build 级真相），不得用 kingboo Mahi 文档替代。
+  expected_facts:
+  - 820-3536-A
+  required_sources:
+  - data/processed/ipad/logan/p1/sch/Apple MacBookPro A1502 820-3536-A.md
+  must_not_contain:
+  - Mahi CoEx
+  - PingPong
+- id: Q-016
+  title: 跨项目隔离
+  category: scope
+  mandatory: true
+  filters:
+    product: ipad
+    project: logan
+    build: p1
+  scope_label: build
+  question: 在 product=ipad project=logan build=p1 下，MacBookPro 原理图板号是 A1502 的哪一版 820 编号？是否应引用 kingboo
+    Mahi 文档？
+  expected_answer: 板号为 820-3536-A。结论应来自 logan p1 原理图；不应引用 kingboo Mahi / PingPong 文档。
+  expected_facts:
+  - 820-3536-A
+  forbidden_sources:
+  - data/processed/ipad/kingboo/common/note/mahi_info.md
+  required_sources:
+  - data/processed/ipad/logan/p1/sch/Apple MacBookPro A1502 820-3536-A.md
+  must_not_contain:
+  - PingPong Test 在 logan p1
+  - logan 使用 Mahi
+- id: Q-017
+  title: 库中不存在的板卡
+  category: negative
+  mandatory: true
+  filters:
+    product: ipad
+    project: logan
+    build: p2
+  scope_label: null
+  expect_refusal: true
+  question: logan p2 原理图上 U502 的 FB 引脚连接到哪个网络？
+  forbidden_scope:
+    product: ipad
+    project: logan
+    build: p2
+  expected_answer: 知识库无 ipad/logan/p2 文档，应明确知识不足（insufficient knowledge），不得编造网络名或位号。
+  required_sources: []
+  must_not_contain: []
+- id: Q-018
+  title: 不存在的器件参数
+  category: negative
+  mandatory: true
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: null
+  expect_refusal: true
+  question: STM32F999ZGT6（库中不存在的型号）的 GPU 算力是多少 TFLOPS？
+  expected_answer: 知识库无 STM32F999ZGT6 文档，且 STM32F407 类 MCU 亦无 GPU TFLOPS 指标；应拒答或说明文档未提供，不得编造数值。
+  required_sources: []
+  optional_sources: []
+  must_not_contain:
+  - TFLOPS
+- id: Q-019
+  title: 虚构项目
+  category: negative
+  mandatory: true
+  filters:
+    product: apollo
+    project: demo
+    build: evt
+  scope_label: null
+  expect_refusal: true
+  question: apollo evt 版本的 PMIC 上 VBAT 网络是否连接到 U0902？
+  forbidden_scope:
+    product: apollo
+    project: demo
+    build: evt
+  expected_answer: 当前索引无 apollo/demo 项目任何文档，应拒答。
+  required_sources: []
+  must_not_contain:
+  - U0902
+  - VBAT 连接
+- id: Q-020
+  title: STM32 主频稳定性
+  category: stability
+  mandatory: true
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: global
+  question: STM32F407 最高能跑多少 MHz？
+  paraphrases:
+  - What is the maximum CPU frequency of STM32F407ZGT6?
+  - F407 主频上限是多少？
+  - Cortex-M4F in STM32F407 — peak clock?
+  expected_answer: 168 MHz
+  expected_facts:
+  - 168 MHz
+  required_sources:
+  - data/processed/global/datasheet/STM32F407ZGT6.md
+- id: Q-021
+  title: Mahi LPCD 稳定性
+  category: stability
+  mandatory: false
+  filters:
+    product: ipad
+    project: kingboo
+    build: common
+  scope_label: common
+  question: LPCD 脉冲频率是多少？
+  paraphrases:
+  - Kingboo Mahi 文档里 Low Power Card Detection 的发送频率？
+  - NFC reader LPCD pulse rate in mahi_info?
+  expected_answer: 10 Hz
+  expected_facts:
+  - 10 Hz
+  required_sources:
+  - data/processed/ipad/kingboo/common/note/mahi_info.md
+- id: Q-022
+  title: FA 根因稳定性
+  category: stability
+  mandatory: false
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: global
+  question: XTPS612994YBHR 客退最终是什么原因？
+  paraphrases:
+  - TI 8D report QEM-CCR-2311-00781 root cause?
+  - 353S03433 这颗料 TI 判定是什么问题？
+  expected_answer: 'EIPD（Electrically Induced Physical Damage），最可能 EOS 导致；非批次系统性问题。
 
-  - id: Q-017
-    title: 库中不存在的板卡
-    category: negative
-    mandatory: true
-    filters:
-      product: iphone
-      project: logan
-      build: p2
-    scope_label: null
-    expect_refusal: true
-    question: logan p2 原理图上 U502 的 FB 引脚连接到哪个网络？
-    forbidden_scope:
-      product: iphone
-      project: logan
-      build: p2
-    expected_answer: |
-      知识库无 iphone/logan/p2 文档，应明确知识不足（insufficient knowledge），不得编造网络名或位号。
-    required_sources: []
-    must_not_contain: []
+    '
+  expected_facts:
+  - EIPD
+  - EOS
+  required_sources:
+  - data/processed/global/fa/QEM-CCR-2311-00781_XTPS612994YBHR.md
+- id: Q-023
+  title: DDR 反馈网络名
+  category: schematic
+  mandatory: true
+  filters:
+    product: ipad
+    project: logan
+    build: p1
+  scope_label: build
+  question: MacBookPro A1502 820-3536-A 原理图 OCR 网络清单中是否包含 DDRREG_FB？
+  expected_answer: 是，包含 DDRREG_FB。
+  expected_facts:
+  - DDRREG_FB
+  required_sources:
+  - data/processed/ipad/logan/p1/sch/Apple MacBookPro A1502 820-3536-A.md
+- id: Q-024
+  title: STM32 3.3V 供电
+  category: datasheet
+  mandatory: true
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: global
+  question: STM32F407ZGT6 datasheet 是否列出 3.3V 供电电压？
+  expected_answer: '是；datasheet 及 metadata 中包含 3.3V 供电相关规格。
 
-  - id: Q-018
-    title: 不存在的器件参数
-    category: negative
-    mandatory: true
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: null
-    expect_refusal: true
-    question: STM32F407ZGT6 的 GPU 算力是多少 TFLOPS？
-    expected_answer: |
-      STM32F407 为 MCU，无独立 GPU；datasheet 无 TFLOPS 指标，应拒答或说明文档未提供/不适用，不得编造数值。
-    required_sources: []
-    optional_sources:
-      - data/processed/global/datasheet/STM32F407ZGT6.md
-    must_not_contain:
-      - TFLOPS
-      - GPU 核心数
+    '
+  expected_facts:
+  - 3.3V
+  required_sources:
+  - data/processed/global/datasheet/STM32F407ZGT6.md
+- id: Q-025
+  title: FA EOS/ESD 关键词
+  category: fa
+  mandatory: false
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: global
+  question: QEM-CCR-2311-00781 报告是否涉及 EOS 或 ESD 类失效？
+  expected_answer: '是；报告判定 EIPD，最可能由 EOS 导致；keywords 含 EOS、ESD 等失效相关术语。
 
-  - id: Q-019
-    title: 虚构项目
-    category: negative
-    mandatory: true
-    filters:
-      product: apollo
-      project: demo
-      build: evt
-    scope_label: null
-    expect_refusal: true
-    question: apollo evt 版本的 PMIC 上 VBAT 网络是否连接到 U0902？
-    forbidden_scope:
-      product: apollo
-      project: demo
-      build: evt
-    expected_answer: 当前索引无 apollo/demo 项目任何文档，应拒答。
-    required_sources: []
-    must_not_contain:
-      - U0902
-      - VBAT 连接
+    '
+  expected_facts:
+  - EOS
+  - ESD
+  required_sources:
+  - data/processed/global/fa/QEM-CCR-2311-00781_XTPS612994YBHR.md
+- id: Q-026
+  title: PCH/SMC 关键字出现
+  category: schematic
+  mandatory: false
+  filters:
+    product: ipad
+    project: logan
+    build: p1
+  scope_label: build
+  question: 该 MacBook 原理图 OCR 文本中是否大量出现 PCH 与 SMC 相关标识？
+  expected_answer: 是，OCR 文本中同时出现 PCH 与 SMC 相关字符串。
+  expected_facts:
+  - PCH
+  - SMC
+  required_sources:
+  - data/processed/ipad/logan/p1/sch/Apple MacBookPro A1502 820-3536-A.md
+- id: Q-027
+  title: STM32 Figure 58 内容
+  category: datasheet
+  mandatory: false
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: global
+  question: STM32F407 中 Figure 58 描述的是什么内容？
+  expected_answer: 'Figure 58 为 FSMC 同步非复用（non-multiplexed）NOR/PSRAM 读时序图/参数（PDF page 134）。
 
-  - id: Q-020
-    title: STM32 主频稳定性
-    category: stability
-    mandatory: true
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: global
-    question: STM32F407 最高能跑多少 MHz？
-    paraphrases:
-      - What is the maximum CPU frequency of STM32F407ZGT6?
-      - F407 主频上限是多少？
-      - Cortex-M4F in STM32F407 — peak clock?
-    expected_answer: 168 MHz
-    expected_facts:
-      - "168 MHz"
-    required_sources:
-      - data/processed/global/datasheet/STM32F407ZGT6.md
+    '
+  expected_facts:
+  - Figure 58
+  - non-multiplexed
+  required_sources:
+  - data/processed/global/datasheet/STM32F407ZGT6.md
+- id: Q-028
+  title: STM32 non-multiplexed read timings
+  category: datasheet
+  mandatory: false
+  filters:
+    product: global
+    project: global
+    build: global
+  scope_label: global
+  question: Synchronous non-multiplexed NOR/PSRAM read timings 的关键时序参数有哪些？
+  expected_answer: '含 FSMC_CLK 周期 t_w(CLK)、NEx/NOE/NADV 相对 CLK 的延迟，以及 D[15:0] 数据建立/保持时间等（Table 77 / page
+    134）。
 
-  - id: Q-021
-    title: Mahi LPCD 稳定性
-    category: stability
-    mandatory: false
-    filters:
-      product: kingboo
-      project: common
-      build: common
-    scope_label: common
-    question: LPCD 脉冲频率是多少？
-    paraphrases:
-      - Kingboo Mahi 文档里 Low Power Card Detection 的发送频率？
-      - NFC reader LPCD pulse rate in mahi_info?
-    expected_answer: 10 Hz
-    expected_facts:
-      - "10 Hz"
-    required_sources:
-      - data/processed/kingboo/common/note/mahi_info.md
-
-  - id: Q-022
-    title: FA 根因稳定性
-    category: stability
-    mandatory: false
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: global
-    question: XTPS612994YBHR 客退最终是什么原因？
-    paraphrases:
-      - TI 8D report QEM-CCR-2311-00781 root cause?
-      - 353S03433 这颗料 TI 判定是什么问题？
-    expected_answer: |
-      EIPD（Electrically Induced Physical Damage），最可能 EOS 导致；非批次系统性问题。
-    expected_facts:
-      - EIPD
-      - EOS
-    required_sources:
-      - data/processed/global/fa/QEM-CCR-2311-00781_XTPS612994YBHR.md
-
-  - id: Q-023
-    title: Explorer U14 页码
-    category: schematic
-    mandatory: true
-    filters:
-      product: iphone
-      project: logan
-      build: p1
-    scope_label: build
-    question: Explorer STM32F4 V2.2 原理图中，位号 U14 出现在第几页？
-    expected_answer: |
-      U14 出现在 Page 3（第 3 页）；与以太网/音频模块相关页面。
-    expected_facts:
-      - U14
-      - "3"
-    required_sources:
-      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
-
-  - id: Q-024
-    title: STM32 3.3V 供电
-    category: datasheet
-    mandatory: true
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: global
-    question: STM32F407ZGT6 datasheet 是否列出 3.3V 供电电压？
-    expected_answer: |
-      是；datasheet 及 metadata 中包含 3.3V 供电相关规格。
-    expected_facts:
-      - "3.3V"
-    required_sources:
-      - data/processed/global/datasheet/STM32F407ZGT6.md
-
-  - id: Q-025
-    title: FA EOS/ESD 关键词
-    category: fa
-    mandatory: false
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: global
-    question: QEM-CCR-2311-00781 报告是否涉及 EOS 或 ESD 类失效？
-    expected_answer: |
-      是；报告判定 EIPD，最可能由 EOS 导致；keywords 含 EOS、ESD 等失效相关术语。
-    expected_facts:
-      - EOS
-      - ESD
-    required_sources:
-      - data/processed/global/fa/QEM-CCR-2311-00781_XTPS612994YBHR.md
-
-  - id: Q-026
-    title: Explorer U13 U14 同页
-    category: schematic
-    mandatory: false
-    filters:
-      product: iphone
-      project: logan
-      build: p1
-    scope_label: build
-    question: Explorer STM32F4 V2.2 原理图中，U13 与 U14 是否在同一页？
-    expected_answer: |
-      是；U13 与 U14 均出现在 Page 3（第 3 页）。
-    expected_facts:
-      - U13
-      - U14
-      - "3"
-    required_sources:
-      - data/processed/iphone/logan/p1/sch/Explorer STM32F4_V2.2_SCH.md
-
-  - id: Q-027
-    title: STM32 Figure 58 内容
-    category: datasheet
-    mandatory: false
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: global
-    question: STM32F407 中 Figure 58 描述的是什么内容？
-    expected_answer: |
-      Figure 58 为 FSMC 同步非复用（non-multiplexed）NOR/PSRAM 读时序图/参数（PDF page 134）。
-    expected_facts:
-      - Figure 58
-      - non-multiplexed
-    required_sources:
-      - data/processed/global/datasheet/STM32F407ZGT6.md
-
-  - id: Q-028
-    title: STM32 non-multiplexed read timings
-    category: datasheet
-    mandatory: false
-    filters:
-      product: global
-      project: global
-      build: global
-    scope_label: global
-    question: Synchronous non-multiplexed NOR/PSRAM read timings 的关键时序参数有哪些？
-    expected_answer: |
-      含 FSMC_CLK 周期 t_w(CLK)、NEx/NOE/NADV 相对 CLK 的延迟，以及 D[15:0] 数据建立/保持时间等（Table 77 / page 134）。
-    expected_facts:
-      - non-multiplexed
-      - FSMC
-    required_sources:
-      - data/processed/global/datasheet/STM32F407ZGT6.md
+    '
+  expected_facts:
+  - non-multiplexed
+  - FSMC
+  required_sources:
+  - data/processed/global/datasheet/STM32F407ZGT6.md

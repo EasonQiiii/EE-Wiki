@@ -97,7 +97,7 @@ def test_manual_checkin_awaits_then_ingests_paste(
     assert first.fail_items.fail_items == ()
     assert "Need test evidence" in first.summary_markdown
     assert "Radar has title/description/diagnosis" in first.summary_markdown
-    assert "UNIT_save_100_NG.log" in first.summary_markdown
+    assert "H9H242500041JJY1A_save_100_NG.log" in first.summary_markdown
     assert first.scope.product == "ipad"
     assert first.scope.project == "logan"
     assert (tmp_path / "cache/fa/888001/radar_corpus.txt").is_file()

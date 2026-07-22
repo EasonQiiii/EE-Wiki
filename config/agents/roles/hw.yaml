@@ -15,15 +15,26 @@ routing:
     - 第几页
     - pinout
     - 连接器
+    - trace
+    - 追网
+    - 引脚
+    - 连到
+    - net
 tools:
   - engineering_search
   - query_schematic
   - search_component
   - open_graph_node
   - graph_neighbors
+  - trace_net
+  - connector_pins
 recipe:
   - tool: query_schematic
     query_from: question
+  - tool: trace_net
+    query_from: tokens
+  - tool: connector_pins
+    query_from: tokens
   - tool: search_component
     query_from: tokens
   - tool: engineering_search
