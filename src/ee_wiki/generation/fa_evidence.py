@@ -246,13 +246,19 @@ def _parse_checkin_background(
 
     related: list[str] = []
     for name in related_raw:
-        if name in available_names:
-            if name not in related:
-                related.append(name)
-        elif name not in unresolved:
-            # LLM named a file that is not actually attached — never download
-            # it; surface as unresolved so the engineer knows it is missing.
-            unresolved.append(name)
+        matched = _match_related_attachment_name(name, available_names)
+        if matched is not None:
+            if matched not in related:
+                related.append(matched)
+            continue
+        # No attachment match — keep a cleaned token in unresolved so the
+        # engineer sees what the model pointed at (not raw backticks / junk).
+        cleaned = _normalize_attachment_name_token(name) or name.strip()
+        if cleaned and cleaned not in unresolved and cleaned not in related:
+            unresolved.append(cleaned)
+
+    # Also normalize any UNRESOLVED entries the model emitted directly.
+    unresolved = _normalize_unresolved_names(unresolved, available_names, related)
 
     result = CheckinBackground(
         background=background,
@@ -267,6 +273,106 @@ def _parse_checkin_background(
         )
         return None
     return result
+
+
+def _normalize_attachment_name_token(raw: str) -> str:
+    """Strip LLM wrapping junk from an attachment name candidate.
+
+    Structural only: backticks/quotes, trailing punctuation, trailing
+    parenthetical type hints (``(log)`` / ``（日志）``), and basename of a
+    path-like token. Does **not** guess relevance from NG/FAIL substrings.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    # Iteratively peel wrappers / trailing junk Qwen often adds.
+    for _ in range(4):
+        prev = s
+        while len(s) >= 2 and s[0] in "`\"'" and s[-1] == s[0]:
+            s = s[1:-1].strip()
+        s = s.strip("`\"'")
+        s = re.sub(r"\s*[\(（][^）\)]*[\)）]\s*$", "", s).strip()
+        s = re.sub(r"[,;:!?？！。.…]+$", "", s).strip()
+        s = s.rstrip(".").strip()
+        if s == prev:
+            break
+    if s and ("/" in s or "\\" in s):
+        s = Path(s).name
+    return s.strip()
+
+
+def _match_related_attachment_name(
+    raw: str,
+    available_names: set[str],
+) -> str | None:
+    """Map an LLM RELATED_FILES token onto an exact attachment file name.
+
+    Returns the canonical name from ``available_names``, or ``None`` when no
+    unique match exists (caller demotes to ``UNRESOLVED``).
+    """
+    if not available_names:
+        return None
+    cleaned = _normalize_attachment_name_token(raw)
+    if not cleaned:
+        return None
+    if cleaned in available_names:
+        return cleaned
+
+    by_lower = {name.lower(): name for name in available_names}
+    hit = by_lower.get(cleaned.lower())
+    if hit is not None:
+        return hit
+
+    cleaned_base = Path(cleaned).name
+    basename_hits = [
+        name
+        for name in available_names
+        if Path(name).name.lower() == cleaned_base.lower()
+    ]
+    if len(basename_hits) == 1:
+        return basename_hits[0]
+    if len(basename_hits) > 1:
+        return None
+
+    # Unique endswith only when the candidate looks like a real file token
+    # (has a dot, or is long enough) — avoid matching bare "log" to every *.log.
+    if "." in cleaned_base or len(cleaned_base) >= 8:
+        suffix_hits = [
+            name
+            for name in available_names
+            if Path(name).name.lower().endswith(cleaned_base.lower())
+            or cleaned_base.lower().endswith(Path(name).name.lower())
+        ]
+        # Prefer exact-length / contained filename over loose suffix chains.
+        exactish = [
+            name
+            for name in suffix_hits
+            if Path(name).name.lower() == cleaned_base.lower()
+            or cleaned_base.lower() in Path(name).name.lower()
+        ]
+        pool = exactish or suffix_hits
+        if len(pool) == 1:
+            return pool[0]
+    return None
+
+
+def _normalize_unresolved_names(
+    unresolved: list[str],
+    available_names: set[str],
+    related: list[str],
+) -> list[str]:
+    """Clean UNRESOLVED tokens; promote any that actually match attachments."""
+    out: list[str] = []
+    for raw in unresolved:
+        matched = _match_related_attachment_name(raw, available_names)
+        if matched is not None:
+            if matched not in related:
+                related.append(matched)
+            continue
+        cleaned = _normalize_attachment_name_token(raw) or raw.strip()
+        if cleaned and cleaned not in out and cleaned not in related:
+            out.append(cleaned)
+    return out
 
 
 def _split_bg_sections(text: str) -> dict[str, str]:

@@ -70,6 +70,68 @@ def test_parse_checkin_background_validates_related_files() -> None:
     assert bg.unresolved == ("ghost.log",)
 
 
+def test_related_files_normalize_backticks_and_parenthetical() -> None:
+    """LLM wrapping must not demote a real attachment to UNRESOLVED (P1-#3)."""
+    from ee_wiki.generation.fa_evidence import (
+        _match_related_attachment_name,
+        _normalize_attachment_name_token,
+    )
+
+    assert _normalize_attachment_name_token("`foo.log`") == "foo.log"
+    assert _normalize_attachment_name_token("foo.log (log)") == "foo.log"
+    assert _normalize_attachment_name_token("foo.log（日志）") == "foo.log"
+    assert _normalize_attachment_name_token('"bar.txt".') == "bar.txt"
+    assert _normalize_attachment_name_token("path/to/foo.log") == "foo.log"
+
+    available = {"foo.log", "H9H242500041JJY1A_save_100_NG.log", "photo.png"}
+    assert _match_related_attachment_name("`foo.log`", available) == "foo.log"
+    assert (
+        _match_related_attachment_name("foo.log (log)", available) == "foo.log"
+    )
+    assert (
+        _match_related_attachment_name(
+            "H9H242500041JJY1A_save_100_NG.log.", available
+        )
+        == "H9H242500041JJY1A_save_100_NG.log"
+    )
+    # Case-insensitive exact.
+    assert _match_related_attachment_name("FOO.LOG", available) == "foo.log"
+    # Bare "log" must not fuzzy-match every *.log.
+    assert _match_related_attachment_name("log", available) is None
+
+    raw = (
+        "BACKGROUND: erase.\n"
+        "TRUE_FAIL_HINT: erase incomplete\n"
+        "FA_NOTES:\n- see the NG log\n"
+        "RELATED_FILES:\n"
+        "- `foo.log`\n"
+        "- H9H242500041JJY1A_save_100_NG.log (log)\n"
+        "- missing_only.log\n"
+        "UNRESOLVED: none\n"
+    )
+    bg = _parse_checkin_background(raw, available_names=available)
+    assert bg is not None
+    assert bg.related_files == (
+        "foo.log",
+        "H9H242500041JJY1A_save_100_NG.log",
+    )
+    assert bg.unresolved == ("missing_only.log",)
+
+
+def test_unresolved_entry_promoted_when_normalized_matches() -> None:
+    raw = (
+        "BACKGROUND: erase.\n"
+        "TRUE_FAIL_HINT: erase incomplete\n"
+        "FA_NOTES: none\n"
+        "RELATED_FILES: none\n"
+        "UNRESOLVED:\n- `foo.log`\n"
+    )
+    bg = _parse_checkin_background(raw, available_names={"foo.log"})
+    assert bg is not None
+    assert bg.related_files == ("foo.log",)
+    assert bg.unresolved == ()
+
+
 def test_parse_checkin_background_none_sections() -> None:
     raw = (
         "BACKGROUND: monitoring after fix.\n"
