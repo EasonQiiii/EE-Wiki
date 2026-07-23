@@ -52,8 +52,7 @@ _EVIDENCE_MARKERS = re.compile(
 )
 # The check-in markdown renders attachments under "### Attachments" (V2) or
 # the legacy "### Radar attachments（按需下载）", with each file as a
-# backtick-quoted name (including names folded inside a <details> block).
-# Structural parse only.
+# backtick-quoted name. Structural parse only.
 _ATTACHMENT_SECTION = re.compile(
     r"###\s*(?:Radar\s+)?attachments[^\n]*\n(.*?)(?=\n###|\Z)",
     re.IGNORECASE | re.DOTALL,

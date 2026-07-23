@@ -268,10 +268,10 @@ def test_analyze_log_numeric_no_passfail_has_interpretation(
     # LLM interpretation layer actually ran and its output is present.
     assert "AI 解读" in md
     assert "未见字面 PASS/FAIL" in md
-    # Preview rendered OUTSIDE the <details> fold (Open WebUI-safe).
-    preview_idx = md.index("**预览（前 40 行）：**")
-    details_idx = md.index("<details>")
-    assert preview_idx < details_idx
+    # Preview is Open WebUI-safe: no raw <details> dump of the full file.
+    assert "**预览（前 40 行）：**" in md
+    assert "<details>" not in md
+    assert "</details>" not in md
     # The heuristic still reports 0/0 structural counts, but the answer must
     # NOT assert the test "passed" (no fabricated pass/fail verdict).
     assert "测试通过" not in md

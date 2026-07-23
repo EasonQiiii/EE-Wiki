@@ -800,18 +800,23 @@ def _format_checkin_markdown(
     """Build the V2 FA check-in markdown for Open WebUI.
 
     Order: Title / Component / Fail items (or Need test evidence) /
-    Description (quote + collapsible full text) / Diagnosis (email-only
-    authors, first 3 shown, rest folded) / Attachments (first 2 shown, rest
-    folded; cached → download link) / AI Summary (LLM narrative). Scope
-    travels via the invisible ``<!-- ee-wiki-scope -->`` marker, so it is
-    intentionally NOT printed here. Fail-item ``source`` stays in structured
-    data / logs — never shown in the user-facing face.
+    Description (short quote only) / Diagnosis (email-only authors, first 3
+    short lines) / Attachments (first 2) / AI Summary.
+
+    Open WebUI does **not** render HTML ``<details>`` — those tags appear as
+    raw text and dump the folded body into the chat. Keep the face compact:
+    truncate long fields and point to follow-up phrases for the rest. Scope
+    stays off the face (``<!-- ee-wiki-scope -->`` / session). Fail-item
+    ``source`` is never shown.
     """
     rid = problem.radar_id
+    title = (problem.title or "—").strip() or "—"
+    if len(title) > 140:
+        title = title[:137].rstrip() + "…"
     lines: list[str] = [
         f"## FA check-in — rdar://{rid}",
         "",
-        f"**Title:** {problem.title or '—'}",
+        f"**Title:** {title}",
     ]
     if problem.component:
         lines.append(
@@ -834,67 +839,46 @@ def _format_checkin_markdown(
         else:
             for item in fails.fail_items:
                 station = item.station or "?"
-                lines.append(f"- [{station}] {item.message}")
+                msg = " ".join((item.message or "").split())
+                if len(msg) > 220:
+                    msg = msg[:217].rstrip() + "…"
+                lines.append(f"- [{station}] {msg}")
 
-    # Description: short quoted preview; fold only when there is more to show.
+    # Description: short quote only — never dump Rel History / full Radar face.
     if problem.description:
         full = "\n\n".join(
             d.text.strip() for d in problem.description if d.text and d.text.strip()
         )
         if full:
-            first_line = full.split("\n", 1)[0].strip()
-            preview = first_line
-            if len(preview) > 160:
-                preview = preview[:157] + "..."
+            preview, truncated = _description_preview(full, limit=220)
             lines.extend(["", "### Description", "", f"> {preview}"])
-            if full != preview:
-                lines.extend(
-                    [
-                        "",
-                        "<details><summary>展开完整 Description</summary>",
-                        "",
-                        full,
-                        "",
-                        "</details>",
-                    ]
-                )
+            if truncated:
+                lines.append("")
+                lines.append("_完整 Description 请在 Radar 中查看。_")
 
-    # Diagnosis: email-only authors; first 3 shown, rest folded.
+    # Diagnosis: email-only authors; first 3 short lines; rest as a hint.
     user_diag = user_diagnosis_entries(problem)
     if user_diag:
         lines.extend(["", "### Diagnosis"])
         shown, rest = user_diag[:3], user_diag[3:]
         for item in shown:
             who = _author_email(item.added_by)
-            body = item.text.strip()
-            if len(body) > 400:
-                body = body[:397].rstrip() + "…"
+            body = _compact_face_text(item.text or "", limit=180)
             lines.append(f"- **{who}:** {body}")
         if rest:
             lines.append("")
             lines.append(
-                f"<details><summary>展开其余 {len(rest)} 条 diagnosis</summary>"
+                f"_另有 {len(rest)} 条 diagnosis — 说「简要总结 FA 步骤」或"
+                "「列出 FA 步骤」查看。_"
             )
-            lines.append("")
-            for item in rest:
-                who = _author_email(item.added_by)
-                body = item.text.strip()
-                if len(body) > 400:
-                    body = body[:397].rstrip() + "…"
-                lines.append(f"- **{who}:** {body}")
-            lines.append("")
-            lines.append("</details>")
 
-    # Attachments: first 2 shown, rest folded; cached → download link.
+    # Attachments: first 2; rest as a hint (inventory turn lists all).
     att_names = [a.file_name for a in problem.attachments if a.file_name]
     if att_names:
         from ee_wiki.integrations.radar.attachments import (
             summarize_attachment_inventory,
         )
 
-        # Problem 1 follow-up: do NOT eagerly download every attachment at
-        # check-in. Only list what is available + what is already cached; pull
-        # bytes on demand when the user asks to download / analyze a log.
         inventory, att_total, att_cached = summarize_attachment_inventory(
             config, problem
         )
@@ -905,16 +889,11 @@ def _format_checkin_markdown(
         if rest:
             lines.append("")
             lines.append(
-                f"<details><summary>展开其余 {len(rest)} 个附件</summary>"
+                f"_另有 {len(rest)} 个附件 — 说「有哪些附件」查看完整列表。_"
             )
-            lines.append("")
-            for entry in rest:
-                lines.append(_attachment_line(config, rid, entry))
-            lines.append("")
-            lines.append("</details>")
         lines.append(
             f"\n> 已缓存 {att_cached} / {att_total} 个附件"
-            "（其余在你说「下载 / 分析 log」或需要查看图片时按需拉取）。"
+            "（说「下载 / 分析 log」或需要看图时按需拉取）。"
         )
 
     if ai_summary:
@@ -926,6 +905,66 @@ def _format_checkin_markdown(
             "Please confirm product/project/build for retrieval."
         )
     return "\n".join(lines)
+
+
+def _compact_face_text(text: str, *, limit: int) -> str:
+    """Collapse whitespace and truncate for Open WebUI-readable face cards."""
+    compact = " ".join((text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _description_preview(full: str, *, limit: int = 220) -> tuple[str, bool]:
+    """Build a short Description quote without Rel History / EDIT walls.
+
+    Returns ``(preview, truncated)``. Stops before Rel History / dashed
+    alignment sections that make Open WebUI look like a raw Radar dump.
+    """
+    stop_markers = (
+        "rel history",
+        "relhistory",
+        "edit",
+        "detail fail",
+        "please refer to the attachment",
+    )
+    kept: list[str] = []
+    hit_stop = False
+    for raw in (full or "").splitlines():
+        line = raw.strip()
+        if not line:
+            if kept:
+                # Blank line after unit fields → enough for a preview.
+                break
+            continue
+        lower = line.lower()
+        if any(m in lower for m in stop_markers):
+            hit_stop = True
+            break
+        if re.fullmatch(r"[-—=]{3,}", line):
+            hit_stop = True
+            break
+        # Skip sparse alignment leftovers like "----PASS".
+        if re.search(r"-{3,}", line) and re.search(
+            r"\b(?:PASS|FAIL|MST)\b", line, re.IGNORECASE
+        ):
+            hit_stop = True
+            break
+        kept.append(" ".join(line.split()))
+        if sum(len(x) for x in kept) >= limit:
+            break
+    if kept:
+        preview = " · ".join(kept)
+        truncated = hit_stop or len(" ".join(full.split())) > len(
+            " ".join(kept)
+        )
+    else:
+        preview = _compact_face_text(full, limit=limit)
+        truncated = len(" ".join(full.split())) > limit
+    if len(preview) > limit:
+        preview = preview[: max(0, limit - 1)].rstrip() + "…"
+        truncated = True
+    return preview, truncated
 
 
 def _attachment_line(config: AppConfig, rid: str, entry: dict) -> str:

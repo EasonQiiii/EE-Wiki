@@ -533,16 +533,20 @@ def test_v2_checkin_face_email_fold_and_no_legacy_sections(
     assert "_(src:" not in md
     assert "### Description" in md
     assert "> Unit SN: G32NC7GJ9N" in md
-    assert "展开完整 Description" in md
     assert "### Diagnosis" in md
     assert "**wang.jin92@byd.com:**" in md
     assert "Elwen Wang" not in md
     assert "CommentAuthor" not in md
-    assert "展开其余 1 条 diagnosis" in md
+    assert "另有 1 条 diagnosis" in md
+    assert "Next step: CT scan." not in md  # rest not dumped into the face
     assert "### Attachments" in md
-    assert "展开其余 3 个附件" in md
+    assert "另有 3 个附件" in md
+    assert "gentle_knock.zip" not in md  # rest not dumped
     assert "### AI Summary" in md
     assert "下一步 CT scan" in md
+    assert "<details>" not in md
+    assert "</details>" not in md
+    assert "<summary>" not in md
 
     for banned in (
         "强关联证据",
@@ -558,6 +562,56 @@ def test_v2_checkin_face_email_fold_and_no_legacy_sections(
         "### Radar attachments",
     ):
         assert banned not in md, banned
+
+
+def test_checkin_face_does_not_dump_rel_history_wall(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    """Long Radar Description must stay a short quote — no Rel History dump."""
+    from ee_wiki.integrations.scope import ScopeResolution
+
+    config = _base_config(repo_root, tmp_path, flames_backend="manual")
+    wall = (
+        "Unit information\n"
+        "SN:               G32NC7GJ9N\n"
+        "Config:        FBHAY-R1B-LD\n"
+        "Fail Rate:    Pending test done.\n"
+        "Rel History：\n"
+        "0.T0                            ----PASS\n"
+        "1.1m Plinko Granite Random Drop 100x@Drop25 ----PASS\n"
+        "2.1m Plinko Granite Random Drop 100x@Drop50 ----MST Fail==>\n"
+        "IMU SensorData Cal_Combo_LPNM_Gyro_Average_Y test value: 0.62137225\n"
+        "Detail fail test data please refer to the attachment.\n"
+    )
+    problem = RadarProblem(
+        radar_id="182787079",
+        title="x" * 200,
+        description=(DescriptionItem(text=wall, added_by="eng"),),
+        diagnosis=(),
+        attachments=(),
+    )
+    fails = FailItemsResult(
+        unit=FlamesUnitRef(unit_id="u", serial=None, radar_id="182787079"),
+        records=(),
+        fail_items=(),
+        cached_logs=(),
+        source="radar",
+        needs_user_input=False,
+    )
+    scope = ScopeResolution(
+        product="pencil",
+        project="mocalamari",
+        build="fvb",
+        source="component_alias",
+        confidence="high",
+    )
+    md = session_mod._format_checkin_markdown(config, problem, scope, fails)
+    assert "Rel History" not in md
+    assert "----PASS" not in md
+    assert "<details>" not in md
+    assert "完整 Description 请在 Radar 中查看" in md
+    # Title truncated for readability.
+    assert "…" in md.split("**Title:**", 1)[1].split("\n", 1)[0]
 
 
 def test_author_email_strips_comment_author_wrapper() -> None:

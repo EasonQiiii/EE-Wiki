@@ -519,9 +519,9 @@ def _preview_text(
 ) -> str:
     """First ~40 lines / ~2000 chars of a file for an in-chat preview.
 
-    Structural only — no semantic choice. Keeps the most useful part of a log
-    visible *outside* the <details> fold (Open WebUI often drops <details>);
-    the full text still lives inside <details>.
+    Structural only — no semantic choice. Open WebUI cannot fold HTML
+    ``<details>``, so the preview stays short and the download link carries
+    the full file.
     """
     lines = text.splitlines()
     if len(lines) <= max_lines:
@@ -529,7 +529,7 @@ def _preview_text(
     else:
         head = "\n".join(lines[:max_lines]).rstrip()
     if len(head) > max_chars:
-        head = head[:max_chars].rstrip() + "\n…（预览截断，全文见下方折叠）"
+        head = head[:max_chars].rstrip() + "\n…（预览截断，全文见下载链接）"
     return head or "(empty file)"
 
 
@@ -549,9 +549,8 @@ def format_attachment_content_markdown(
     After the structural heuristic (``summarize_log_text``) an optional local-LLM
     interpretation layer (``generate_log_analysis``) explains the file even when
     it carries no literal PASS/FAIL lines (e.g. Cal_LPNM numeric / "out of limit"
-    output). The interpretation and a short preview are rendered OUTSIDE the
-    <details> fold so Open WebUI (which often drops <details>) still shows them;
-    the full text stays inside <details>.
+    output). A short preview is shown in a fenced block; Open WebUI does not
+    render HTML ``<details>``, so the full body is never inlined — use Download.
     """
     rid = normalize_radar_id(radar_id)
     problem = build_radar_backend(config).get_problem(rid)
@@ -629,22 +628,17 @@ def format_attachment_content_markdown(
                 lines.append(interp)
 
         lines.append(f"**Download:** [`{name}`]({url})")
-        # Short preview OUTSIDE the fold (Open WebUI often drops <details>).
+        # Open WebUI does not render <details>; keep a short preview only and
+        # point to the download link for the full file.
         lines.append("")
         lines.append("**预览（前 40 行）：**")
         lines.append("")
         lines.append("```text")
         lines.append(_preview_text(text))
         lines.append("```")
-        lines.append("")
-        lines.append("<details>")
-        lines.append(f"<summary>File preview — {name}（全文）</summary>")
-        lines.append("")
-        lines.append("```text")
-        lines.append(text.rstrip() or "(empty file)")
-        lines.append("```")
-        lines.append("")
-        lines.append("</details>")
+        if text.count("\n") >= 40 or len(text) > 4000:
+            lines.append("")
+            lines.append(f"_全文见 [下载 `{name}`]({url})。_")
 
     if config.fa.radar.backend == "stub":
         lines.extend(
