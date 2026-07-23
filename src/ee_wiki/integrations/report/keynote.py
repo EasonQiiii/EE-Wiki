@@ -8,8 +8,8 @@ Lab contract (all content from Radar, no invention):
 
 On macOS with Keynote installed, AppleScript builds (or fills) a real
 ``.key``. Offline / CI / missing Keynote: write the same one-pager as UTF-8
-text at ``FA_summary.key`` plus ``FA_summary.md`` so the download link still
-works for Open WebUI testing.
+Markdown at ``FA_summary.md`` only — never masquerade text as ``FA_summary.key``
+(which Keynote cannot open).
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ from ee_wiki.common.logging import get_logger
 from ee_wiki.integrations.paths import (
     fa_export_dir,
     fa_summary_download_rel,
+    fa_summary_md_download_rel,
+    fa_summary_md_path,
     fa_summary_path,
     normalize_radar_id,
 )
@@ -136,6 +138,7 @@ class StubKeynoteFaReportBackend:
 
     Prefer a real Keynote via AppleScript when available; always also write
     ``FA_summary.md`` with the same content for chat preview / offline lab.
+    When Keynote is unavailable, ``FA_summary.md`` is the sole download artifact.
     """
 
     def __init__(
@@ -160,33 +163,36 @@ class StubKeynoteFaReportBackend:
         self.force_text_fallback = force_text_fallback
 
     def generate(self, request: FaReportRequest) -> FaReportResult:
-        """Create ``FA_summary.key`` (+ ``FA_summary.md``) for ``request.radar_id``.
+        """Create ``FA_summary.key`` and/or ``FA_summary.md`` for ``request.radar_id``.
+
+        A real Keynote bundle is written only when AppleScript succeeds. Text
+        fallback writes ``FA_summary.md`` only and removes any stale ``.key``.
 
         Args:
             request: Structured FA fields (Radar-sourced).
 
         Returns:
-            Export path and download-relative location.
+            Export path and download-relative location for the primary artifact.
         """
         rid = normalize_radar_id(request.radar_id)
         out_dir = fa_export_dir(self.exports_dir, rid)
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = fa_summary_path(self.exports_dir, rid)
-        md_path = out_dir / "FA_summary.md"
+        key_path = fa_summary_path(self.exports_dir, rid)
+        md_path = fa_summary_md_path(self.exports_dir, rid)
         one_pager = format_one_pager_markdown(request)
         md_path.write_text(one_pager, encoding="utf-8")
 
         template_used: Path | None = None
         notes: str
+        keynote_available = False
 
         if self.force_text_fallback or not _keynote_usable():
-            out_path.write_text(one_pager, encoding="utf-8")
+            _remove_path_if_exists(key_path)
             notes = (
-                "Wrote text one-pager to FA_summary.key "
-                "(Keynote app unavailable or force_text_fallback). "
-                "Same content in FA_summary.md."
+                "Keynote unavailable (no Keynote.app or force_text_fallback); "
+                "wrote Markdown one-pager to FA_summary.md only."
             )
-            logger.info("FA summary (text) for radar %s → %s", rid, out_path)
+            logger.info("FA summary (markdown) for radar %s → %s", rid, md_path)
         else:
             try:
                 if (
@@ -195,7 +201,7 @@ class StubKeynoteFaReportBackend:
                 ):
                     _fill_keynote_template(
                         self.template_path,
-                        out_path,
+                        key_path,
                         request,
                         timeout=self.keynote_timeout_seconds,
                     )
@@ -206,7 +212,7 @@ class StubKeynoteFaReportBackend:
                     )
                 else:
                     _create_keynote_from_scratch(
-                        out_path,
+                        key_path,
                         request,
                         timeout=self.keynote_timeout_seconds,
                     )
@@ -214,25 +220,40 @@ class StubKeynoteFaReportBackend:
                         "Created Keynote one-pager via AppleScript from Radar "
                         "fields; markdown mirror in FA_summary.md."
                     )
-                logger.info("FA summary (Keynote) for radar %s → %s", rid, out_path)
+                keynote_available = True
+                logger.info("FA summary (Keynote) for radar %s → %s", rid, key_path)
             except Exception as exc:  # noqa: BLE001 — fall back for lab UX
                 logger.warning(
-                    "Keynote FA summary failed; writing text one-pager: %s",
+                    "Keynote FA summary failed; writing Markdown one-pager only: %s",
                     exc,
                     exc_info=True,
                 )
-                out_path.write_text(one_pager, encoding="utf-8")
+                _remove_path_if_exists(key_path)
                 notes = (
-                    f"Keynote generation failed ({exc}); wrote text one-pager "
-                    "to FA_summary.key. Same content in FA_summary.md."
+                    f"Keynote generation failed ({exc}); wrote Markdown one-pager "
+                    "to FA_summary.md only."
                 )
 
+        if keynote_available:
+            return FaReportResult(
+                radar_id=rid,
+                output_path=key_path,
+                download_rel_path=fa_summary_download_rel(rid),
+                template_used=template_used,
+                notes=notes,
+                keynote_available=True,
+                markdown_path=md_path,
+                markdown_download_rel_path=fa_summary_md_download_rel(rid),
+            )
         return FaReportResult(
             radar_id=rid,
-            output_path=out_path,
-            download_rel_path=fa_summary_download_rel(rid),
+            output_path=md_path,
+            download_rel_path=fa_summary_md_download_rel(rid),
             template_used=template_used,
             notes=notes,
+            keynote_available=False,
+            markdown_path=md_path,
+            markdown_download_rel_path=fa_summary_md_download_rel(rid),
         )
 
 
@@ -344,6 +365,16 @@ def _keynote_usable() -> bool:
         return False
     app = Path("/Applications/Keynote.app")
     return app.is_dir()
+
+
+def _remove_path_if_exists(path: Path) -> None:
+    """Remove a file or Keynote bundle directory if it exists."""
+    if not path.exists():
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
 
 
 def _run_osascript(script: str, *argv: str, timeout: int) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,8 +44,24 @@ _RADAR_UNPARSED_PROMPT = (
     "Radar has title/description/diagnosis notes, but structured fail items "
     "could not be extracted automatically.\n\n"
     "Please paste the test **log** (preferred), or a bullet list of "
-    "**error / fail items**, or confirm the symptoms from the Radar notes above."
+    "error / fail items, or confirm the symptoms from the Radar notes above."
 )
+
+# Author field on a Radar diagnosis entry can be wrapped as
+# "<CommentAuthor wang.jin92@byd.com Elwen Wang>" or "wang.baofu@byd.com Wang
+# Baofu". We surface only the email (structural token, no NLP).
+_AUTHOR_EMAIL = re.compile(r"[\w.+-]+@[\w.-]+")
+
+
+def _author_email(added_by: str | None) -> str:
+    """Return the author email only (strip '<CommentAuthor ... Name>' wrappers)."""
+    raw = (added_by or "").strip()
+    if not raw:
+        return "—"
+    match = _AUTHOR_EMAIL.search(raw)
+    if match:
+        return match.group(0)
+    return raw
 
 
 @dataclass(frozen=True)
@@ -154,6 +171,11 @@ def start_fa_checkin(
     corpus_cache = _cache_radar_corpus(config, problem, cache)
     radar_fails = None
     if corpus_cache is not None:
+        if llm is not None and not (cancel_event and cancel_event.is_set()):
+            from ee_wiki.api.stream_status import FA_EXTRACT_FAILS_STATUS
+            from ee_wiki.api.stream_status_context import push_stream_status
+
+            push_stream_status(FA_EXTRACT_FAILS_STATUS)
         radar_fails = _extract_radar_fail_items(
             config,
             corpus_cache[0],
@@ -184,8 +206,13 @@ def start_fa_checkin(
             needs_user_input=False,
             user_prompt=None,
         )
-        return _build_checkin_result(
-            config, problem, scope, fails, background=background, related=related
+        return _make_checkin_result(
+            config,
+            problem,
+            scope,
+            fails,
+            llm=llm,
+            cancel_event=cancel_event,
         )
 
     # (5) Flames — lowest priority; only reached when the face + attachments
@@ -193,8 +220,13 @@ def start_fa_checkin(
     fails = flames.collect_fail_items(rid, serial=serial, cache_dir=cache)
     if fails.fail_items and not fails.needs_user_input:
         fails = _retag_result(fails, "flames")
-        return _build_checkin_result(
-            config, problem, scope, fails, background=background, related=related
+        return _make_checkin_result(
+            config,
+            problem,
+            scope,
+            fails,
+            llm=llm,
+            cancel_event=cancel_event,
         )
 
     # (6) Ask the user to paste evidence.
@@ -217,8 +249,13 @@ def start_fa_checkin(
         needs_user_input=True,
         user_prompt=prompt,
     )
-    return _build_checkin_result(
-        config, problem, scope, fails, background=background, related=related
+    return _make_checkin_result(
+        config,
+        problem,
+        scope,
+        fails,
+        llm=llm,
+        cancel_event=cancel_event,
     )
 
 
@@ -332,8 +369,11 @@ def _materialize_related_evidence(
     if not related_names:
         return _RelatedEvidence()
 
+    from ee_wiki.api.stream_status import FA_DOWNLOAD_STATUS
+    from ee_wiki.api.stream_status_context import push_stream_status
     from ee_wiki.integrations.fa_errors import format_fa_error
     from ee_wiki.integrations.radar.attachments import (
+        cached_attachment_path,
         materialize_attachment,
         read_attachment_text,
     )
@@ -342,20 +382,48 @@ def _materialize_related_evidence(
     meta_by_name = {
         a.file_name: a for a in problem.attachments if a.file_name
     }
-    files: list[_RelatedFile] = []
-    downloaded = 0
-    total_bytes = 0
+    # Pre-plan which names we will attempt so download progress totals are stable.
+    planned: list[tuple[str, str, int | None]] = []
     for name in related_names:
         meta = meta_by_name.get(name)
         if meta is None:
             continue
         kind = meta.kind or "attachment"
+        size = meta.file_size
+        planned.append((name, kind, size))
+
+    # Count how many planned files still need a Radar fetch (not already cached
+    # and not over caps) so the UI shows (1/N)…(N/N) during check-in.
+    pending_fetch: list[str] = []
+    preview_downloaded = 0
+    preview_bytes = 0
+    for name, kind, size in planned:
+        if preview_downloaded >= caps.max_related_files:
+            break
+        if size is not None and size > caps.max_related_file_bytes:
+            continue
+        if (
+            size is not None
+            and preview_bytes + size > caps.max_related_total_bytes
+        ):
+            continue
+        if cached_attachment_path(config, problem.radar_id, name) is None:
+            pending_fetch.append(name)
+        preview_downloaded += 1
+        if size is not None:
+            preview_bytes += size
+    fetch_total = len(pending_fetch)
+    fetch_done = 0
+
+    files: list[_RelatedFile] = []
+    downloaded = 0
+    total_bytes = 0
+    for name, kind, size in planned:
         if cancel_event and cancel_event.is_set():
             break
         if downloaded >= caps.max_related_files:
             files.append(_RelatedFile(name, kind, status="over_count"))
             continue
-        size = meta.file_size
         if size is not None and size > caps.max_related_file_bytes:
             files.append(_RelatedFile(name, kind, status="over_size"))
             continue
@@ -365,6 +433,12 @@ def _materialize_related_evidence(
         ):
             files.append(_RelatedFile(name, kind, status="over_size"))
             continue
+        needs_fetch = cached_attachment_path(config, problem.radar_id, name) is None
+        if needs_fetch and fetch_total:
+            fetch_done += 1
+            push_stream_status(
+                FA_DOWNLOAD_STATUS.format(done=fetch_done, total=fetch_total)
+            )
         try:
             path, rel, url = materialize_attachment(
                 config, problem.radar_id, name, kind=kind
@@ -646,8 +720,7 @@ def _build_checkin_result(
     scope: ScopeResolution,
     fails: FailItemsResult,
     *,
-    background=None,
-    related: _RelatedEvidence | None = None,
+    ai_summary: str | None = None,
 ) -> FaCheckinResult:
     """Attach download URLs and markdown to a fail-items payload."""
     log_urls = tuple(
@@ -660,9 +733,7 @@ def _build_checkin_result(
         problem,
         scope,
         fails,
-        log_urls,
-        background=background,
-        related=related or _RelatedEvidence(),
+        ai_summary=ai_summary,
     )
     logger.info(
         "FA check-in radar=%s product=%s project=%s build=%s fails=%d awaiting=%s source=%s",
@@ -685,60 +756,37 @@ def _build_checkin_result(
     )
 
 
-def _append_background_section(lines: list[str], background) -> None:
-    """Append a short LLM face read-through (Background / true fail / notes)."""
-    if background is None or background.is_empty():
-        return
-    lines.extend(["", "### Background（票面通读）"])
-    if background.background:
-        lines.append(background.background)
-    if background.true_fail_hint:
-        lines.append(f"\n**最突出的 fail：** {background.true_fail_hint}")
-    if background.fa_notes:
-        lines.append("\n**FA notes：**")
-        for note in background.fa_notes:
-            lines.append(f"- {note}")
-
-
-def _append_related_evidence_section(
+def _make_checkin_result(
     config: AppConfig,
-    lines: list[str],
     problem: RadarProblem,
-    related: _RelatedEvidence,
-    background,
-) -> None:
-    """Append the LLM-selected strong-related evidence files + unresolved."""
-    unresolved = tuple(background.unresolved) if background is not None else ()
-    if not related.files and not unresolved:
-        return
-    lines.extend(["", "### 强关联证据（LLM 依票面/FA 批注选取）", ""])
-    if not related.files:
-        lines.append("_票面未指向任何已上传的附件。_")
-    for rf in related.files:
-        kind_tag = "图片" if rf.kind == "picture" else "附件"
-        if rf.status == "cached" and rf.url:
-            lines.append(f"- [`{rf.name}`]({rf.url}) — {kind_tag} · 已下载并读取")
-        elif rf.status == "image" and rf.url:
-            lines.append(f"- [`{rf.name}`]({rf.url}) — {kind_tag} · 已下载（未作日志解析）")
-        elif rf.status == "over_count":
-            lines.append(
-                f"- `{rf.name}` — {kind_tag} · 超出开案下载数量上限，"
-                "说「下载 <文件名>」再取"
-            )
-        elif rf.status == "over_size":
-            lines.append(
-                f"- `{rf.name}` — {kind_tag} · 文件较大，未在开案时下载，"
-                "说「下载 <文件名>」再取"
-            )
-        elif rf.status == "failed":
-            lines.append(f"- `{rf.name}` — {kind_tag} · 下载失败：{rf.note}")
-        else:
-            lines.append(f"- `{rf.name}` — {kind_tag}")
-    if unresolved:
-        lines.append("")
-        lines.append("**票面点名但未在附件里的文件（缺证据）：**")
-        for name in unresolved:
-            lines.append(f"- `{name}`")
+    scope: ScopeResolution,
+    fails: FailItemsResult,
+    *,
+    llm: LlmBackend | None = None,
+    cancel_event: threading.Event | None = None,
+) -> FaCheckinResult:
+    """Build a check-in result, generating the LLM AI Summary when possible."""
+    ai_summary = None
+    if llm is not None and not (cancel_event and cancel_event.is_set()):
+        from ee_wiki.api.stream_status import FA_AI_SUMMARY_STATUS
+        from ee_wiki.api.stream_status_context import push_stream_status
+        from ee_wiki.generation.fa_evidence import generate_checkin_ai_summary
+
+        push_stream_status(FA_AI_SUMMARY_STATUS)
+        ai_summary = generate_checkin_ai_summary(
+            problem,
+            fails,
+            llm=llm,
+            repo_root=config.repo_root,
+            cancel_event=cancel_event,
+        )
+    return _build_checkin_result(
+        config,
+        problem,
+        scope,
+        fails,
+        ai_summary=ai_summary,
+    )
 
 
 def _format_checkin_markdown(
@@ -746,77 +794,29 @@ def _format_checkin_markdown(
     problem: RadarProblem,
     scope: ScopeResolution,
     fails: FailItemsResult,
-    log_urls: tuple[str, ...],
     *,
-    background=None,
-    related: _RelatedEvidence | None = None,
+    ai_summary: str | None = None,
 ) -> str:
-    """Build the assistant markdown for Open WebUI."""
-    related = related or _RelatedEvidence()
-    lines = [
-        f"## FA check-in — rdar://{problem.radar_id}",
+    """Build the V2 FA check-in markdown for Open WebUI.
+
+    Order: Title / Component / Fail items (or Need test evidence) /
+    Description (quote + collapsible full text) / Diagnosis (email-only
+    authors, first 3 shown, rest folded) / Attachments (first 2 shown, rest
+    folded; cached → download link) / AI Summary (LLM narrative). Scope
+    travels via the invisible ``<!-- ee-wiki-scope -->`` marker, so it is
+    intentionally NOT printed here. Fail-item ``source`` stays in structured
+    data / logs — never shown in the user-facing face.
+    """
+    rid = problem.radar_id
+    lines: list[str] = [
+        f"## FA check-in — rdar://{rid}",
         "",
-        f"**Title:** {problem.title}",
-        f"**State:** {problem.state or '—'} / {problem.substate or '—'}",
+        f"**Title:** {problem.title or '—'}",
     ]
     if problem.component:
         lines.append(
             f"**Component:** {problem.component.name} | {problem.component.version}"
         )
-    if problem.description:
-        preview = problem.description[0].text.strip().replace("\n", " ")
-        if len(preview) > 180:
-            preview = preview[:177] + "..."
-        lines.append(f"**Description:** {preview}")
-    lines.append(
-        f"**EE-Wiki scope:** product=`{scope.product or '?'}` "
-        f"project=`{scope.project or '?'}` "
-        f"build=`{scope.build or '?'}` "
-        f"(source={scope.source}, confidence={scope.confidence})"
-    )
-    lines.append(f"**Evidence source:** `{fails.source}`")
-
-    _append_background_section(lines, background)
-    _append_related_evidence_section(config, lines, problem, related, background)
-
-    att_names = [a.file_name for a in problem.attachments if a.file_name]
-    if att_names:
-        lines.append(
-            "**Radar attachments:** " + ", ".join(f"`{n}`" for n in att_names)
-        )
-        from ee_wiki.integrations.radar.attachments import (
-            summarize_attachment_inventory,
-        )
-
-        # Problem 1 fix: do NOT eagerly download every attachment at check-in
-        # (that serial download stalled the UI on "检索中" for ~56s). Only list
-        # what is available + what is already cached; pull bytes on demand when
-        # the user asks to download / analyze a log or view a picture.
-        inventory, att_total, att_cached = summarize_attachment_inventory(
-            config, problem
-        )
-        lines.extend(["", "### Radar attachments（按需下载）", ""])
-        for entry in inventory:
-            kind_tag = "图片" if entry["kind"] == "picture" else "附件"
-            cached_tag = "已缓存" if entry["cached"] else "待下载"
-            lines.append(
-                f"- `{entry['name']}` — {entry['type']} · {kind_tag} · {cached_tag}"
-            )
-        lines.append(
-            f"\n> 已缓存 {att_cached} / {att_total} 个附件"
-            "（其余在你说「下载 / 分析 log」或需要查看图片时按需拉取；"
-            "开案不再整批下载）。"
-        )
-
-    user_diag = user_diagnosis_entries(problem)
-    if user_diag:
-        lines.extend(["", "### Radar diagnosis steps（原文）", ""])
-        for i, item in enumerate(user_diag, start=1):
-            who = (item.added_by or "—").strip()
-            preview = item.text.strip().replace("\n", " ")
-            if len(preview) > 220:
-                preview = preview[:217] + "..."
-            lines.append(f"{i}. **{who}:** {preview}")
 
     if fails.needs_user_input:
         lines.extend(
@@ -825,8 +825,6 @@ def _format_checkin_markdown(
                 "### Need test evidence",
                 fails.user_prompt
                 or "Please paste the test log or a list of error items.",
-                "",
-                "After you paste, I will list fail items and continue triage.",
             ]
         )
     else:
@@ -836,26 +834,91 @@ def _format_checkin_markdown(
         else:
             for item in fails.fail_items:
                 station = item.station or "?"
-                src = f" _(src: {item.source})_" if item.source else ""
-                lines.append(f"- [{station}] {item.message}{src}")
+                lines.append(f"- [{station}] {item.message}")
 
-        lines.extend(["", "### Evidence files"])
-        if not log_urls:
-            lines.append(
-                "_暂无已缓存的证据文件可下载"
-                "（票面 corpus / 强关联附件会在开案或按需下载后出现在这里）。_"
-            )
-        else:
-            for rel, url in zip(fails.cached_logs, log_urls, strict=True):
-                lines.append(f"- [{Path(rel).name}]({url})")
-
-        lines.extend(
-            [
-                "",
-                "_True-fail vs fixture/SW is a human judgment. "
-                "Say which items are true fail to continue module triage._",
-            ]
+    # Description: short quoted preview; fold only when there is more to show.
+    if problem.description:
+        full = "\n\n".join(
+            d.text.strip() for d in problem.description if d.text and d.text.strip()
         )
+        if full:
+            first_line = full.split("\n", 1)[0].strip()
+            preview = first_line
+            if len(preview) > 160:
+                preview = preview[:157] + "..."
+            lines.extend(["", "### Description", "", f"> {preview}"])
+            if full != preview:
+                lines.extend(
+                    [
+                        "",
+                        "<details><summary>展开完整 Description</summary>",
+                        "",
+                        full,
+                        "",
+                        "</details>",
+                    ]
+                )
+
+    # Diagnosis: email-only authors; first 3 shown, rest folded.
+    user_diag = user_diagnosis_entries(problem)
+    if user_diag:
+        lines.extend(["", "### Diagnosis"])
+        shown, rest = user_diag[:3], user_diag[3:]
+        for item in shown:
+            who = _author_email(item.added_by)
+            body = item.text.strip()
+            if len(body) > 400:
+                body = body[:397].rstrip() + "…"
+            lines.append(f"- **{who}:** {body}")
+        if rest:
+            lines.append("")
+            lines.append(
+                f"<details><summary>展开其余 {len(rest)} 条 diagnosis</summary>"
+            )
+            lines.append("")
+            for item in rest:
+                who = _author_email(item.added_by)
+                body = item.text.strip()
+                if len(body) > 400:
+                    body = body[:397].rstrip() + "…"
+                lines.append(f"- **{who}:** {body}")
+            lines.append("")
+            lines.append("</details>")
+
+    # Attachments: first 2 shown, rest folded; cached → download link.
+    att_names = [a.file_name for a in problem.attachments if a.file_name]
+    if att_names:
+        from ee_wiki.integrations.radar.attachments import (
+            summarize_attachment_inventory,
+        )
+
+        # Problem 1 follow-up: do NOT eagerly download every attachment at
+        # check-in. Only list what is available + what is already cached; pull
+        # bytes on demand when the user asks to download / analyze a log.
+        inventory, att_total, att_cached = summarize_attachment_inventory(
+            config, problem
+        )
+        lines.extend(["", "### Attachments", ""])
+        shown, rest = inventory[:2], inventory[2:]
+        for entry in shown:
+            lines.append(_attachment_line(config, rid, entry))
+        if rest:
+            lines.append("")
+            lines.append(
+                f"<details><summary>展开其余 {len(rest)} 个附件</summary>"
+            )
+            lines.append("")
+            for entry in rest:
+                lines.append(_attachment_line(config, rid, entry))
+            lines.append("")
+            lines.append("</details>")
+        lines.append(
+            f"\n> 已缓存 {att_cached} / {att_total} 个附件"
+            "（其余在你说「下载 / 分析 log」或需要查看图片时按需拉取）。"
+        )
+
+    if ai_summary:
+        lines.extend(["", "### AI Summary", "", ai_summary.strip()])
 
     if scope.confidence in {"low", "none"}:
         lines.append(
@@ -863,3 +926,15 @@ def _format_checkin_markdown(
             "Please confirm product/project/build for retrieval."
         )
     return "\n".join(lines)
+
+
+def _attachment_line(config: AppConfig, rid: str, entry: dict) -> str:
+    """Render one attachment inventory row, with a download link when cached."""
+    kind_tag = "图片" if entry["kind"] == "picture" else "附件"
+    if entry["cached"]:
+        rel = f"fa/{rid}/attachments/{entry['name']}"
+        url = public_url(config, f"/v1/cache/{quote(rel, safe='/')}")
+        cached_tag = f"已缓存 · [下载]({url})"
+    else:
+        cached_tag = "待下载"
+    return f"- `{entry['name']}` — {entry['type']} · {kind_tag} · {cached_tag}"

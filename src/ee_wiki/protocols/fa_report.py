@@ -32,9 +32,12 @@ class FaReportResult:
 
     radar_id: str
     output_path: Path
-    download_rel_path: str  # under data/exports/, e.g. fa/123/FA_summary.key
+    download_rel_path: str  # primary download, e.g. fa/123/FA_summary.key or .md
     template_used: Path | None = None
     notes: str = ""
+    keynote_available: bool = False
+    markdown_path: Path | None = None
+    markdown_download_rel_path: str | None = None
 
 
 class FaReportBackend(Protocol):

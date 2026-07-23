@@ -67,7 +67,7 @@ def format_radar_diagnosis_steps(
         lines.append("_No user diagnosis notes on this Radar yet._")
     else:
         lines.append(
-            "以下按时间顺序列出票上 **人工 diagnosis**（已跳过 "
+            "以下按时间顺序列出该 Radar 上的 **人工 diagnosis**（已跳过 "
             "`<Radar History>` 系统行）。**不是** true-fail / 根因结论。"
         )
         lines.append("")

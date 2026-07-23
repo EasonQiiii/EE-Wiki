@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 
 from ee_wiki.api.stream_status import (
+    FA_AI_SUMMARY_STATUS,
     FA_ANALYZE_STATUS,
     FA_ATTACHMENT_ANALYZE_STATUS,
     FA_DOWNLOAD_STATUS,
+    FA_EXTRACT_FAILS_STATUS,
     FA_FETCH_STATUS,
     GENERATION_STATUS,
     RETRIEVAL_STATUS,
@@ -48,7 +50,9 @@ def test_clear_stream_status_sse_hides_indicator() -> None:
 
 
 def test_fa_status_templates() -> None:
-    assert FA_FETCH_STATUS == "正在拉取 Radar 票…"
+    assert FA_FETCH_STATUS == "正在拉取 Radar…"
     assert FA_ANALYZE_STATUS == "正在分析 FA 背景…"
+    assert FA_EXTRACT_FAILS_STATUS == "正在提取 Fail items…"
+    assert FA_AI_SUMMARY_STATUS == "正在生成 AI Summary…"
     assert FA_ATTACHMENT_ANALYZE_STATUS == "正在分析附件内容…"
     assert FA_DOWNLOAD_STATUS.format(done=2, total=5) == "正在下载附件 (2/5)…"

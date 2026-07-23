@@ -9,11 +9,13 @@ a ``ClientSystemIdentifier``. Passwords and ``appleconnect`` automations are
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
 from ee_wiki.common.errors import ConfigError, IntegrationError
 from ee_wiki.common.logging import get_logger
+from ee_wiki.integrations.fa_errors import is_radar_timeout
 from ee_wiki.integrations.paths import normalize_radar_id
 from ee_wiki.integrations.radar.map_problem import map_radar_problem
 from ee_wiki.protocols.radar import (
@@ -39,6 +41,11 @@ _ADDITIONAL_FIELDS = (
     "substate",
     "title",
 )
+# Transient IdMS / network timeouts during acquire_radar_access_token (lab:
+# Errno 60). Initial attempt + 2 retries with 1s / 2s backoff. ACL is never
+# retried (see is_radar_timeout).
+_RADAR_TIMEOUT_MAX_ATTEMPTS = 3
+_RADAR_TIMEOUT_BACKOFF_SECONDS = (1.0, 2.0)
 
 
 class RadarclientBackend:
@@ -373,8 +380,45 @@ class RadarclientBackend:
         return dest_path
 
     def _radar_for_id(self, radar_id: str) -> Any:
-        """Load a Radar problem, requesting FA-relevant additional fields."""
+        """Load a Radar problem, requesting FA-relevant additional fields.
+
+        Retries only on transient network / auth-token timeouts (e.g. IdMS
+        ``urlopen`` Errno 60). ACL and not-found failures fail immediately.
+        """
         numeric = int(normalize_radar_id(radar_id))
+        last_exc: BaseException | None = None
+        for attempt in range(_RADAR_TIMEOUT_MAX_ATTEMPTS):
+            try:
+                return self._radar_for_id_once(numeric)
+            except Exception as exc:
+                last_exc = exc
+                if (
+                    is_radar_timeout(exc)
+                    and attempt + 1 < _RADAR_TIMEOUT_MAX_ATTEMPTS
+                ):
+                    delay = _RADAR_TIMEOUT_BACKOFF_SECONDS[
+                        min(attempt, len(_RADAR_TIMEOUT_BACKOFF_SECONDS) - 1)
+                    ]
+                    logger.warning(
+                        "radar_for_id(%s) timed out (attempt %d/%d); "
+                        "retrying in %.0fs: %s",
+                        numeric,
+                        attempt + 1,
+                        _RADAR_TIMEOUT_MAX_ATTEMPTS,
+                        delay,
+                        exc,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise IntegrationError(
+                    f"radar_for_id({numeric}) failed: {exc}"
+                ) from exc
+        raise IntegrationError(
+            f"radar_for_id({numeric}) failed: {last_exc}"
+        ) from last_exc
+
+    def _radar_for_id_once(self, numeric: int) -> Any:
+        """Single ``radar_for_id`` call (no retry). Prefer additional fields."""
         try:
             return self._client.radar_for_id(
                 numeric,
@@ -383,7 +427,3 @@ class RadarclientBackend:
         except TypeError:
             # Older radarclient builds may not accept additional_fields.
             return self._client.radar_for_id(numeric)
-        except Exception as exc:
-            raise IntegrationError(
-                f"radar_for_id({numeric}) failed: {exc}"
-            ) from exc

@@ -8,7 +8,7 @@ accurate message — and we never echo the raw exception text.
 from __future__ import annotations
 
 from ee_wiki.common.errors import ConfigError, IntegrationError
-from ee_wiki.integrations.fa_errors import format_fa_error
+from ee_wiki.integrations.fa_errors import format_fa_error, is_radar_timeout
 
 
 def test_config_error_kerberos_is_friendly() -> None:
@@ -50,6 +50,50 @@ def test_integration_error_generic() -> None:
     msg = format_fa_error(err, radar_id="101")
     assert "Radar 操作失败" in msg
     assert "服务端日志" in msg
+
+
+def test_integration_error_timeout_maps_to_timeout_message() -> None:
+    """IdMS / urlopen Errno 60 -> explicit timeout guidance (not generic)."""
+    err = IntegrationError(
+        "radar_for_id(182787079) failed: "
+        "<urlopen error [Errno 60] Operation timed out>"
+    )
+    msg = format_fa_error(err, radar_id="182787079")
+    assert "超时" in msg
+    assert "VPN" in msg or "AppleConnect" in msg
+    assert "Radar 操作失败" not in msg
+    assert "rdar://182787079" in msg
+    assert "timed out" not in msg  # no raw leak
+    assert "Errno 60" not in msg
+
+
+def test_timeout_error_type_maps_to_timeout_message() -> None:
+    """Bare TimeoutError (lab acquire_radar_access_token) -> timeout copy."""
+    msg = format_fa_error(TimeoutError("Operation timed out"), radar_id="1")
+    assert "超时" in msg
+    assert "Radar 操作失败" not in msg
+
+
+def test_is_radar_timeout_walks_cause_chain() -> None:
+    """Wrapped URLError / TimeoutError still counts as retryable timeout."""
+    from urllib.error import URLError
+
+    inner = TimeoutError("timed out")
+    wrapped = URLError(inner)
+    outer = IntegrationError(f"radar_for_id(1) failed: {wrapped}")
+    outer.__cause__ = wrapped
+    assert is_radar_timeout(outer) is True
+    assert is_radar_timeout(IntegrationError("403 Forbidden")) is False
+
+
+def test_attachment_timeout_inline() -> None:
+    line = format_fa_error(
+        IntegrationError("download failed: timed out"),
+        context="attachment",
+        style="inline",
+    )
+    assert "超时" in line
+    assert "##" not in line
 
 
 def test_attachment_context_inline_style() -> None:

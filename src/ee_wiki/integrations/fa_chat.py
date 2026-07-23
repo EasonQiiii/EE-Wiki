@@ -50,9 +50,13 @@ _EVIDENCE_MARKERS = re.compile(
     r"(?:ERROR|FAIL|NG\b|FAIL:|ERROR:)",
     re.IGNORECASE,
 )
-_ATTACHMENT_LINE = re.compile(
-    r"\*\*Radar attachments:\*\*\s*(.+)",
-    re.IGNORECASE,
+# The check-in markdown renders attachments under "### Attachments" (V2) or
+# the legacy "### Radar attachments（按需下载）", with each file as a
+# backtick-quoted name (including names folded inside a <details> block).
+# Structural parse only.
+_ATTACHMENT_SECTION = re.compile(
+    r"###\s*(?:Radar\s+)?attachments[^\n]*\n(.*?)(?=\n###|\Z)",
+    re.IGNORECASE | re.DOTALL,
 )
 # Structural pre-filter only (NOT a verbatim-router): does the question touch
 # diagnosis steps at all? The actual list/summarize/latest decision is made by
@@ -385,7 +389,7 @@ def _session_dialogue_reply(
 
     # Build enriched context (verbatim steps) for the generic LLM reply.
     enriched = checkin_markdown
-    if not re.search(r"Radar diagnosis steps", checkin_markdown, re.IGNORECASE):
+    if not re.search(r"###\s*Diagnosis", checkin_markdown, re.IGNORECASE):
         if problem is None:
             from ee_wiki.integrations.factory import build_radar_backend
             from ee_wiki.integrations.radar.evidence import format_radar_diagnosis_steps
@@ -474,7 +478,7 @@ def _deterministic_session_reply(
             if has_fail_items:
                 lines.append("")
                 lines.append(
-                    "这张票里已经从 Radar 文本抽出了 fail items；"
+                    "本 Radar 已从 Radar 文本抽出了 fail items；"
                     "若你要对照原始 log 正文，下载对应附件即可，或把关键片段贴到这里。"
                 )
             if _mention_flames(question, config):
@@ -484,7 +488,7 @@ def _deterministic_session_reply(
                 )
         elif needs_paste:
             lines.append(
-                "这张票的 check-in 里还没有列出可用的 Radar 附件名。"
+                "这个 check-in 里还没有列出可用的 Radar 附件名。"
             )
             if _mention_flames(question, config):
                 lines.append("Flames 也还没拿到 fail items。")
@@ -497,7 +501,7 @@ def _deterministic_session_reply(
             )
             if _mention_flames(question, config):
                 lines.append(
-                    "若票上确实有 log，可在 Radar 客户端打开下载，或把关键片段贴到这里。"
+                    "若该 Radar 上确实有 log，可在 Radar 客户端打开下载，或把关键片段贴到这里。"
                 )
         return "\n".join(lines)
 
@@ -548,18 +552,17 @@ def _session_offtopic_reply(radar_id: str) -> str:
     rid = normalize_radar_id(radar_id)
     return (
         f"## FA check-in — rdar://{rid}\n\n"
-        "这句更像通用 wiki / 器件查询，和本张 FA 票的 triage 无关。\n\n"
-        "- 继续本票：问 fail items、Radar 附件、下一步排查，或贴 ERROR/FAIL log\n"
+        "这句更像通用 wiki / 器件查询，和本 Radar 的 FA triage 无关。\n\n"
+        "- 继续本 Radar：问 fail items、Radar 附件、下一步排查，或贴 ERROR/FAIL log\n"
         "- 查通用知识：请 **新开** 一个 Open WebUI 对话（本线程不会静默切到 RAG）"
     )
 
 
 def _parse_attachment_names(checkin_markdown: str) -> list[str]:
-    match = _ATTACHMENT_LINE.search(checkin_markdown)
+    match = _ATTACHMENT_SECTION.search(checkin_markdown)
     if not match:
         return []
-    raw = match.group(1)
-    return [n.strip("` ") for n in re.findall(r"`([^`]+)`", raw)]
+    return [n.strip("` ") for n in re.findall(r"`([^`]+)`", match.group(1))]
 
 
 def _looks_like_evidence_paste(text: str) -> bool:

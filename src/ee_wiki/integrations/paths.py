@@ -42,6 +42,16 @@ def fa_summary_path(exports_root: Path, radar_id: str) -> Path:
     return fa_export_dir(exports_root, radar_id) / "FA_summary.key"
 
 
+def fa_summary_md_path(exports_root: Path, radar_id: str) -> Path:
+    """Return the Markdown mirror / fallback path for an FA summary."""
+    return fa_export_dir(exports_root, radar_id) / "FA_summary.md"
+
+
 def fa_summary_download_rel(radar_id: str) -> str:
-    """Relative path under exports root for download URLs."""
+    """Relative path under exports root for a Keynote download URL."""
     return f"fa/{normalize_radar_id(radar_id)}/FA_summary.key"
+
+
+def fa_summary_md_download_rel(radar_id: str) -> str:
+    """Relative path under exports root for a Markdown download URL."""
+    return f"fa/{normalize_radar_id(radar_id)}/FA_summary.md"

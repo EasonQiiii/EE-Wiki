@@ -19,7 +19,7 @@ from ee_wiki.integrations.radar.attachments import (
 )
 from ee_wiki.integrations.radar.client import RadarclientBackend
 from ee_wiki.integrations.session import start_fa_checkin
-from ee_wiki.protocols.radar import AttachmentMeta
+from ee_wiki.protocols.radar import AttachmentMeta, RadarProblem
 from ee_wiki.tools.bus import ToolBus
 
 
@@ -63,12 +63,13 @@ def test_checkin_lists_attachments_without_eager_download(
     )
     result = start_fa_checkin(config, "rdar://problem/101493937")
     # Inventory section present, old eager-download block gone.
-    assert "### Radar attachments（按需下载）" in result.summary_markdown
+    assert "### Attachments" in result.summary_markdown
     assert "已缓存" in result.summary_markdown
     assert "待下载" in result.summary_markdown
     assert "sensor_flash_test_PASS_with_MLB_1.log" in result.summary_markdown
     # Problem 1: check-in must NOT pull every file up front (no 56s stall).
     assert "### Radar attachment downloads" not in result.summary_markdown
+    assert "_(src:" not in result.summary_markdown
     att_dir = tmp_path / "cache/fa/101493937/attachments"
     assert not (att_dir / "sensor_flash_test_PASS_with_MLB_1.log").is_file()
     # On-demand download still produces a link + materializes the file.
@@ -203,6 +204,78 @@ def test_content_markdown_includes_preview(
     assert "Attachment content" in md
     assert "sensor_flash_test_PASS_with_MLB_1.log" in md
     assert "```text" in md
+
+
+def test_analyze_log_numeric_no_passfail_has_interpretation(
+    repo_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """Cal_LPNM-style log (numeric / out of limit, NO literal PASS/FAIL) must
+    still get an LLM interpretation, and the preview must sit OUTSIDE <details>
+    so Open WebUI renders it. The reply must not falsely claim pass/fail."""
+    cal_log = (
+        "Cal_LPNM unit test start\n"
+        "gyro_x_average: 0.012\n"
+        "gyro_y_average: -0.042\n"
+        "accel_z_average: 1.021\n"
+        "out of limit: gyro_y_average below spec\n"
+        "test end\n"
+    )
+
+    fake_problem = RadarProblem(
+        radar_id="182787079",
+        title="IMU Cal_LPNM gyro_y out of limit",
+        description=(),
+        diagnosis=(),
+        attachments=(AttachmentMeta(file_name="Cal_LPNM_1.log", kind="attachment"),),
+    )
+    fake_backend = MagicMock()
+    fake_backend.get_problem.return_value = fake_problem
+    monkeypatch.setattr(
+        "ee_wiki.integrations.radar.attachments.build_radar_backend",
+        lambda config: fake_backend,
+    )
+
+    def _fake_materialize(config, rid, targets, kind_by_name=None):
+        written = []
+        for name in targets:
+            p = tmp_path / name
+            p.write_text(cal_log, encoding="utf-8")
+            rel = f"fa/{rid}/attachments/{name}"
+            url = f"http://ee-wiki.test:8080/v1/cache/{rel}"
+            written.append((name, p, rel, url))
+        return written, {}
+
+    monkeypatch.setattr(
+        "ee_wiki.integrations.radar.attachments.materialize_named_attachments",
+        _fake_materialize,
+    )
+
+    llm = MagicMock()
+    llm.generate_stream = None
+    llm.generate.return_value = (
+        "1. 文件类型 / 用途：IMU 校准(Cal_LPNM)输出，测陀螺仪三轴平均值。\n"
+        "2. 关键指标：`gyro_y_average: -0.042`、`out of limit: gyro_y_average below spec`。\n"
+        "3. 未见字面 PASS/FAIL，以下为结构解读：数值均有限，gyro_y 超下界。"
+    )
+
+    md = format_attachment_content_markdown(
+        load_config(repo_root=repo_root),
+        "182787079",
+        "分析一下 Cal_LPNM_1.log",
+        llm=llm,
+        repo_root=repo_root,
+    )
+    # LLM interpretation layer actually ran and its output is present.
+    assert "AI 解读" in md
+    assert "未见字面 PASS/FAIL" in md
+    # Preview rendered OUTSIDE the <details> fold (Open WebUI-safe).
+    preview_idx = md.index("**预览（前 40 行）：**")
+    details_idx = md.index("<details>")
+    assert preview_idx < details_idx
+    # The heuristic still reports 0/0 structural counts, but the answer must
+    # NOT assert the test "passed" (no fabricated pass/fail verdict).
+    assert "测试通过" not in md
+    assert "全部通过" not in md
 
 
 # ---------------------------------------------------------------------------

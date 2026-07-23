@@ -153,7 +153,8 @@ def test_manual_checkin_extracts_radar_with_llm(
     assert result.awaiting_user_evidence is False
     assert result.fail_items.source == "radar"
     assert len(result.fail_items.fail_items) == 2
-    assert "**Evidence source:** `radar`" in result.summary_markdown
+    # V2 template drops the "Evidence source" line; source still resolved.
+    assert "**Evidence source:**" not in result.summary_markdown
     assert "flash cannot erase" in result.summary_markdown.lower()
 
 
@@ -240,5 +241,6 @@ def test_generate_fa_summary_download_url(
     )
 
     assert report.output_path.is_file()
-    assert report.download_rel_path == "fa/5556677/FA_summary.key"
-    assert url == "http://ee-wiki.test:8080/v1/exports/fa/5556677/FA_summary.key"
+    assert report.download_rel_path == "fa/5556677/FA_summary.md"
+    assert url == "http://ee-wiki.test:8080/v1/exports/fa/5556677/FA_summary.md"
+    assert report.keynote_available is False

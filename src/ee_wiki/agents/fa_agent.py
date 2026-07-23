@@ -181,24 +181,35 @@ def _format_tool_evidence(tool_results: list[tuple[str, str]]) -> str:
 
 
 def _format_keynote_reply(
-    url: str,
     *,
     preview_markdown: str,
     notes: str = "",
-    md_url: str | None = None,
+    keynote_url: str | None = None,
+    md_url: str,
+    keynote_available: bool,
 ) -> str:
-    """Fixed reply for a generated FA one-page Keynote (Radar-sourced).
+    """Fixed reply for a generated FA one-page export (Radar-sourced).
 
     Includes a short content preview so the engineer sees Summary / Steps /
-    Conclusion without opening the file.
+    Conclusion without opening the file. When Keynote is unavailable, only the
+    Markdown download is offered — never a fake ``.key`` file.
     """
-    lines = [
-        "## FA One-Page 已生成",
-        "",
-        f"[下载 FA_summary.key]({url})",
-    ]
-    if md_url:
-        lines.append(f"[下载 FA_summary.md]({md_url})")
+    if keynote_available and keynote_url:
+        lines = [
+            "## FA One-Page 已生成",
+            "",
+            f"[下载 FA_summary.key]({keynote_url})",
+            f"[下载 FA_summary.md]({md_url})",
+        ]
+    else:
+        lines = [
+            "## FA One-Page 已生成（Markdown）",
+            "",
+            "当前环境无法生成 Keynote 文件（无 Keynote.app 或 AppleScript 失败）。"
+            "请下载 Markdown 版本：",
+            "",
+            f"[下载 FA_summary.md]({md_url})",
+        ]
     lines.extend(["", preview_markdown.strip()])
     if notes.strip():
         lines.extend(["", f"_{notes.strip()}_"])
@@ -307,7 +318,7 @@ def _ground_and_say(
         names = ", ".join(name for name, _ in tool_results)
         parts.append(
             f"已检索以下工具：{names}。但证据不足以给出结论，"
-            "请补充现象或贴 radar:// 票号以获取 diagnosis 步骤。"
+            "请补充现象或贴 `radar://<id>` 以获取 diagnosis 步骤。"
         )
     else:
         parts.append("未检索到相关工具证据，无法给出基于证据的答复。")
@@ -321,8 +332,8 @@ def _ground_and_say(
 
     parts.append(
         "---\n"
-        "以上仅依据工具返回的证据作答；未绑定 Radar 票时**不做 true-fail / 根因"
-        "结论**。可贴 `radar://<id>` 绑定票号以拉取 diagnosis 步骤与附件。"
+        "以上仅依据工具返回的证据作答；未绑定 Radar 时**不做 true-fail / 根因"
+        "结论**。可贴 `radar://<id>` 绑定 Radar 以拉取 diagnosis 步骤与附件。"
     )
     return "\n\n".join(parts).strip() + "\n"
 
@@ -420,7 +431,7 @@ def _ground_and_say_bound(
         names = ", ".join(name for name, _ in tool_results) or "（无）"
         parts.append(
             f"已检索工具：{names}。但证据不足以给出检索型建议；"
-            "票上 diagnosis 未写额外步骤，EE-Wiki 检索未执行或 scope 不足，无法给检索型建议。"
+            "该 Radar diagnosis 未写额外步骤，EE-Wiki 检索未执行或 scope 不足，无法给检索型建议。"
         )
     return "\n\n".join(parts).strip() + "\n"
 
@@ -519,14 +530,15 @@ class FaAgent:
             conclusion=conclusion,
         )
         preview = format_one_pager_markdown(report_req)
-        md_rel = f"fa/{rid}/FA_summary.md"
+        md_rel = report.markdown_download_rel_path or f"fa/{rid}/FA_summary.md"
         md_url = public_url(self._config, f"/v1/exports/{quote(md_rel, safe='/')}")
         return FaAgentResult(
             markdown=_format_keynote_reply(
-                url,
                 preview_markdown=preview,
                 notes=report.notes,
+                keynote_url=url if report.keynote_available else None,
                 md_url=md_url,
+                keynote_available=report.keynote_available,
             ),
             citations=[],
             routed_skills=("fa_export_keynote",),
@@ -576,7 +588,7 @@ class FaAgent:
                 )
             return FaAgentResult(
                 markdown=(
-                    "请先发 `rdar://<id>` 绑定票号，我再整理成 FA one-page keynote。"
+                    "请先发 `rdar://<id>` 绑定 Radar，我再整理成 FA one-page keynote。"
                 ),
                 citations=[],
                 routed_skills=("fa_export_keynote",),
@@ -643,7 +655,8 @@ class FaAgent:
             if wants_attachment_content(question):
                 try:
                     md = format_attachment_content_markdown(
-                        self._config, session.radar_id, question
+                        self._config, session.radar_id, question,
+                        llm=self._llm,
                     )
                 except EEWikiError as exc:
                     logger.warning(

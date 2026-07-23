@@ -53,7 +53,7 @@ def test_build_conclusion_from_radar_no_invention() -> None:
     assert "root cause" not in text.lower()
 
 
-def test_generate_fa_summary_writes_md_and_key_text_fallback(
+def test_generate_fa_summary_writes_md_only_on_text_fallback(
     repo_root: Path, tmp_path: Path
 ) -> None:
     config = load_config(repo_root=repo_root)
@@ -78,13 +78,43 @@ def test_generate_fa_summary_writes_md_and_key_text_fallback(
             conclusion="Ticket state: Verify. Latest diagnosis: T/A pending",
         )
     )
-    assert report.output_path.is_file()
     md = config.exports_dir / "fa/5556677/FA_summary.md"
+    key = config.exports_dir / "fa/5556677/FA_summary.key"
+    assert report.output_path == md
     assert md.is_file()
-    text = report.output_path.read_text(encoding="utf-8")
+    assert not key.exists()
+    assert report.keynote_available is False
+    assert report.download_rel_path == "fa/5556677/FA_summary.md"
+    text = md.read_text(encoding="utf-8")
     assert "rdar://5556677" in text
     assert "T/A pending" in text
     assert "Conclusion" in text
+
+
+def test_generate_fa_summary_removes_stale_fake_key_on_fallback(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    """Re-export after a prior text-as-.key bug must not leave a broken .key."""
+    config = load_config(repo_root=repo_root)
+    config = replace(config, exports_dir=tmp_path / "exports")
+    key = config.exports_dir / "fa/5556677/FA_summary.key"
+    key.parent.mkdir(parents=True, exist_ok=True)
+    key.write_text("# old fake markdown key\n", encoding="utf-8")
+
+    backend = StubKeynoteFaReportBackend(
+        exports_dir=config.exports_dir,
+        force_text_fallback=True,
+    )
+    report = backend.generate(
+        FaReportRequest(
+            radar_id="5556677",
+            title="Scarif flash",
+            steps=("X-ray OK",),
+            conclusion="Ticket state: Verify.",
+        )
+    )
+    assert not key.exists()
+    assert report.output_path.name == "FA_summary.md"
 
 
 def test_generate_fa_summary_download_url_via_session(
@@ -118,6 +148,7 @@ def test_generate_fa_summary_download_url_via_session(
         conclusion="Ticket state: Analyze. Latest diagnosis: T/A pending",
     )
     assert report.output_path.is_file()
-    assert report.download_rel_path == "fa/5556677/FA_summary.key"
-    assert url == "http://ee-wiki.test:8080/v1/exports/fa/5556677/FA_summary.key"
+    assert report.download_rel_path == "fa/5556677/FA_summary.md"
+    assert url == "http://ee-wiki.test:8080/v1/exports/fa/5556677/FA_summary.md"
+    assert report.keynote_available is False
     assert "T/A pending" in report.output_path.read_text(encoding="utf-8")

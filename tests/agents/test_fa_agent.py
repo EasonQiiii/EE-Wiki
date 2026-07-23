@@ -297,6 +297,8 @@ def test_fa_agent_bound_keynote_export_returns_download_link(
                 SimpleNamespace(
                     output_path="x.key",
                     notes="Created Keynote one-pager via AppleScript",
+                    keynote_available=True,
+                    markdown_download_rel_path="fa/182787079/FA_summary.md",
                 ),
                 download_url,
             ),
@@ -331,6 +333,55 @@ def test_fa_agent_bound_keynote_export_returns_download_link(
     assert "Ticket state" in summary_kwargs["conclusion"]
     m_readonly.assert_not_called()
     bus.call.assert_not_called()
+
+
+def test_fa_agent_bound_keynote_fallback_offers_md_only(
+    repo_root: Path,
+) -> None:
+    """When Keynote is unavailable, chat must link FA_summary.md only — no fake .key."""
+    config = replace(
+        load_config(repo_root=repo_root),
+        api=replace(
+            load_config(repo_root=repo_root).api,
+            public_base_url="http://ee-wiki.test:8080",
+        ),
+    )
+    bus = MagicMock()
+    llm = MagicMock()
+
+    md_url = "http://ee-wiki.test:8080/v1/exports/fa/182787079/FA_summary.md"
+    with (
+        patch(
+            "ee_wiki.integrations.session.start_fa_checkin",
+            return_value=_fake_checkin(),
+        ),
+        patch(
+            "ee_wiki.integrations.session.generate_fa_summary",
+            return_value=(
+                SimpleNamespace(
+                    output_path="FA_summary.md",
+                    notes="Keynote unavailable; wrote Markdown one-pager only.",
+                    keynote_available=False,
+                    markdown_download_rel_path="fa/182787079/FA_summary.md",
+                ),
+                md_url,
+            ),
+        ),
+    ):
+        agent = FaAgent(config, bus, llm=llm)
+        result = agent.handle(
+            "帮我整理成 FA one page keynote",
+            history=_bound_history(),
+            product="iphone",
+            project="logan",
+            build="p1",
+        )
+
+    assert result.markdown.startswith("## FA One-Page 已生成（Markdown）")
+    assert "[下载 FA_summary.md]" in result.markdown
+    assert md_url in result.markdown
+    assert "[下载 FA_summary.key]" not in result.markdown
+    assert "无法生成 Keynote" in result.markdown
 
 
 def test_fa_agent_unbound_keynote_asks_to_bind(repo_root: Path) -> None:

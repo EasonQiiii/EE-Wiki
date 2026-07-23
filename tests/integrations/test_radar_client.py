@@ -5,6 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from ee_wiki.integrations.radar.client import RadarclientBackend
 from ee_wiki.integrations.radar.map_problem import map_radar_problem
 from ee_wiki.protocols.radar import RadarWriteResult
@@ -99,3 +101,78 @@ def test_add_diagnosis_draft_without_confirm() -> None:
     assert isinstance(result, RadarWriteResult)
     assert result.committed is False
     assert result.draft_preview == "note"
+
+
+def test_radar_for_id_retries_timeout_then_succeeds(monkeypatch) -> None:
+    """First IdMS timeout is retried; second attempt returns the problem."""
+    from urllib.error import URLError
+
+    raw = SimpleNamespace(
+        id=182787079,
+        title="demo timeout recover",
+        state="Analyze",
+        substate=None,
+        component=None,
+        description=SimpleNamespace(items=lambda: []),
+        diagnosis=SimpleNamespace(items=lambda: []),
+        attachments=SimpleNamespace(items=lambda: []),
+        pictures=SimpleNamespace(items=lambda: []),
+        foundInBuild=None,
+        configurationSummary=None,
+        assignee=None,
+        priority=None,
+    )
+    client = MagicMock()
+    client.radar_for_id.side_effect = [
+        URLError(TimeoutError("timed out")),
+        raw,
+    ]
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "ee_wiki.integrations.radar.client.time.sleep",
+        lambda s: sleeps.append(s),
+    )
+    backend = RadarclientBackend(client=client)
+    problem = backend.get_problem("rdar://182787079")
+    assert problem.radar_id == "182787079"
+    assert client.radar_for_id.call_count == 2
+    assert sleeps == [1.0]
+
+
+def test_radar_for_id_exhausts_timeout_retries(monkeypatch) -> None:
+    """All attempts timeout -> IntegrationError whose message maps to 超时."""
+    from urllib.error import URLError
+
+    from ee_wiki.common.errors import IntegrationError
+    from ee_wiki.integrations.fa_errors import format_fa_error
+
+    client = MagicMock()
+    client.radar_for_id.side_effect = URLError(
+        OSError(60, "Operation timed out")
+    )
+    monkeypatch.setattr(
+        "ee_wiki.integrations.radar.client.time.sleep",
+        lambda _s: None,
+    )
+    backend = RadarclientBackend(client=client)
+    with pytest.raises(IntegrationError) as exc_info:
+        backend.get_problem("182787079")
+    assert client.radar_for_id.call_count == 3
+    msg = format_fa_error(exc_info.value, radar_id="182787079")
+    assert "超时" in msg
+    assert "Radar 操作失败" not in msg
+
+
+def test_radar_for_id_does_not_retry_acl() -> None:
+    """Permission / ACL failures must fail immediately (no sleep/retry)."""
+    from ee_wiki.common.errors import IntegrationError
+
+    client = MagicMock()
+    client.radar_for_id.side_effect = RuntimeError(
+        "You can contact the Component Owner to get access to this problem."
+    )
+    backend = RadarclientBackend(client=client)
+    with pytest.raises(IntegrationError) as exc_info:
+        backend.get_problem("182787079")
+    assert client.radar_for_id.call_count == 1
+    assert "access to this problem" in str(exc_info.value)

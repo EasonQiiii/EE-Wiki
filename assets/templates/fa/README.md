@@ -16,8 +16,10 @@ scratch** with Radar-only content:
 
 Chat triggers: **keynote / one page / 一页纸 / 导出报告** on a bound (`rdar://`)
 session → `generate_fa_summary` → `data/exports/fa/{radar_id}/FA_summary.key`
-plus `FA_summary.md` mirror. Reply includes the download link and a Markdown
-preview of the same sections.
+(when Keynote succeeds) plus `FA_summary.md` mirror. When Keynote is
+unavailable, only `FA_summary.md` is written — never text masquerading as
+`.key`. Reply includes the download link and a Markdown preview of the same
+sections.
 
 ## Optional company-template placeholders
 
@@ -33,4 +35,5 @@ preview of the same sections.
 
 Do **not** put customer FA data in this folder — only blank or branded
 templates. Without Keynote.app (CI / Linux), EE-Wiki still writes a text
-one-pager at `FA_summary.key` so the download URL works for integration tests.
+When Keynote is unavailable (CI / no GUI), export writes Markdown-only
+``FA_summary.md`` — not a fake ``.key`` file.

@@ -218,7 +218,8 @@ def warn_lab_readiness(config: AppConfig) -> None:
             logger.info(
                 "FA Keynote: no company template at %s — export creates a "
                 "one-slide Keynote from Radar fields (Summary / FA Steps / "
-                "Conclusion), or a text one-pager if Keynote.app is unavailable. "
+                "Conclusion), or Markdown-only ``FA_summary.md`` when "
+                "Keynote.app is unavailable. "
                 "Optional placeholders: assets/templates/fa/README.md.",
                 template,
             )

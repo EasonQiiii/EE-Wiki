@@ -7,6 +7,7 @@ or a silent skip:
 * no Kerberos / AppleConnect ticket on the host  -> ConfigError
 * the ticket exists but Radar rejects the read    -> IntegrationError (ACL / 403)
 * the ticket id is wrong / not synced             -> IntegrationError (not found)
+* IdMS / network timeout while fetching a token   -> IntegrationError (timeout)
 * a single attachment download fails              -> IntegrationError (per file)
 
 This module converts :class:`~ee_wiki.common.errors.ConfigError` /
@@ -55,10 +56,56 @@ _NOTFOUND_HINTS = (
     "does not exist",
     "unknown radar",
 )
+# Network / IdMS access-token timeouts (safe to retry). Matches lab shape:
+# ``URLError: <urlopen error [Errno 60] Operation timed out>`` during
+# ``acquire_radar_access_token``.
+_TIMEOUT_HINTS = (
+    "timed out",
+    "timeout",
+    "errno 60",
+    "operation timed out",
+)
+# ETIMEDOUT — macOS often 60, Linux often 110.
+_TIMEOUT_ERRNOS = frozenset({60, 110})
 
 
 def _has_hint(text: str, hints: tuple[str, ...]) -> bool:
     return any(hint in text for hint in hints)
+
+
+def is_radar_timeout(exc: BaseException) -> bool:
+    """Return whether ``exc`` is a Radar network / auth-token timeout.
+
+    Walks ``__cause__`` / ``__context__`` so wrapped ``IntegrationError`` and
+    ``URLError`` chains from ``radarclient`` still match. ACL / not-found
+    errors must return False (caller must not retry those).
+
+    Args:
+        exc: Exception raised by radarclient or our IntegrationError wrapper.
+
+    Returns:
+        True when the failure looks like a transient timeout.
+    """
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        cur = stack.pop()
+        cid = id(cur)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        if isinstance(cur, TimeoutError):
+            return True
+        if isinstance(cur, OSError) and getattr(cur, "errno", None) in _TIMEOUT_ERRNOS:
+            return True
+        if _has_hint(str(cur).lower(), _TIMEOUT_HINTS):
+            return True
+        if cur.__cause__ is not None:
+            stack.append(cur.__cause__)
+        ctx = cur.__context__
+        if ctx is not None and ctx is not cur.__cause__:
+            stack.append(ctx)
+    return False
 
 
 def _credentials_message(*, appleconnect_session: bool = False) -> str:
@@ -96,20 +143,34 @@ def _core_message(exc: Exception, *, context: str = "session") -> str:
     if _has_hint(text, _SESSION_HINTS):
         return _credentials_message(appleconnect_session=True)
 
+    # Auth-token / network timeouts (often during acquire_radar_access_token).
+    # Check before ACL so a wrapped URLError is not misread as generic failure.
+    if is_radar_timeout(exc) or _has_hint(text, _TIMEOUT_HINTS):
+        if context == "attachment":
+            return (
+                "附件下载超时（Radar 鉴权或网络瞬时不通）。"
+                "请检查 VPN / AppleConnect 后重试。"
+            )
+        return (
+            "读取 Radar 超时（通常是鉴权或网络瞬时不通）。"
+            "请检查 VPN / AppleConnect 后重试；"
+            "若仍失败，可把相关测试 log / 失败项贴到对话里继续排查。"
+        )
+
     if _has_hint(text, _ACL_HINTS):
         if context == "attachment":
             return "附件下载被 Radar 权限 / ACL 拒绝（可能无该附件的读取权限）。"
         return (
-            "无法读取该 Radar 票：Radar 返回权限 / ACL 拒绝，可能该票不在你的可见范围。"
-            "可联系该 Radar 票的 Component Owner 申请访问权限；"
+            "无法读取该 Radar：Radar 返回权限 / ACL 拒绝，可能该 Radar 不在你的可见范围。"
+            "可联系该 Radar 的 Component Owner 申请访问权限；"
             "若确认有权限，请检查 AppleConnect 票据是否有效后重试。"
         )
 
     if _has_hint(text, _NOTFOUND_HINTS):
         if context == "attachment":
-            return "附件未找到（文件名与票上记录不匹配，或票号有误）。"
+            return "附件未找到（文件名与 Radar 记录不匹配，或 Radar 号有误）。"
         return (
-            "Radar 票号无法读取或不存在。请确认 `radar://<id>` 正确，"
+            "Radar 号无法读取或不存在。请确认 `radar://<id>` 正确，"
             "且已同步到当前集成账号。"
         )
 

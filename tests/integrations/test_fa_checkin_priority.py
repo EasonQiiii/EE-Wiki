@@ -187,12 +187,19 @@ def test_related_log_downloaded_picture_untouched(
     assert result.fail_items.source == "radar"
     sources = {it.source for it in result.fail_items.fail_items}
     assert "radar_attachment" in sources  # FAIL line read from foo.log body
-    assert "强关联证据" in result.summary_markdown
     assert "foo.log" in result.summary_markdown
-    # Check-in face read pushes the background status (residual #3).
-    from ee_wiki.api.stream_status import FA_ANALYZE_STATUS
+    # Check-in face read + related download + fail extract + AI summary statuses.
+    from ee_wiki.api.stream_status import (
+        FA_AI_SUMMARY_STATUS,
+        FA_ANALYZE_STATUS,
+        FA_DOWNLOAD_STATUS,
+        FA_EXTRACT_FAILS_STATUS,
+    )
 
     assert FA_ANALYZE_STATUS in statuses
+    assert FA_DOWNLOAD_STATUS.format(done=1, total=1) in statuses
+    assert FA_EXTRACT_FAILS_STATUS in statuses
+    assert FA_AI_SUMMARY_STATUS in statuses
     # Empty Evidence files wording must not nudge Flames (residual #4).
     assert "Flames/Radar corpus" not in result.summary_markdown
 
@@ -230,10 +237,17 @@ def test_evidence_files_empty_copy_avoids_flames_nudge(
         confidence="high",
     )
     result = session_mod._build_checkin_result(config, problem, scope, fails)
-    assert "### Evidence files" in result.summary_markdown
-    assert "暂无已缓存的证据文件" in result.summary_markdown
+    # V2 template: Attachments + Fail items, no separate "Evidence files" block.
+    assert "### Attachments" in result.summary_markdown
+    assert "### Fail items" in result.summary_markdown
+    assert "face fail" in result.summary_markdown
     assert "Flames" not in result.summary_markdown
     assert "Flames/Radar corpus" not in result.summary_markdown
+    assert "_(src:" not in result.summary_markdown
+    assert "### Radar attachments" not in result.summary_markdown
+    assert "Evidence files" not in result.summary_markdown
+    assert "强关联证据" not in result.summary_markdown
+    assert "Background" not in result.summary_markdown
 
 
 def test_named_but_missing_file_becomes_unresolved(
@@ -261,10 +275,11 @@ def test_named_but_missing_file_becomes_unresolved(
 
     result = session_mod.start_fa_checkin(config, "700001", llm=llm)
 
-    # bar.log is not attached → never downloaded, surfaced as unresolved.
+    # bar.log is not attached → never downloaded. The unresolved-evidence
+    # section was removed in the V2 template, but the name still surfaces in
+    # the Diagnosis body, and the file is never fetched.
     assert radar.downloads == []
     assert "bar.log" in result.summary_markdown
-    assert "缺证据" in result.summary_markdown
     # No corpus fails + no attachment fails → true-fail hint carries the item.
     assert any(
         it.source == "radar_title" for it in result.fail_items.fail_items
@@ -427,3 +442,134 @@ def test_golden_stub_canonical_selects_ng_logs(
     assert not any(name.endswith(".png") for name in fetched)
     assert flames.called is False
     assert result.fail_items.source == "radar"
+
+
+def test_v2_checkin_face_email_fold_and_no_legacy_sections(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    """V2 face: email-only authors, folds, AI Summary, no legacy blocks."""
+    from ee_wiki.integrations.scope import ScopeResolution
+
+    config = _base_config(repo_root, tmp_path, flames_backend="manual")
+    problem = RadarProblem(
+        radar_id="182787079",
+        title="IMU Gyro Average Y out of limit",
+        state="Analyze",
+        substate="Screen",
+        component=RadarComponentRef(id=1, name="B632 Rel FA Tracker", version="FVB"),
+        description=(
+            DescriptionItem(
+                text="Unit SN: G32NC7GJ9N\nConfig: FBHAY-R1B-LD\nFail Rate: Pending",
+                added_by="eng",
+            ),
+        ),
+        diagnosis=(
+            DiagnosisItem(
+                text="Unit send to EE FA 7/21.",
+                added_by="<CommentAuthor wang.jin92@byd.com Elwen Wang>",
+                entry_type="user",
+            ),
+            DiagnosisItem(
+                text="Bench Cal_LPNM 3x reproduce.",
+                added_by="wang.baofu@byd.com Wang Baofu",
+                entry_type="user",
+            ),
+            DiagnosisItem(
+                text="Gentle knock still OOL.",
+                added_by="naixin_song@apple.com",
+                entry_type="user",
+            ),
+            DiagnosisItem(
+                text="Next step: CT scan.",
+                added_by="wang.baofu@byd.com",
+                entry_type="user",
+            ),
+        ),
+        attachments=tuple(
+            AttachmentMeta(file_name=name, kind="attachment")
+            for name in (
+                "Cal_LPNM_1.log",
+                "Cal_LPNM_2.log",
+                "Cal_LPNM_3.log",
+                "gentle_knock.zip",
+                "mst_fail.zip",
+            )
+        ),
+    )
+    fails = FailItemsResult(
+        unit=FlamesUnitRef(unit_id="u", serial=None, radar_id="182787079"),
+        records=(),
+        fail_items=(
+            FailItem(
+                message="Gyro Y average out of limit",
+                station="radar",
+                source="radar_text",
+            ),
+        ),
+        cached_logs=(),
+        source="radar",
+        needs_user_input=False,
+    )
+    scope = ScopeResolution(
+        product="pencil",
+        project="mocalamari",
+        build="fvb",
+        source="component_alias",
+        confidence="high",
+    )
+    md = session_mod._format_checkin_markdown(
+        config,
+        problem,
+        scope,
+        fails,
+        ai_summary="跌落后 IMU 校准 Y 轴超限；bench 已复现；下一步 CT scan。",
+    )
+
+    assert md.startswith("## FA check-in — rdar://182787079")
+    assert "**Title:**" in md
+    assert "**Component:** B632 Rel FA Tracker | FVB" in md
+    assert "### Fail items" in md
+    assert "- [radar] Gyro Y average out of limit" in md
+    assert "_(src:" not in md
+    assert "### Description" in md
+    assert "> Unit SN: G32NC7GJ9N" in md
+    assert "展开完整 Description" in md
+    assert "### Diagnosis" in md
+    assert "**wang.jin92@byd.com:**" in md
+    assert "Elwen Wang" not in md
+    assert "CommentAuthor" not in md
+    assert "展开其余 1 条 diagnosis" in md
+    assert "### Attachments" in md
+    assert "展开其余 3 个附件" in md
+    assert "### AI Summary" in md
+    assert "下一步 CT scan" in md
+
+    for banned in (
+        "强关联证据",
+        "Evidence files",
+        "Background",
+        "最突出",
+        "FA notes",
+        "True-fail",
+        "票面",
+        "Radar 票",
+        "EE-Wiki scope",
+        "Evidence source",
+        "### Radar attachments",
+    ):
+        assert banned not in md, banned
+
+
+def test_author_email_strips_comment_author_wrapper() -> None:
+    assert (
+        session_mod._author_email(
+            "<CommentAuthor wang.jin92@byd.com Elwen Wang>"
+        )
+        == "wang.jin92@byd.com"
+    )
+    assert (
+        session_mod._author_email("wang.baofu@byd.com Wang Baofu")
+        == "wang.baofu@byd.com"
+    )
+    assert session_mod._author_email("") == "—"
+    assert session_mod._author_email("lab-user") == "lab-user"

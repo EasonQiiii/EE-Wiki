@@ -45,8 +45,9 @@ def test_canonical_stub_scope_from_aliases(repo_root: Path) -> None:
     assert result.scope.project == "logan"
     assert result.scope.product == "ipad"
     assert result.scope.build == "p0"
-    assert "project=`logan`" in result.summary_markdown
-    assert "product=`?`" not in result.summary_markdown
+    # Scope travels via the invisible <!-- ee-wiki-scope --> marker, not print.
+    assert "EE-Wiki scope" not in result.summary_markdown
+    assert "product=" not in result.summary_markdown
 
 
 def test_supervisor_forces_radar_on_casual_radar_url(repo_root: Path) -> None:
@@ -117,8 +118,9 @@ def test_try_fa_chat_checkin_then_session_lock(
     assert first is not None
     assert "rdar://42424242" in first
     assert "Need test evidence" in first
-    assert "product=`ipad`" in first
-    assert "project=`logan`" in first
+    # Scope is carried by the invisible marker, not printed in the reply.
+    assert "EE-Wiki scope" not in first
+    assert "product=" not in first
 
     history = [ConversationTurn(role="assistant", content=first)]
 
@@ -130,7 +132,10 @@ def test_try_fa_chat_checkin_then_session_lock(
 
     checkin_with_atts = (
         "## FA check-in — rdar://42424242\n\n"
-        "**Radar attachments:** `UNIT_save_100_NG.log`, `UNIT_save_500_NG.log`\n\n"
+        "### Attachments\n\n"
+        "- `UNIT_save_100_NG.log` — log · 附件 · 待下载\n"
+        "- `UNIT_save_500_NG.log` — log · 附件 · 待下载\n"
+        "\n> 已缓存 0 / 2 个附件（其余在你说「下载 / 分析 log」或需要查看图片时按需拉取）。\n\n"
         "### Fail items\n"
         "- [radar] flash erase incomplete\n"
     )

@@ -6,7 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ee_wiki.api.stream_status import (
-    FA_ANALYZE_STATUS,
+    FA_ATTACHMENT_ANALYZE_STATUS,
     FA_DOWNLOAD_STATUS,
     FA_FETCH_STATUS,
 )
@@ -82,4 +82,67 @@ def test_content_markdown_emits_analyze_status(
             "分析 sensor_flash_test_PASS_with_MLB_1.log",
         )
     assert "Attachment content" in md
-    assert hub.drain()[0] == FA_ANALYZE_STATUS
+    assert hub.drain()[0] == FA_ATTACHMENT_ANALYZE_STATUS
+
+
+def test_related_evidence_emits_download_progress(
+    repo_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """Check-in strong-related materialize must push FA_DOWNLOAD_STATUS (n/m)."""
+    from ee_wiki.integrations import session as session_mod
+    from ee_wiki.protocols.radar import (
+        AttachmentMeta,
+        DiagnosisItem,
+        RadarProblem,
+    )
+
+    problem = RadarProblem(
+        radar_id="700002",
+        title="two related logs",
+        diagnosis=(
+            DiagnosisItem(
+                text="see a.log and b.log",
+                added_by="e",
+                entry_type="user",
+            ),
+        ),
+        attachments=(
+            AttachmentMeta(file_name="a.log", kind="attachment"),
+            AttachmentMeta(file_name="b.log", kind="attachment"),
+        ),
+    )
+
+    class _Radar:
+        def download_attachment(self, radar_id, file_name, *, dest_path):
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            dest_path.write_text(f"FAIL: {file_name}\n", encoding="utf-8")
+            return dest_path
+
+        def download_picture(self, radar_id, file_name, *, dest_path):
+            return self.download_attachment(
+                radar_id, file_name, dest_path=dest_path
+            )
+
+    config = load_config(repo_root=repo_root)
+    config = replace(
+        config,
+        cache_dir=tmp_path / "cache",
+        api=replace(config.api, public_base_url="http://ee-wiki.test:8080"),
+    )
+    monkeypatch.setattr(
+        "ee_wiki.integrations.radar.attachments.build_radar_backend",
+        lambda cfg: _Radar(),
+    )
+    hub = StreamStatusHub()
+    with bind_stream_status_emitter(hub.emit):
+        related = session_mod._materialize_related_evidence(
+            config,
+            problem,
+            ("a.log", "b.log"),
+            cancel_event=None,
+        )
+    assert len(related.files) == 2
+    assert hub.drain() == [
+        FA_DOWNLOAD_STATUS.format(done=1, total=2),
+        FA_DOWNLOAD_STATUS.format(done=2, total=2),
+    ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 from urllib.parse import quote
 
@@ -11,13 +12,16 @@ from ee_wiki.api.stream_status import (
     FA_DOWNLOAD_STATUS,
 )
 from ee_wiki.api.stream_status_context import push_stream_status
-from ee_wiki.common.config import AppConfig
+from ee_wiki.common.config import AppConfig, find_repo_root
 from ee_wiki.common.errors import IntegrationError
 from ee_wiki.common.logging import get_logger
+from ee_wiki.generation.fa_evidence import generate_log_analysis
+from ee_wiki.generation.llm.factory import build_llm_backend
 from ee_wiki.integrations.fa_errors import format_fa_error
 from ee_wiki.integrations.factory import build_radar_backend
 from ee_wiki.integrations.paths import normalize_radar_id
 from ee_wiki.integrations.session import public_url
+from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.protocols.radar import AttachmentMeta, RadarProblem
 
 logger = get_logger(__name__)
@@ -42,6 +46,13 @@ _CONTENT_INTENT = re.compile(
 
 _PASS_LINE = re.compile(r"\bPASS\b|:\s*PASS\b|PASS:", re.IGNORECASE)
 _FAIL_LINE = re.compile(r"\bFAIL\b|:\s*FAIL\b|FAIL:|\bERROR\b", re.IGNORECASE)
+# Structural alert tokens (no semantic classification). Surfaces something
+# meaningful even when a log has NO literal PASS/FAIL (e.g. Cal_LPNM numeric
+# / "out of limit" / "阈值超限" output). Still structural — not a verdict.
+_STRUCTURAL_ALERT = re.compile(
+    r"out\s*of\s*limit|out-of-limit|阈值(?:超限)?|over\s*limit|exceed|超出",
+    re.IGNORECASE,
+)
 
 # Inventory intent: "有哪些附件 / 附件列表 / 有哪些文件 / 几个附件" and the
 # explicit "调用 radar 工具". Structural-only (ADR 0013: regex = structural
@@ -324,11 +335,11 @@ def _resolve_attachment_targets(
     if not available:
         return [], ["_This Radar has no attachments listed._"]
     if not requested:
-        preface.append("未匹配到具体文件名。票上相关附件如下：")
+        preface.append("未匹配到具体文件名。该 Radar 相关附件如下：")
         return [a.file_name for a in available if a.file_name], preface
     if ("1&2" in question or "1 & 2" in question) and len(requested) >= 2:
         preface.append(
-            "Diagnosis 里的 `…MLB_1&2.log` 对应票上两个附件"
+            "Diagnosis 里的 `…MLB_1&2.log` 对应 Radar 上两个附件"
             "（没有合并成单个 `&` 文件名）："
         )
     return requested, preface
@@ -374,16 +385,25 @@ def extract_fail_lines(text: str, *, limit: int = 8) -> list[str]:
 
 
 def summarize_log_text(text: str, *, file_name: str) -> list[str]:
-    """Heuristic summary lines from log text (no LLM, no invention)."""
+    """Heuristic summary lines from log text (no LLM, no invention).
+
+    Counts literal PASS/FAIL/ERROR plus structural alert tokens (out of limit
+    / 阈值超限 / exceed …) so the summary is not empty when a log carries no
+    literal pass/fail words. This is a structural supplement only — the LLM
+    interpretation layer (``generate_log_analysis``) is what actually explains
+    the file. The heuristic never claims a pass/fail verdict on its own.
+    """
     lines = text.splitlines()
     non_empty = [ln for ln in lines if ln.strip()]
     pass_hits = [ln for ln in non_empty if _PASS_LINE.search(ln)]
     fail_hits = [ln for ln in non_empty if _FAIL_LINE.search(ln)]
+    alert_hits = [ln for ln in non_empty if _STRUCTURAL_ALERT.search(ln)]
     out = [
         f"**File:** `{file_name}`",
         f"**Lines:** {len(lines)} ({len(non_empty)} non-empty)",
         f"**PASS-like lines:** {len(pass_hits)}",
         f"**FAIL/ERROR-like lines:** {len(fail_hits)}",
+        f"**结构告警 token（out of limit / 阈值超限 等）：{len(alert_hits)}**",
     ]
     if fail_hits:
         out.append("")
@@ -394,6 +414,11 @@ def summarize_log_text(text: str, *, file_name: str) -> list[str]:
         out.append("")
         out.append("PASS samples:")
         for ln in pass_hits[:8]:
+            out.append(f"- `{ln.strip()[:200]}`")
+    if alert_hits:
+        out.append("")
+        out.append("结构告警 samples:")
+        for ln in alert_hits[:8]:
             out.append(f"- `{ln.strip()[:200]}`")
     return out
 
@@ -489,14 +514,44 @@ def format_attachment_inventory_markdown(
     return "\n".join(lines) + "\n"
 
 
+def _preview_text(
+    text: str, *, max_lines: int = 40, max_chars: int = 2000
+) -> str:
+    """First ~40 lines / ~2000 chars of a file for an in-chat preview.
+
+    Structural only — no semantic choice. Keeps the most useful part of a log
+    visible *outside* the <details> fold (Open WebUI often drops <details>);
+    the full text still lives inside <details>.
+    """
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        head = text.rstrip()
+    else:
+        head = "\n".join(lines[:max_lines]).rstrip()
+    if len(head) > max_chars:
+        head = head[:max_chars].rstrip() + "\n…（预览截断，全文见下方折叠）"
+    return head or "(empty file)"
+
+
 def format_attachment_content_markdown(
     config: AppConfig,
     radar_id: str,
     question: str,
+    *,
+    llm: LlmBackend | None = None,
+    repo_root: Path | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> str:
     """Materialize attachment(s), summarize body text, include download link.
 
     This is the grounded path for “分析一下 xxx.log” — not diagnosis paraphrase.
+
+    After the structural heuristic (``summarize_log_text``) an optional local-LLM
+    interpretation layer (``generate_log_analysis``) explains the file even when
+    it carries no literal PASS/FAIL lines (e.g. Cal_LPNM numeric / "out of limit"
+    output). The interpretation and a short preview are rendered OUTSIDE the
+    <details> fold so Open WebUI (which often drops <details>) still shows them;
+    the full text stays inside <details>.
     """
     rid = normalize_radar_id(radar_id)
     problem = build_radar_backend(config).get_problem(rid)
@@ -526,6 +581,22 @@ def format_attachment_content_markdown(
     by_name = {name: (path, rel, url) for name, path, rel, url in materialized}
     fail_by_name = dict(failed)
 
+    # Lazily build a LOCAL LLM backend for the interpretation layer, but only
+    # for offline backends that fail fast at load time (mlx/transformers). We
+    # do NOT auto-build the openai backend here: it would construct a client
+    # with no server and then hang on a (default 180s) network timeout in
+    # environments without a running server. The FA agent passes its own real
+    # backend via `llm=`. If `llm` stays None we keep the heuristic summary
+    # only (graceful degradation).
+    if llm is None and config.generation.llm_backend in {"mlx", "transformers"}:
+        try:
+            llm = build_llm_backend(config)
+        except Exception:
+            logger.warning("LLM backend unavailable for log analysis", exc_info=True)
+            llm = None
+    if llm is not None and repo_root is None:
+        repo_root = find_repo_root()
+
     for name in targets:
         lines.append("")
         if name in fail_by_name:
@@ -540,10 +611,34 @@ def format_attachment_content_markdown(
 
         text = read_attachment_text(path)
         lines.extend(summarize_log_text(text, file_name=name))
+
+        # LLM interpretation layer — grounded in file bytes + Radar fail context.
+        if llm is not None and repo_root is not None:
+            try:
+                interp = generate_log_analysis(
+                    problem, name, text,
+                    llm=llm, repo_root=repo_root, cancel_event=cancel_event,
+                )
+            except Exception:
+                logger.warning("Log interpretation failed", exc_info=True)
+                interp = None
+            if interp:
+                lines.append("")
+                lines.append("**AI 解读（基于文件字节 + Radar fail 上下文）：**")
+                lines.append("")
+                lines.append(interp)
+
         lines.append(f"**Download:** [`{name}`]({url})")
+        # Short preview OUTSIDE the fold (Open WebUI often drops <details>).
+        lines.append("")
+        lines.append("**预览（前 40 行）：**")
+        lines.append("")
+        lines.append("```text")
+        lines.append(_preview_text(text))
+        lines.append("```")
         lines.append("")
         lines.append("<details>")
-        lines.append(f"<summary>File preview — {name}</summary>")
+        lines.append(f"<summary>File preview — {name}（全文）</summary>")
         lines.append("")
         lines.append("```text")
         lines.append(text.rstrip() or "(empty file)")

@@ -8,7 +8,7 @@ Hard rules:
   the context. Number them. Do **not** invent steps, and do **not** mark items
   as true-fail / fixture / SW unless the engineer already said so in context.
 - Radar attachment **names** are listed in the check-in context under
-  "**Radar attachments:**" and "### Radar attachments（按需下载）". When asked
+  "### Attachments" (or legacy "### Radar attachments…"). When asked
   "有哪些附件 / 附件列表 / 有哪些文件 / 几个附件", you MUST enumerate ALL of
   them from that list, showing each name, type, and cached vs pending status.
   If logs (`.log`/`.zip`) are listed, state them plainly — never claim "没有

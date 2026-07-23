@@ -20,8 +20,11 @@ from pathlib import Path
 
 from ee_wiki.common.logging import get_logger
 from ee_wiki.generation.classify import _generate_short_output, _strip_reasoning
-from ee_wiki.integrations.radar.evidence import compose_radar_evidence_corpus
-from ee_wiki.protocols.flames import FailItem
+from ee_wiki.integrations.radar.evidence import (
+    compose_radar_evidence_corpus,
+    diagnosis_steps_text,
+)
+from ee_wiki.protocols.flames import FailItem, FailItemsResult
 from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.protocols.radar import RadarProblem
 
@@ -29,6 +32,8 @@ logger = get_logger(__name__)
 
 MAX_RADAR_EXTRACT_TOKENS = 256
 MAX_CHECKIN_BACKGROUND_TOKENS = 512
+MAX_CHECKIN_AI_SUMMARY_TOKENS = 512
+MAX_LOG_ANALYSIS_TOKENS = 384
 _FAIL_HEADER = re.compile(
     r"^FAIL_ITEMS\s*:\s*(?P<body>.*)$",
     re.IGNORECASE | re.MULTILINE | re.DOTALL,
@@ -222,6 +227,125 @@ def extract_checkin_background(
         if a.file_name and a.file_name.strip()
     }
     return _parse_checkin_background(raw_output, available_names=available)
+
+
+def generate_checkin_ai_summary(
+    problem: RadarProblem,
+    fails: FailItemsResult,
+    *,
+    llm: LlmBackend,
+    repo_root: Path,
+    cancel_event: threading.Event | None = None,
+) -> str | None:
+    """Generate a short narrative FA check-in summary via local LLM.
+
+    Grounded only in the Radar face + the extracted fail items. The model must
+    not invent nets, pin assignments, voltages, part numbers, or root causes —
+    it summarizes what the ticket already says. Returns ``None`` when the call
+    fails or the output is empty (caller simply omits the AI Summary section).
+    """
+    if cancel_event and cancel_event.is_set():
+        return None
+
+    fail_lines = (
+        "\n".join(f"- {item.message}" for item in fails.fail_items)
+        or "(no structured fail items)"
+    )
+    diag = diagnosis_steps_text(problem, preview_chars=600) or "(no diagnosis notes)"
+
+    path = repo_root / "prompts" / "fa" / "checkin_ai_summary.md"
+    prompt = (
+        path.read_text(encoding="utf-8")
+        .replace("{{radar_id}}", problem.radar_id)
+        .replace("{{title}}", problem.title or "")
+        .replace(
+            "{{component}}",
+            problem.component.name if problem.component else "",
+        )
+        .replace(
+            "{{component_version}}",
+            problem.component.version if problem.component else "",
+        )
+        .replace("{{fail_items}}", fail_lines)
+        .replace("{{diagnosis}}", diag)
+        .strip()
+    )
+
+    try:
+        raw_output = _generate_short_output(
+            llm,
+            prompt,
+            max_new_tokens=MAX_CHECKIN_AI_SUMMARY_TOKENS,
+            cancel_event=cancel_event,
+        )
+    except Exception:
+        logger.warning("Check-in AI summary generation failed", exc_info=True)
+        return None
+
+    if cancel_event and cancel_event.is_set():
+        return None
+    if not raw_output:
+        return None
+    return _strip_reasoning(raw_output).strip() or None
+
+
+def generate_log_analysis(
+    problem: RadarProblem,
+    file_name: str,
+    text: str,
+    *,
+    llm: LlmBackend,
+    repo_root: Path,
+    cancel_event: threading.Event | None = None,
+) -> str | None:
+    """Interpret a materialized attachment log via local LLM.
+
+    Grounded only in the file bytes (``text``) plus a short Radar fail context
+    built from the problem title + diagnosis. The model must not invent
+    pass/fail the log does not state — for logs without literal
+    PASS/FAIL/ERROR it is instructed to say so explicitly. Returns ``None`` on
+    failure or empty output (caller keeps the heuristic summary only).
+    """
+    if cancel_event and cancel_event.is_set():
+        return None
+
+    title = problem.title or ""
+    diag = diagnosis_steps_text(problem, preview_chars=400) or ""
+    fail_context = f"标题：{title}" + (f"\n诊断：{diag}" if diag else "")
+    if not title and not diag:
+        fail_context = "（无）"
+
+    # Cap the log fed to the model so large files don't blow the context.
+    log_text = text.rstrip()
+    if len(log_text) > 6000:
+        log_text = log_text[:6000] + "\n…（截断，仅前 6000 字送入解读）"
+
+    path = repo_root / "prompts" / "fa" / "analyze_log.md"
+    prompt = (
+        path.read_text(encoding="utf-8")
+        .replace("{{radar_id}}", problem.radar_id)
+        .replace("{{file_name}}", file_name)
+        .replace("{{fail_context}}", fail_context)
+        .replace("{{log_text}}", log_text)
+        .strip()
+    )
+
+    try:
+        raw_output = _generate_short_output(
+            llm,
+            prompt,
+            max_new_tokens=MAX_LOG_ANALYSIS_TOKENS,
+            cancel_event=cancel_event,
+        )
+    except Exception:
+        logger.warning("Log analysis generation failed", exc_info=True)
+        return None
+
+    if cancel_event and cancel_event.is_set():
+        return None
+    if not raw_output:
+        return None
+    return _strip_reasoning(raw_output).strip() or None
 
 
 def _parse_checkin_background(

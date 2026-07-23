@@ -10,6 +10,7 @@ from ee_wiki.generation.fa_evidence import (
     _parse_fail_items_output,
     extract_checkin_background,
     extract_fail_items_from_radar_corpus,
+    generate_log_analysis,
 )
 from ee_wiki.protocols.radar import (
     AttachmentMeta,
@@ -164,6 +165,92 @@ def test_parse_checkin_background_strips_reasoning() -> None:
 
 def test_parse_checkin_background_unusable_returns_none() -> None:
     assert _parse_checkin_background("no structured fields here", available_names=set()) is None
+
+
+def test_generate_checkin_ai_summary_uses_narrative_prompt(repo_root: Path) -> None:
+    from ee_wiki.generation.fa_evidence import generate_checkin_ai_summary
+    from ee_wiki.protocols.flames import FailItem, FailItemsResult, FlamesUnitRef
+
+    problem = RadarProblem(
+        radar_id="182787079",
+        title="IMU Gyro Average Y out of limit",
+        description=(DescriptionItem(text="Drop50 MST fail.", added_by="e"),),
+        diagnosis=(
+            DiagnosisItem(
+                text="Next step: CT scan.",
+                added_by="wang.baofu@byd.com",
+                entry_type="user",
+            ),
+        ),
+        attachments=(),
+    )
+    fails = FailItemsResult(
+        unit=FlamesUnitRef(unit_id="u", serial=None, radar_id="182787079"),
+        records=(),
+        fail_items=(FailItem(message="Gyro Y OOL", station="radar"),),
+        cached_logs=(),
+        source="radar",
+        needs_user_input=False,
+    )
+    llm = MagicMock()
+    llm.generate_stream = None
+    llm.generate.return_value = (
+        "跌落后 IMU 校准 Y 轴超限；bench 已复现；下一步 CT scan。"
+    )
+    text = generate_checkin_ai_summary(
+        problem, fails, llm=llm, repo_root=repo_root
+    )
+    assert text is not None
+    assert "CT scan" in text
+    prompt = llm.generate.call_args.args[0]
+    assert "Background" in prompt
+    assert "FA steps so far" in prompt
+    assert "Next step or conclusion" in prompt
+    assert "never the word" in prompt
+    assert "Gyro Y OOL" in prompt
+
+
+def test_generate_log_analysis_unit(repo_root: Path) -> None:
+    """LLM log interpretation for a numeric / out-of-limit log with no literal
+    PASS/FAIL must surface the file type, verbatim metrics, and the explicit
+    '未见字面 PASS/FAIL' marker — and never fabricate a pass/fail verdict."""
+    problem = RadarProblem(
+        radar_id="182787079",
+        title="IMU Cal_LPNM gyro_y out of limit",
+        description=(),
+        diagnosis=(
+            DiagnosisItem(
+                text="Next step: re-cal.",
+                added_by="e",
+                entry_type="user",
+            ),
+        ),
+        attachments=(),
+    )
+    cal_log = (
+        "gyro_x_average: 0.012\n"
+        "gyro_y_average: -0.042\n"
+        "out of limit: gyro_y_average below spec\n"
+    )
+    llm = MagicMock()
+    llm.generate_stream = None
+    llm.generate.return_value = (
+        "1. 文件类型：IMU 校准输出。\n"
+        "2. 关键指标：`gyro_y_average: -0.042`、`out of limit`。\n"
+        "3. 未见字面 PASS/FAIL，以下为结构解读：gyro_y 超下界。\n"
+    )
+    text = generate_log_analysis(
+        problem, "Cal_LPNM_1.log", cal_log, llm=llm, repo_root=repo_root
+    )
+    assert text is not None
+    assert "未见字面 PASS/FAIL" in text
+    assert "gyro_y_average" in text
+    prompt = llm.generate.call_args.args[0]
+    # Placeholders were substituted; the real log text and the no-fabricate
+    # instruction are present in the prompt.
+    assert "{{log_text}}" not in prompt
+    assert "gyro_y_average" in prompt
+    assert "未见字面 PASS/FAIL" in prompt
 
 
 def test_extract_checkin_background_end_to_end(repo_root: Path) -> None:
