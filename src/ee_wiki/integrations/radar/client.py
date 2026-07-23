@@ -255,16 +255,39 @@ class RadarclientBackend:
         rid = normalize_radar_id(radar_id)
         radar = self._radar_for_id(rid)
         target = None
-        for entry in list(getattr(radar.attachments, "items", lambda: [])()):
-            name = getattr(entry, "fileName", None) or getattr(
-                entry, "file_name", None
-            )
-            if name == file_name:
-                target = entry
+        found_in = None
+        # Search attachments first, then fall back to the pictures collection.
+        # Live Radar sometimes stores images under either collection while
+        # map_problem tags them kind="picture" — so download_attachment must
+        # not hard-fail when a .png lives in `pictures` (Problem 5, root A).
+        # The API chosen here (download_attachment) is still logged as such;
+        # the resolved collection is only a debug aid for live collection gaps.
+        for label, collection in (
+            ("attachments", getattr(radar, "attachments", None)),
+            ("pictures", getattr(radar, "pictures", None)),
+        ):
+            if collection is None:
+                continue
+            for entry in list(getattr(collection, "items", lambda: [])()):
+                name = getattr(entry, "fileName", None) or getattr(
+                    entry, "file_name", None
+                )
+                if name == file_name:
+                    target = entry
+                    found_in = label
+                    break
+            if target is not None:
                 break
         if target is None:
             raise IntegrationError(
                 f"Attachment {file_name!r} not found on rdar://{rid}"
+            )
+        if found_in != "attachments":
+            logger.debug(
+                "Radar attachment %r resolved from %s collection via "
+                "download_attachment (called with kind=attachment)",
+                file_name,
+                found_in,
             )
         dest_path = Path(dest_path)
         dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -276,6 +299,77 @@ class RadarclientBackend:
                 f"Failed to download {file_name!r} from rdar://{rid}: {exc}"
             ) from exc
         logger.info("Radar attachment downloaded rdar://%s -> %s", rid, dest_path)
+        return dest_path
+
+    def download_picture(
+        self,
+        radar_id: str,
+        file_name: str,
+        dest_path: Path,
+    ) -> Path:
+        """Download one picture by file name into ``dest_path``.
+
+        Pictures live in the ``radar.pictures`` collection, not
+        ``radar.attachments`` — ``download_attachment`` cannot see them and
+        raises "not found". Mirrors :meth:`download_attachment` but scans the
+        pictures collection instead.
+
+        Args:
+            radar_id: Target problem id.
+            file_name: Exact ``fileName`` as listed on the problem.
+            dest_path: Local file path to write (parent dirs created).
+
+        Returns:
+            ``dest_path`` after a successful write.
+
+        Raises:
+            IntegrationError: If the picture is missing or download fails.
+        """
+        rid = normalize_radar_id(radar_id)
+        radar = self._radar_for_id(rid)
+        target = None
+        found_in = None
+        # Search pictures first, then fall back to the attachments collection.
+        # Mirror of download_attachment's cross-collection fallback (Problem 5,
+        # root A): a file tagged kind="picture" may in fact live under
+        # radar.attachments on the live server, so don't hard-fail on miss.
+        for label, collection in (
+            ("pictures", getattr(radar, "pictures", None)),
+            ("attachments", getattr(radar, "attachments", None)),
+        ):
+            if collection is None:
+                continue
+            for entry in list(getattr(collection, "items", lambda: [])()):
+                name = getattr(entry, "fileName", None) or getattr(
+                    entry, "file_name", None
+                )
+                if name == file_name:
+                    target = entry
+                    found_in = label
+                    break
+            if target is not None:
+                break
+        if target is None:
+            raise IntegrationError(
+                f"Picture {file_name!r} not found on rdar://{rid}"
+            )
+        if found_in != "pictures":
+            logger.debug(
+                "Radar picture %r resolved from %s collection via "
+                "download_picture (called with kind=picture)",
+                file_name,
+                found_in,
+            )
+        dest_path = Path(dest_path)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with dest_path.open("wb+") as handle:
+                target.write_to_file(handle, continue_at=0, client=self._client)
+        except Exception as exc:
+            raise IntegrationError(
+                f"Failed to download picture {file_name!r} from rdar://{rid}: {exc}"
+            ) from exc
+        logger.info("Radar picture downloaded rdar://%s -> %s", rid, dest_path)
         return dest_path
 
     def _radar_for_id(self, radar_id: str) -> Any:

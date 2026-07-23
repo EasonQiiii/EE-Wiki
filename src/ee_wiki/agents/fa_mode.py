@@ -14,7 +14,10 @@ from collections.abc import Sequence
 from typing import Literal
 
 from ee_wiki.common.config import AppConfig
-from ee_wiki.integrations.fa_chat import parse_fa_checkin_radar_id
+from ee_wiki.integrations.fa_chat import (
+    _ABOUT_FA_KEYNOTE,
+    parse_fa_checkin_radar_id,
+)
 from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.retrieval.rewrite import ConversationTurn
 
@@ -81,6 +84,20 @@ def is_fa_advice_without_investigation(question: str) -> bool:
     if _FA_REAL_INVESTIGATION.search(q):
         return False
     return True
+
+
+def is_fa_export_intent(question: str) -> bool:
+    """True when the question asks to produce an FA one-page Keynote / report.
+
+    Structural token match only (``keynote`` / ``one page`` / ``一页纸`` /
+    ``导出报告``) — not a semantic "is this an export?" classifier (ADR 0013).
+    When true, the chat gate routes the turn to ``"fa"`` so :class:`FaAgent`
+    can generate the ``.key`` (bound) or ask to bind a ``rdar://`` (unbound).
+    """
+    q = question.strip()
+    if not q:
+        return False
+    return bool(_ABOUT_FA_KEYNOTE.search(q))
 
 
 def is_wiki_connectivity_query(question: str) -> bool:
@@ -153,6 +170,8 @@ def resolve_chat_mode(
         ``"fa"`` or ``"wiki"``.
     """
     if parse_fa_checkin_radar_id(question):
+        return "fa"
+    if is_fa_export_intent(question):
         return "fa"
     if is_fa_advice_without_investigation(question):
         return "wiki"

@@ -59,7 +59,7 @@ When all three are set with `retrieval.scope_inheritance: true` (default), searc
 | `GET` | `/v1/exports/{path}` | Download under `data/exports/` (e.g. `fa/{radar_id}/FA_summary.key`) |
 | `GET` | `/v1/cache/{path}` | Download under `data/cache/` (e.g. Flames logs `fa/{radar_id}/*.log`) |
 
-Orchestration helpers live in `ee_wiki.integrations.session` (`start_fa_checkin`, `generate_fa_summary`, confirm-gated Radar writes). Open WebUI chat intent wiring lands with the FA supervisor (ADR 0008 + 0010). Set `api.public_base_url` so assistant markdown links are browser-reachable.
+Orchestration helpers live in `ee_wiki.integrations.session` (`start_fa_checkin`, `generate_fa_summary`, confirm-gated Radar writes). Open WebUI chat intent wiring lands with the FA supervisor (ADR 0008 + 0010). Set `api.public_base_url` so assistant markdown links are browser-reachable. In chat, the trigger words **keynote / one page / 一页纸 / 导出报告** on a bound (`rdar://`) FA session invoke `generate_fa_summary` and return a `## FA One-Page 已生成` message with a clickable `FA_summary.key` download link (an unbound session is first asked to bind the ticket).
 
 See [fa-session.md](fa-session.md), [integrations-radar.md](integrations-radar.md), [integrations-flames.md](integrations-flames.md).
 

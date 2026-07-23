@@ -12,13 +12,17 @@ class FaReportRequest:
     """Inputs for generating an FA one-page summary."""
 
     radar_id: str
+    product: str | None = None
     project: str | None = None
     build: str | None = None
     title: str | None = None
+    state: str | None = None
+    substate: str | None = None
     fail_items: tuple[str, ...] = ()
     true_fail_notes: str | None = None
     root_cause: str | None = None
     steps: tuple[str, ...] = ()
+    conclusion: str | None = None
     extra: dict[str, Any] | None = None
 
 

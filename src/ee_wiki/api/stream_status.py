@@ -12,6 +12,16 @@ import json
 RETRIEVAL_STATUS = "检索中…"
 GENERATION_STATUS = "生成中…"
 
+# FA / Radar-specific phases (Problem 1: give the UI a real status instead of a
+# generic "检索中" while the backend talks to Radar / downloads attachments).
+FA_FETCH_STATUS = "正在拉取 Radar 票…"
+# Check-in LLM face read-through (title / description / diagnosis → briefing).
+FA_ANALYZE_STATUS = "正在分析 FA 背景…"
+# User asked to analyze a named log / attachment body (after materialize).
+FA_ATTACHMENT_ANALYZE_STATUS = "正在分析附件内容…"
+# Progress template for on-demand attachment downloads: "正在下载附件 (3/10)…".
+FA_DOWNLOAD_STATUS = "正在下载附件 ({done}/{total})…"
+
 
 def format_stream_status_event(
     *,

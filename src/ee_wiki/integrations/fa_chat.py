@@ -54,9 +54,23 @@ _ATTACHMENT_LINE = re.compile(
     r"\*\*Radar attachments:\*\*\s*(.+)",
     re.IGNORECASE,
 )
+# Structural pre-filter only (NOT a verbatim-router): does the question touch
+# diagnosis steps at all? The actual list/summarize/latest decision is made by
+# the LLM classifier `classify_diagnosis_intent` (ADR 0013: regex = structural
+# tokens only). Keeping this narrow keyword set is acceptable because it only
+# gates *whether* to call the classifier, not *how* to answer.
 _ABOUT_DIAGNOSIS_STEPS = re.compile(
     r"(?:diagnosis|诊断|步骤|timeline|进度|已完成|"
     r"做了什么|列一下|列出|FA\s*步骤|排查步骤)",
+    re.IGNORECASE,
+)
+
+# Structural export-intent token (NOT semantic classification): does the
+# question ask to produce an FA one-page Keynote / report? Kept to a tight
+# token set (keynote | one page | 一页纸 | 导出报告) so it is a structural
+# fast-path only, not a "does this look like an export?" NLP gate (ADR 0013).
+_ABOUT_FA_KEYNOTE = re.compile(
+    r"(?:keynote|one[.\s-]?page|一页纸|导出报告|整理成.*(?:keynote|一页纸))",
     re.IGNORECASE,
 )
 
@@ -308,23 +322,83 @@ def _session_dialogue_reply(
     cancel_event: threading.Event | None,
 ) -> str:
     """Answer an FA follow-up from check-in / Radar (diagnosis is authoritative)."""
-    # Diagnosis timeline is Radar source-of-truth — never leave to LLM freestyle.
-    if _ABOUT_DIAGNOSIS_STEPS.search(question):
+    rid = normalize_radar_id(radar_id)
+
+    # Structural pre-filter: does the question touch diagnosis steps at all?
+    asks_steps = bool(_ABOUT_DIAGNOSIS_STEPS.search(question))
+
+    problem = None
+    if asks_steps:
         from ee_wiki.integrations.factory import build_radar_backend
-        from ee_wiki.integrations.radar.evidence import format_radar_diagnosis_steps
+        from ee_wiki.integrations.radar.evidence import (
+            format_latest_diagnosis_action,
+            format_radar_diagnosis_steps,
+            user_diagnosis_entries,
+        )
 
-        problem = build_radar_backend(config).get_problem(radar_id)
-        return format_radar_diagnosis_steps(problem, include_history=True)
+        try:
+            problem = build_radar_backend(config).get_problem(radar_id)
+        except Exception:
+            logger.warning("Radar get_problem failed (steps intent)", exc_info=True)
+            problem = None
 
+        if problem is not None:
+            # No LLM available: the deterministic verbatim list is the safe,
+            # exact answer (covers "列出/总结" without a classifier).
+            if llm is None:
+                return format_radar_diagnosis_steps(problem, include_history=True)
+
+            from ee_wiki.generation.classify import (
+                classify_diagnosis_intent,
+                summarize_radar_diagnosis,
+            )
+
+            intent = classify_diagnosis_intent(
+                question,
+                llm=llm,
+                repo_root=config.repo_root,
+                cancel_event=cancel_event,
+            )
+            if intent == "list_steps":
+                # Deterministic verbatim list — no LLM, fast and exact.
+                return format_radar_diagnosis_steps(problem, include_history=True)
+            if intent == "latest_action":
+                return format_latest_diagnosis_action(problem)
+            # summarize_steps / other / unrecognized (None) → try LLM brief
+            # summary first. Unrecognized must NOT dump the full verbatim list
+            # (that was Problem 2: "简要总结" after a bad KIND parse). Fall back
+            # to the verbatim list only when summarization is unavailable.
+            summary = None
+            if intent in ("summarize_steps", "other", None) and user_diagnosis_entries(
+                problem
+            ):
+                summary = summarize_radar_diagnosis(
+                    problem,
+                    question,
+                    llm=llm,
+                    repo_root=config.repo_root,
+                    cancel_event=cancel_event,
+                )
+            if summary:
+                return f"## FA check-in — rdar://{rid}\n\n{summary}"
+            return format_radar_diagnosis_steps(problem, include_history=True)
+
+    # Build enriched context (verbatim steps) for the generic LLM reply.
     enriched = checkin_markdown
     if not re.search(r"Radar diagnosis steps", checkin_markdown, re.IGNORECASE):
-        from ee_wiki.integrations.factory import build_radar_backend
-        from ee_wiki.integrations.radar.evidence import format_radar_diagnosis_steps
+        if problem is None:
+            from ee_wiki.integrations.factory import build_radar_backend
+            from ee_wiki.integrations.radar.evidence import format_radar_diagnosis_steps
 
-        problem = build_radar_backend(config).get_problem(radar_id)
-        steps = format_radar_diagnosis_steps(problem)
-        if steps.strip():
-            enriched = f"{checkin_markdown.rstrip()}\n\n{steps}"
+            try:
+                problem = build_radar_backend(config).get_problem(radar_id)
+            except Exception:
+                logger.warning("Radar get_problem failed (enrich)", exc_info=True)
+                problem = None
+        if problem is not None:
+            steps = format_radar_diagnosis_steps(problem)
+            if steps.strip():
+                enriched = f"{checkin_markdown.rstrip()}\n\n{steps}"
 
     if llm is not None and enriched.strip():
         from ee_wiki.generation.classify import generate_fa_session_reply
@@ -340,18 +414,37 @@ def _session_dialogue_reply(
         if generated:
             if "FA check-in" not in generated:
                 return (
-                    f"## FA check-in — rdar://{normalize_radar_id(radar_id)}\n\n"
+                    f"## FA check-in — rdar://{rid}\n\n"
                     f"{generated}"
                 )
             return generated
 
-    return _deterministic_session_reply(radar_id, question, enriched)
+    return _deterministic_session_reply(radar_id, question, enriched, config=config)
+
+
+def _mention_flames(question: str, config: AppConfig | None) -> bool:
+    """Gate Flames mentions: only when the user asks, or flames backend != manual.
+
+    When the backend is ``manual`` (default) and the user didn't mention Flames,
+    replies must keep Flames entirely out (Problem 5, root C) — the old reply
+    wrongly nudged for Flames paste on every log question.
+    """
+    q = (question or "").lower()
+    if "flames" in q or "火焰" in q:
+        return True
+    if config is None:
+        return False
+    flames = getattr(getattr(config, "fa", None), "flames", None)
+    backend = getattr(flames, "backend", "manual")
+    return backend != "manual"
 
 
 def _deterministic_session_reply(
     radar_id: str,
     question: str,
     checkin_markdown: str,
+    *,
+    config: AppConfig | None = None,
 ) -> str:
     """Grounded FA dialogue without LLM (attachments / next steps / logs)."""
     rid = normalize_radar_id(radar_id)
@@ -372,33 +465,40 @@ def _deterministic_session_reply(
     if about_log:
         if attachments:
             names = ", ".join(f"`{n}`" for n in attachments)
-            lines.append(
-                f"有的——Radar 上已经挂了附件名：{names}。"
-            )
+            lines.append(f"Radar 上已经挂了附件：{names}。")
             lines.append("")
             lines.append(
-                "不过当前路径只拉了 **附件元数据 / 标题 / description / diagnosis**，"
-                "**没有把 `.log` 正文下载进聊天**。"
-                "Flames 产线 log 是另一条链路（默认 manual 时靠粘贴）。"
+                "已缓存的可直接打开；未缓存的说「下载 <文件名>」即按需取回正文，"
+                "取回后我可帮你读 PASS/FAIL、做摘要或对照 fail items。"
             )
             if has_fail_items:
                 lines.append("")
                 lines.append(
                     "这张票里已经从 Radar 文本抽出了 fail items；"
-                    "若你要对照原始 log 正文，需要打开 Radar 下载附件，"
-                    "或把相关片段贴到这里。"
+                    "若你要对照原始 log 正文，下载对应附件即可，或把关键片段贴到这里。"
+                )
+            if _mention_flames(question, config):
+                lines.append("")
+                lines.append(
+                    "Flames 产线 log 走 flames 后端（非 manual 时自动）；需要的话告诉我。"
                 )
         elif needs_paste:
             lines.append(
-                "这张票的 check-in 里还没有列出可用的 Radar 附件名，"
-                "Flames 也还没拿到 fail items。可以贴一段带 ERROR/FAIL 的 log，"
-                "或 bullet 失败项，我再继续整理。"
+                "这张票的 check-in 里还没有列出可用的 Radar 附件名。"
+            )
+            if _mention_flames(question, config):
+                lines.append("Flames 也还没拿到 fail items。")
+            lines.append(
+                "可以贴一段带 ERROR/FAIL 的 log，或 bullet 失败项，我再继续整理。"
             )
         else:
             lines.append(
                 "当前 check-in 没有列出 Radar 附件名。"
-                "若票上确实有 log，可在 Radar 客户端打开下载，或把关键片段贴到这里。"
             )
+            if _mention_flames(question, config):
+                lines.append(
+                    "若票上确实有 log，可在 Radar 客户端打开下载，或把关键片段贴到这里。"
+                )
         return "\n".join(lines)
 
     if about_next or not q:
@@ -412,7 +512,7 @@ def _deterministic_session_reply(
                 lines.append(
                     "3. 若要核对原始数据：Radar 附件 "
                     + ", ".join(f"`{n}`" for n in attachments)
-                    + "（需在 Radar 下载正文；本聊天默认不自动拉附件内容）"
+                    + "（下载正文后我可帮你读；本聊天按需拉取，不整批下载）"
                 )
         elif needs_paste:
             lines.append(
@@ -432,7 +532,7 @@ def _deterministic_session_reply(
         lines.append(
             "- Radar 附件名："
             + ", ".join(f"`{n}`" for n in attachments)
-            + "（元数据；正文未自动下载）"
+            + "（元数据；已缓存的可直接打开，其余按需下载）"
         )
     if has_fail_items:
         lines.append("- 已抽出 fail items — 请指出 true fail 以继续")

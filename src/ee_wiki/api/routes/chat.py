@@ -8,7 +8,7 @@ import re
 import threading
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -47,10 +47,15 @@ from ee_wiki.api.scope_marker import (
 from ee_wiki.api.scope_params import resolve_request_scope
 from ee_wiki.api.stream_cancel import iter_sync_text_chunks
 from ee_wiki.api.stream_status import (
+    FA_FETCH_STATUS,
     GENERATION_STATUS,
     RETRIEVAL_STATUS,
     clear_status_chunk,
     format_status_chunk,
+)
+from ee_wiki.api.stream_status_context import (
+    StreamStatusHub,
+    bind_stream_status_emitter,
 )
 from ee_wiki.api.timeout import (
     REQUEST_TIMEOUT_MESSAGE,
@@ -116,6 +121,69 @@ def _should_bypass_rag(question: str) -> bool:
     return is_open_webui_auxiliary_task(question)
 
 
+def _start_bound_fetch(
+    fetch_callable: Callable[[], AnswerStreamResult],
+    *,
+    status_hub: StreamStatusHub,
+) -> asyncio.Task[AnswerStreamResult]:
+    """Start ``fetch_callable`` in a worker thread with status hub binding."""
+
+    def _run() -> AnswerStreamResult:
+        with bind_stream_status_emitter(status_hub.emit):
+            return fetch_callable()
+
+    return asyncio.create_task(asyncio.to_thread(_run))
+
+
+async def _finish_bound_fetch(
+    fetch_task: asyncio.Task[AnswerStreamResult],
+    *,
+    timeout_seconds: float | None,
+) -> AnswerStreamResult:
+    """Await a bound fetch task with optional wall-clock timeout."""
+    if timeout_seconds is not None and timeout_seconds > 0:
+        try:
+            return await asyncio.wait_for(fetch_task, timeout=timeout_seconds)
+        except TimeoutError as exc:
+            fetch_task.cancel()
+            raise RequestTimeoutError(
+                f"Request exceeded {timeout_seconds}s timeout"
+            ) from exc
+    return await fetch_task
+
+
+def _resolve_fa_mode_once(
+    *,
+    config: object,
+    service: RagService,
+    question: str,
+    history: list | None,
+    bypass_rag: bool,
+) -> str | None:
+    """Classify FA vs Wiki intent once, for streaming-status labelling.
+
+    Returns the mode string (``"fa"`` / ``"wiki"``) or ``None`` when FA is
+    disabled, the request bypasses RAG, or classification fails (so the caller
+    falls back to the in-pipeline classify without breaking the request).
+    """
+    fa_cfg = getattr(config, "fa", None)
+    if getattr(fa_cfg, "enabled", False) is not True or bypass_rag:
+        return None
+    try:
+        from ee_wiki.agents.fa_mode import resolve_chat_mode
+
+        return resolve_chat_mode(
+            question,
+            history,
+            llm=service.llm,
+            config=config,
+            cancel_event=threading.Event(),
+        )
+    except Exception:  # noqa: BLE001 - never let status labelling break the request
+        logger.warning("FA mode preclassify failed; deferring to pipeline")
+        return None
+
+
 def _fetch_stream_result(
     service: RagService,
     question: str,
@@ -131,6 +199,7 @@ def _fetch_stream_result(
     history: list[ConversationTurn] | None,
     connectivity_query: ConnectivityQuery | None = None,
     conversation_id: str | None = None,
+    fa_mode: str | None = None,
 ) -> AnswerStreamResult:
     """Run gates, supervisor intent, then hybrid RAG (ADR 0012)."""
     if bypass_rag:
@@ -265,15 +334,21 @@ def _fetch_stream_result(
     # supervisor guard below.
     mode = "wiki"
     if service.config.fa.enabled is True and not bypass_rag:
-        from ee_wiki.agents.fa_mode import resolve_chat_mode
+        if fa_mode is not None:
+            # Reuse the mode precomputed once at the route level (so the
+            # streaming status can label the FA phase) instead of classifying
+            # twice.
+            mode = fa_mode
+        else:
+            from ee_wiki.agents.fa_mode import resolve_chat_mode
 
-        mode = resolve_chat_mode(
-            question,
-            history,
-            llm=service.llm,
-            config=service.config,
-            cancel_event=cancel_event,
-        )
+            mode = resolve_chat_mode(
+                question,
+                history,
+                llm=service.llm,
+                config=service.config,
+                cancel_event=cancel_event,
+            )
     trace.mode = mode
 
     if service.config.fa.enabled is True and mode == "fa":
@@ -522,6 +597,17 @@ async def chat_completions(
     )
 
     if body.stream:
+        # Precompute FA mode once (when FA is enabled) so the streaming status
+        # can label the Radar phase. Reused by _fetch_stream_result to avoid a
+        # second classify call. Cheap (short LLM prompt) and only runs for
+        # fa.enabled deployments.
+        fa_mode = _resolve_fa_mode_once(
+            config=config,
+            service=service,
+            question=question,
+            history=history,
+            bypass_rag=bypass_rag,
+        )
         slot_ctx = gate.slot()
         try:
             snapshot = await asyncio.to_thread(slot_ctx.__enter__)
@@ -550,6 +636,7 @@ async def chat_completions(
                     show_elapsed_time=show_elapsed_time,
                     connectivity_query=connectivity_query,
                     conversation_id=body.conversation_id,
+                    fa_mode=fa_mode,
                 ):
                     yield chunk
             finally:
@@ -566,6 +653,14 @@ async def chat_completions(
         request,
         cancel,
         label=f"Chat completion {chat_id}",
+    )
+    # Same precompute as the streaming branch (see _resolve_fa_mode_once).
+    fa_mode = _resolve_fa_mode_once(
+        config=config,
+        service=service,
+        question=question,
+        history=history,
+        bypass_rag=bypass_rag,
     )
     try:
         slot_ctx = gate.slot()
@@ -596,6 +691,7 @@ async def chat_completions(
                     history=history,
                     connectivity_query=connectivity_query,
                     conversation_id=body.conversation_id,
+                    fa_mode=fa_mode,
                     timeout_seconds=remaining_timeout,
                 )
             except (RequestTimeoutError, LlmTimeoutError) as exc:
@@ -719,6 +815,7 @@ async def _stream_answer(
     show_elapsed_time: bool = False,
     connectivity_query: ConnectivityQuery | None = None,
     conversation_id: str | None = None,
+    fa_mode: str | None = None,
 ) -> AsyncIterator[str]:
     """Yield OpenAI-compatible SSE chunks for a streamed RAG answer."""
     cancel = threading.Event()
@@ -741,11 +838,17 @@ async def _stream_answer(
             created=created,
             delta={"role": "assistant"},
         )
+        # Problem 1: label the FA phase specifically instead of a generic
+        # "检索中" so the user knows we are talking to Radar (not just RAG).
+        if not bypass_rag and fa_mode == "fa":
+            initial_status = FA_FETCH_STATUS
+        else:
+            initial_status = RETRIEVAL_STATUS if not bypass_rag else GENERATION_STATUS
         yield format_status_chunk(
             chat_id=chat_id,
             model=model,
             created=created,
-            description=RETRIEVAL_STATUS if not bypass_rag else GENERATION_STATUS,
+            description=initial_status,
         )
 
         if _timed_out():
@@ -757,21 +860,47 @@ async def _stream_answer(
             if remaining_timeout <= 0:
                 raise RequestTimeoutError("Request timed out before retrieval")
 
-        stream_result = await run_sync_with_request_timeout(
-            _fetch_stream_result,
-            service,
-            question,
-            bypass_rag=bypass_rag,
-            target_product=product,
-            target_project=project,
-            target_build=build,
-            document_type=document_type,
-            top_k=top_k,
-            cancel_event=cancel,
-            task=task,
-            history=history,
-            connectivity_query=connectivity_query,
-            conversation_id=conversation_id,
+        status_hub = StreamStatusHub()
+        fetch_task = _start_bound_fetch(
+            lambda: _fetch_stream_result(
+                service,
+                question,
+                bypass_rag=bypass_rag,
+                target_product=product,
+                target_project=project,
+                target_build=build,
+                document_type=document_type,
+                top_k=top_k,
+                cancel_event=cancel,
+                task=task,
+                history=history,
+                connectivity_query=connectivity_query,
+                conversation_id=conversation_id,
+                fa_mode=fa_mode,
+            ),
+            status_hub=status_hub,
+        )
+        while not fetch_task.done():
+            for desc in status_hub.drain():
+                yield format_status_chunk(
+                    chat_id=chat_id,
+                    model=model,
+                    created=created,
+                    description=desc,
+                )
+            if cancel.is_set():
+                fetch_task.cancel()
+                break
+            await asyncio.sleep(0.05)
+        for desc in status_hub.drain():
+            yield format_status_chunk(
+                chat_id=chat_id,
+                model=model,
+                created=created,
+                description=desc,
+            )
+        stream_result = await _finish_bound_fetch(
+            fetch_task,
             timeout_seconds=remaining_timeout,
         )
         retrieval_done_at = time.monotonic()

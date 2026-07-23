@@ -30,13 +30,20 @@ class TestRecord:
 
 @dataclass(frozen=True)
 class FailItem:
-    """One error item extracted from a test log."""
+    """One error item extracted from a test log.
+
+    ``source`` records where the item came from so the check-in reply can show
+    provenance and enforce evidence priority (Radar face first, Flames last):
+    ``radar_title`` | ``radar_text`` | ``radar_attachment`` | ``flames`` |
+    ``user_paste``. ``None`` means unspecified (legacy / stub).
+    """
 
     message: str
     station: str | None = None
     record_id: str | None = None
     log_rel_path: str | None = None
     line_no: int | None = None
+    source: str | None = None
 
 
 @dataclass(frozen=True)

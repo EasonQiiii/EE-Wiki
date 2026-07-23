@@ -124,6 +124,30 @@ class RadarBackend(Protocol):
         """
         ...
 
+    def download_picture(
+        self,
+        radar_id: str,
+        file_name: str,
+        *,
+        dest_path: Path,
+    ) -> Path:
+        """Download one picture (``kind == "picture"``) into ``dest_path``.
+
+        Pictures live in the ``radar.pictures`` collection, *not*
+        ``radar.attachments`` — calling ``download_attachment`` for a ``.png``
+        fails with "not found". Live backends fetch bytes via the pictures
+        collection; stub backends write a synthetic placeholder.
+
+        Args:
+            radar_id: Target problem id.
+            file_name: Exact ``fileName`` as listed on the problem.
+            dest_path: Local file path to write (parent dirs created).
+
+        Returns:
+            ``dest_path`` after a successful write.
+        """
+        ...
+
     def add_diagnosis(
         self,
         radar_id: str,

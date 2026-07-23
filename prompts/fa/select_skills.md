@@ -5,6 +5,21 @@ Given the user's FA question and the current scope, choose ZERO or more tools to
 Allowed tools:
 {{allowlist}}
 
+Intent guidance (choose from the allowed tools above):
+- Bare Radar check-in (message is mainly ``rdar://…`` / ``radar://…`` with no
+  further ask): choose NO tools — check-in is handled by the session path.
+  Return `SKILLS:`.
+- Suggestion / next-action intent (额外的建议 / 下一步 / 还能做什么 / 建议动作):
+  the engineer wants investigative leads beyond the ticket's recorded steps. Pick
+  `search_debug_case` and `engineering_search` (and `query_schematic` when scope is
+  set and the question is circuit-related). Omit `trace_net`, `connector_pins`, and
+  `module_nets` unless a net name / refdes / module zone is explicitly named in the
+  question — these need a concrete target and sufficient scope. Omit `fa_session_turn`
+  / `radar_get_problem` (read-only recap, not an investigation to launch).
+- List / summarize the ticket's existing diagnosis steps (列出 / 总结 diagnosis / 已做的步骤):
+  choose NO tools — reply is a verbatim recap from the check-in context, not a new
+  investigation. Return `SKILLS:`.
+
 Tool hints:
 - query_schematic: ask about schematic content / how a circuit is wired
 - search_component: look up a designator (e.g. U8600) or part number

@@ -5,6 +5,10 @@ from __future__ import annotations
 import json
 
 from ee_wiki.api.stream_status import (
+    FA_ANALYZE_STATUS,
+    FA_ATTACHMENT_ANALYZE_STATUS,
+    FA_DOWNLOAD_STATUS,
+    FA_FETCH_STATUS,
     GENERATION_STATUS,
     RETRIEVAL_STATUS,
     clear_stream_status_sse,
@@ -41,3 +45,10 @@ def test_clear_stream_status_sse_hides_indicator() -> None:
     payload = json.loads(frame.removeprefix("data: ").strip())
     assert payload["event"]["data"]["done"] is True
     assert payload["event"]["data"]["hidden"] is True
+
+
+def test_fa_status_templates() -> None:
+    assert FA_FETCH_STATUS == "正在拉取 Radar 票…"
+    assert FA_ANALYZE_STATUS == "正在分析 FA 背景…"
+    assert FA_ATTACHMENT_ANALYZE_STATUS == "正在分析附件内容…"
+    assert FA_DOWNLOAD_STATUS.format(done=2, total=5) == "正在下载附件 (2/5)…"

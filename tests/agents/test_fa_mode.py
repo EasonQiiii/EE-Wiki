@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 
 from ee_wiki.agents.fa_mode import (
     is_fa_advice_without_investigation,
+    is_fa_export_intent,
     is_wiki_connectivity_query,
     resolve_chat_mode,
 )
@@ -64,6 +65,33 @@ def test_radar_keyword_with_digits_is_fa(repo_root: Path) -> None:
         config=config,
     )
     assert mode == "fa"
+
+
+# ── 1b. FA one-page Keynote export intent -> fa (Problem 4) ──────────────
+
+
+def test_keynote_export_intent_routes_to_fa(repo_root: Path) -> None:
+    """Trigger words keynote / one page / 一页纸 / 导出报告 must route to fa
+    so FaAgent can generate the .key (bound) or prompt to bind (unbound).
+    No LLM needed — structural token fast-path (ADR 0013).
+    """
+    config = _config(repo_root)
+    for q in (
+        "帮我整理成 FA one page keynote",
+        "导出报告",
+        "把这个整理成一页纸 FA 总结",
+    ):
+        assert is_fa_export_intent(q)
+        mode = resolve_chat_mode(q, history=None, llm=None, config=config)
+        assert mode == "fa"
+
+
+def test_keynote_export_intent_does_not_catch_plain_export(repo_root: Path) -> None:
+    """'导出 log' / generic '导出' without the report/keynote token must NOT
+    be captured as an export intent.
+    """
+    assert not is_fa_export_intent("帮我导出这个 log")
+    assert not is_fa_export_intent("导出数据")
 
 
 # ── 2. Wiki connectivity overrides FA sticky / LLM ────────────────────────

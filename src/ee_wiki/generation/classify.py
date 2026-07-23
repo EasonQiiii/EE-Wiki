@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ee_wiki.common.logging import get_logger
 from ee_wiki.protocols.llm import LlmBackend
+from ee_wiki.protocols.radar import RadarProblem
 from ee_wiki.retrieval.rewrite import ConversationTurn
 
 logger = get_logger(__name__)
@@ -37,9 +38,41 @@ _ROLES_LINE = re.compile(r"^ROLES:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 _TASK_LINE = re.compile(r"^TASK:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 _FA_KIND_LINE = re.compile(r"^KIND:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 _SKILLS_LINE = re.compile(r"^SKILLS:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+
+# Reasoning wrappers some local LLMs emit before the structured line. We only
+# DELETED them (never interpret) — after stripping, if no KIND:/SKILLS: line
+# remains, the caller keeps its None -> dialogue/file fallback (Problem 5 D).
+_REASONING_WRAPPERS = [
+    re.compile(r"<analysis>.*?</analysis>", re.IGNORECASE | re.DOTALL),
+    re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL),
+    re.compile(r"```reasoning.*?```", re.IGNORECASE | re.DOTALL),
+    # Unterminated leading wrapper that precedes the structured line.
+    re.compile(r"<analysis>.*?(?=\nKIND:|\nSKILLS:)", re.IGNORECASE | re.DOTALL),
+    re.compile(r"<think>.*?(?=\nKIND:|\nSKILLS:)", re.IGNORECASE | re.DOTALL),
+]
+
+
+def _strip_reasoning(text: str) -> str:
+    """Remove chain-of-thought wrappers so ``KIND:``/``SKILLS:`` parse cleanly.
+
+    Purely structural: we delete wrapper text (including a leading
+    unterminated ``<analysis>``/``<think>`` that runs up to the structured
+    line) and return the rest. No semantic interpretation is performed.
+    """
+    if not text:
+        return text
+    out = text
+    for pat in _REASONING_WRAPPERS:
+        out = pat.sub("", out)
+    return out.strip()
 VALID_FA_MESSAGE_KINDS: frozenset[str] = frozenset(
     {"evidence", "question", "stay"}
 )
+VALID_DIAGNOSIS_INTENT_KINDS: frozenset[str] = frozenset(
+    {"list_steps", "summarize_steps", "latest_action", "other"}
+)
+MAX_DIAGNOSIS_INTENT_TOKENS = 16
+MAX_DIAGNOSIS_SUMMARY_TOKENS = 384
 
 
 @dataclass(frozen=True)
@@ -142,6 +175,7 @@ def classify_fa_message(
     if not raw_output:
         return None
 
+    raw_output = _strip_reasoning(raw_output)
     match = _FA_KIND_LINE.search(raw_output)
     raw_kind = match.group(1) if match else raw_output
     cleaned = raw_kind.strip().split("\n")[0].strip()
@@ -166,6 +200,130 @@ def classify_fa_message(
             return kind
     logger.warning("FA message kind unrecognized: %r", raw_output)
     return None
+
+
+def classify_diagnosis_intent(
+    question: str,
+    *,
+    llm: LlmBackend,
+    repo_root: Path,
+    cancel_event: threading.Event | None = None,
+) -> str | None:
+    """Classify an FA-session "steps / diagnosis" question intent.
+
+    Decides whether the user wants the diagnosis steps listed verbatim,
+    summarized, or only the latest action. Semantic judgment lives in
+    ``prompts/fa/diagnosis_intent.md`` — not a hardcoded keyword list
+    (ADR 0013: regex = structural tokens only).
+
+    Args:
+        question: User utterance about FA steps / diagnosis / timeline.
+        llm: Local LLM backend.
+        repo_root: Repository root for loading the prompt template.
+        cancel_event: Optional cancellation signal.
+
+    Returns:
+        One of ``list_steps``, ``summarize_steps``, ``latest_action``,
+        ``other``, or ``None`` when output is unusable so the caller can
+        default to a verbatim list (precision over latency).
+    """
+    if cancel_event and cancel_event.is_set():
+        return None
+
+    path = repo_root / "prompts" / "fa" / "diagnosis_intent.md"
+    template = path.read_text(encoding="utf-8")
+    prompt = template.replace("{{question}}", question).strip()
+
+    try:
+        raw_output = _generate_short_output(
+            llm,
+            prompt,
+            max_new_tokens=MAX_DIAGNOSIS_INTENT_TOKENS,
+            cancel_event=cancel_event,
+        )
+    except Exception:
+        logger.warning("Diagnosis intent classification failed", exc_info=True)
+        return None
+
+    if cancel_event and cancel_event.is_set():
+        return None
+    if not raw_output:
+        return None
+
+    raw_output = _strip_reasoning(raw_output)
+    match = _FA_KIND_LINE.search(raw_output)
+    raw_kind = match.group(1) if match else raw_output
+    cleaned = raw_kind.strip().split("\n")[0].strip()
+    cleaned = cleaned.strip('"').strip("'").strip("`").strip().lower()
+    cleaned = re.sub(r"[.。,，;；:：!！?？]", "", cleaned)
+    if cleaned in VALID_DIAGNOSIS_INTENT_KINDS:
+        logger.info("Diagnosis intent: %r -> %s", question[:60], cleaned)
+        return cleaned
+    for kind in VALID_DIAGNOSIS_INTENT_KINDS:
+        if kind in cleaned:
+            return kind
+    logger.warning("Diagnosis intent unrecognized: %r", raw_output)
+    return None
+
+
+def summarize_radar_diagnosis(
+    problem: RadarProblem,
+    question: str,
+    *,
+    llm: LlmBackend,
+    repo_root: Path,
+    cancel_event: threading.Event | None = None,
+) -> str | None:
+    """Summarize Radar diagnosis steps via LLM (3-5 bullets, 已完成/待做).
+
+    Used when the user asks for a recap / summary of FA steps. Returns
+    concise markdown, or ``None`` when generation fails so the caller can
+    fall back to the verbatim list. Does not invent true-fail / root cause.
+
+    Args:
+        problem: Normalized Radar snapshot (diagnosis is source of truth).
+        question: User utterance asking for a summary.
+        llm: Local LLM backend.
+        repo_root: Repository root for loading the prompt template.
+        cancel_event: Optional cancellation signal.
+
+    Returns:
+        Assistant markdown summary, or ``None`` on failure / empty steps.
+    """
+    if cancel_event and cancel_event.is_set():
+        return None
+
+    from ee_wiki.integrations.radar.evidence import diagnosis_steps_text
+
+    steps_text = diagnosis_steps_text(problem)
+    if not steps_text.strip():
+        return None
+
+    path = repo_root / "prompts" / "fa" / "summarize_diagnosis.md"
+    template = path.read_text(encoding="utf-8")
+    prompt = (
+        template.replace("{{radar_id}}", problem.radar_id)
+        .replace("{{question}}", question)
+        .replace("{{steps}}", steps_text)
+        .strip()
+    )
+
+    try:
+        text = _generate_short_output(
+            llm,
+            prompt,
+            max_new_tokens=MAX_DIAGNOSIS_SUMMARY_TOKENS,
+            cancel_event=cancel_event,
+        )
+    except Exception:
+        logger.warning("FA diagnosis summary generation failed", exc_info=True)
+        return None
+
+    if cancel_event and cancel_event.is_set():
+        return None
+    if not text or not text.strip():
+        return None
+    return text.strip()
 
 
 def generate_fa_session_reply(
@@ -343,6 +501,7 @@ def select_fa_skills(
     if not raw_output:
         return None
 
+    raw_output = _strip_reasoning(raw_output)
     match = _SKILLS_LINE.search(raw_output)
     raw_line = match.group(1) if match else raw_output
     parts = [p.strip() for p in raw_line.split(",") if p.strip()]

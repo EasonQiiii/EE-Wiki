@@ -333,9 +333,38 @@ class StubRadarBackend:
             f"# NOTE: placeholder for /v1/cache download UX; not live Radar bytes.\n"
             f"PASS: flash erase sequence completed\n"
             f"PASS: no standby under pwr_state set factory\n"
-        ).encode("utf-8")
+        ).encode()
         dest_path.write_bytes(body)
         logger.info("Stub Radar attachment written %s -> %s", file_name, dest_path)
+        return dest_path
+
+    def download_picture(
+        self,
+        radar_id: str,
+        file_name: str,
+        *,
+        dest_path: Path,
+    ) -> Path:
+        """Write a synthetic stub picture for download-link UX (not live bytes)."""
+        rid = normalize_radar_id(radar_id)
+        self.get_problem(rid)
+        names = {a.file_name for a in self._attachments.get(rid, [])}
+        if file_name not in names:
+            from ee_wiki.common.errors import IntegrationError
+
+            raise IntegrationError(
+                f"Picture {file_name!r} not found on stub rdar://{rid}"
+            )
+        dest_path = Path(dest_path)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        body = (
+            f"# EE-Wiki stub Radar picture\n"
+            f"# rdar://{rid}\n"
+            f"# file: {file_name}\n"
+            f"# NOTE: placeholder for /v1/cache download UX; not live Radar bytes.\n"
+        ).encode()
+        dest_path.write_bytes(body)
+        logger.info("Stub Radar picture written %s -> %s", file_name, dest_path)
         return dest_path
 
     def add_diagnosis(

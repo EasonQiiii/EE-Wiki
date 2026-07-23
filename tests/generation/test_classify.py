@@ -279,3 +279,42 @@ class TestClassifyFaMessage:
             )
             is None
         )
+
+    def test_strips_analysis_block_before_kind(self, repo_root) -> None:
+        """Qwen sometimes wraps the answer in <analysis>…</analysis>.
+
+        Problem 5 root D: strip the reasoning wrapper so KIND: still parses;
+        do NOT interpret semantics. After stripping, the structured line wins.
+        """
+        llm = MagicMock()
+        llm.generate_stream = None
+        llm.generate.return_value = (
+            "<analysis>\nLet me analyze the user's message. It is a follow-up "
+            "question about the FA ticket.\n</analysis>\nKIND: question"
+        )
+        assert (
+            classify_fa_message(
+                "radar里有哪些附件",
+                radar_id="123",
+                llm=llm,
+                repo_root=repo_root,
+            )
+            == "question"
+        )
+
+    def test_strips_leading_analysis_no_close(self, repo_root) -> None:
+        """Unterminated <analysis> that runs up to the structured line."""
+        llm = MagicMock()
+        llm.generate_stream = None
+        llm.generate.return_value = (
+            "<analysis>\nLet me analyze this.\nKIND: evidence"
+        )
+        assert (
+            classify_fa_message(
+                "ERROR rail OOR",
+                radar_id="123",
+                llm=llm,
+                repo_root=repo_root,
+            )
+            == "evidence"
+        )

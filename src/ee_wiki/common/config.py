@@ -88,6 +88,21 @@ class FaReportConfig:
 
 
 @dataclass(frozen=True)
+class FaCheckinConfig:
+    """Bounds for on-demand check-in evidence download (ADR 0013).
+
+    At check-in we materialize only the strong-related attachments the LLM
+    picks from the Radar face — never the whole attachment list. These caps
+    keep the check-in from stalling on a ticket with many/large files; any
+    file beyond the caps is listed by name with a "say download <name>" hint.
+    """
+
+    max_related_files: int = 5
+    max_related_file_bytes: int = 2_000_000
+    max_related_total_bytes: int = 8_000_000
+
+
+@dataclass(frozen=True)
 class FaConfig:
     """Failure-analysis session integrations (ADR 0010)."""
 
@@ -95,6 +110,7 @@ class FaConfig:
     radar: FaRadarConfig = field(default_factory=FaRadarConfig)
     flames: FaFlamesConfig = field(default_factory=FaFlamesConfig)
     report: FaReportConfig = field(default_factory=FaReportConfig)
+    checkin: FaCheckinConfig = field(default_factory=FaCheckinConfig)
 
 
 @dataclass(frozen=True)
@@ -569,6 +585,7 @@ def load_config(
     fa_radar = fa_raw.get("radar", {}) or {}
     fa_flames = fa_raw.get("flames", {}) or {}
     fa_report = fa_raw.get("report", {}) or {}
+    fa_checkin = fa_raw.get("checkin", {}) or {}
     agents_raw = raw.get("agents", {}) or {}
     project_aliases_raw = data_layout.get("project_aliases") or {}
     if not isinstance(project_aliases_raw, dict):
@@ -731,6 +748,15 @@ def load_config(
             report=FaReportConfig(
                 template_path=str(
                     fa_report.get("template_path", "assets/templates/fa/one_page.key")
+                ),
+            ),
+            checkin=FaCheckinConfig(
+                max_related_files=int(fa_checkin.get("max_related_files", 5)),
+                max_related_file_bytes=int(
+                    fa_checkin.get("max_related_file_bytes", 2_000_000)
+                ),
+                max_related_total_bytes=int(
+                    fa_checkin.get("max_related_total_bytes", 8_000_000)
                 ),
             ),
         ),

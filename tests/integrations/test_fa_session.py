@@ -210,8 +210,11 @@ def test_diagnosis_requires_confirm(repo_root: Path, tmp_path: Path) -> None:
 
 
 def test_generate_fa_summary_download_url(
-    repo_root: Path, tmp_path: Path
+    repo_root: Path, tmp_path: Path, monkeypatch
 ) -> None:
+    from ee_wiki.integrations import factory as factory_mod
+    from ee_wiki.integrations.report.keynote import StubKeynoteFaReportBackend
+
     config = load_config(repo_root=repo_root)
     config = replace(
         config,
@@ -219,6 +222,13 @@ def test_generate_fa_summary_download_url(
         api=replace(config.api, public_base_url="http://ee-wiki.test:8080"),
     )
 
+    def _backend(cfg):
+        return StubKeynoteFaReportBackend(
+            exports_dir=cfg.exports_dir,
+            force_text_fallback=True,
+        )
+
+    monkeypatch.setattr(factory_mod, "build_fa_report_backend", _backend)
     report, url = generate_fa_summary(
         config,
         "5556677",
@@ -226,6 +236,7 @@ def test_generate_fa_summary_download_url(
         build="p1",
         fail_items=("VDD_CORE OOR",),
         steps=("X-ray OK", "T/A pending"),
+        conclusion="Ticket state: Analyze. Latest diagnosis: T/A pending",
     )
 
     assert report.output_path.is_file()

@@ -14,13 +14,17 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ee_wiki.api.scope_marker import parse_scope_marker
+from ee_wiki.api.scope_marker import CarriedScope, parse_scope_marker
 from ee_wiki.common.config import AppConfig
+from ee_wiki.common.logging import get_logger
 from ee_wiki.integrations.fa_chat import (
     fa_session_radar_id_from_history,
     parse_fa_checkin_radar_id,
 )
+from ee_wiki.integrations.scope import resolve_scope_from_problem
 from ee_wiki.retrieval.rewrite import ConversationTurn
+
+logger = get_logger(__name__)
 
 _BOUND_HEADER = re.compile(
     r"##\s*FA check-in\s*[—-]\s*rdar://(\d{5,})", re.IGNORECASE
@@ -96,6 +100,116 @@ def _parse_unbound_symptom(content: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+def _norm_scope_value(value: str | None) -> str | None:
+    """Normalize a parsed scope token: strip backticks, `?`/`-`/none -> None."""
+    if value is None:
+        return None
+    cleaned = value.strip().strip("`").strip()
+    if not cleaned or cleaned.lower() in _NONE_TOKENS or cleaned == "?":
+        return None
+    return cleaned
+
+
+def _parse_scope_line(
+    content: str,
+) -> tuple[str | None, str | None, str | None]:
+    """Parse the structural ``**EE-Wiki scope:** ...`` line from check-in markdown.
+
+    Unlike :func:`_parse_unbound_scope` (which feeds the unbound header), this
+    also strips the backtick-wrapped display values the check-in emits
+    (``product=`logan` ``) and treats ``?`` as a missing axis.
+    """
+    match = _SCOPE_LINE.search(content)
+    if not match:
+        return None, None, None
+    return (
+        _norm_scope_value(match.group("product")),
+        _norm_scope_value(match.group("project")),
+        _norm_scope_value(match.group("build")),
+    )
+
+
+def _fill_scope_from_radar(
+    product: str | None,
+    project: str | None,
+    build: str | None,
+    *,
+    config: AppConfig,
+    radar_id: str,
+) -> tuple[str | None, str | None, str | None]:
+    """Fill still-missing scope axes from the Radar component.
+
+    Uses the same deterministic alias mapping as ``start_fa_checkin``
+    (``resolve_scope_from_problem``). Placeholder tokens (``?`` / ``-`` / none)
+    are normalized to ``None`` so they don't block the component fill. Only
+    missing axes are adopted; existing axes are preserved. No NL re-inference.
+    """
+    u_product = _norm_scope_value(product)
+    u_project = _norm_scope_value(project)
+    u_build = _norm_scope_value(build)
+    try:
+        from ee_wiki.integrations.factory import build_radar_backend
+
+        problem = build_radar_backend(config).get_problem(radar_id)
+    except Exception:
+        logger.warning(
+            "Radar get_problem failed (bound scope restore) radar=%s",
+            radar_id,
+            exc_info=True,
+        )
+        return product, project, build
+    resolved = resolve_scope_from_problem(
+        problem,
+        project_aliases=config.data_layout.project_aliases,
+        user_product=u_product,
+        user_project=u_project,
+        user_build=u_build,
+    )
+    return (
+        product if _norm_scope_value(product) else (resolved.product or product),
+        project if _norm_scope_value(project) else (resolved.project or project),
+        build if _norm_scope_value(build) else (resolved.build or build),
+    )
+
+
+def _restore_bound_scope(
+    product: str | None,
+    project: str | None,
+    build: str | None,
+    *,
+    last_assistant: str | None,
+    carried: CarriedScope | None,
+    config: AppConfig,
+    radar_id: str,
+) -> tuple[str | None, str | None, str | None]:
+    """Restore bound-session scope for a follow-up turn (ADR 0012 §6).
+
+    Priority (each source only fills axes still missing):
+      1. caller TurnScope (passed in; already locked at chat entry)
+      2. history FA check-in ``**EE-Wiki scope:**`` line (structural)
+      3. ``<!-- ee-wiki-scope: -->`` marker
+      4. Radar component via ``resolve_scope_from_problem``
+    """
+    # 1) caller scope is already in product/project/build.
+    # 2) history check-in scope line.
+    if last_assistant is not None:
+        h_product, h_project, h_build = _parse_scope_line(last_assistant)
+        product = product or h_product
+        project = project or h_project
+        build = build or h_build
+    # 3) marker.
+    if carried is not None:
+        product = product or carried.product
+        project = project or carried.project
+        build = build or carried.build
+    # 4) Radar component (only when an axis is still missing).
+    if (product is None or project is None or build is None) and radar_id:
+        product, project, build = _fill_scope_from_radar(
+            product, project, build, config=config, radar_id=radar_id
+        )
+    return product, project, build
+
+
 def ensure_fa_session(
     question: str,
     history: Sequence[ConversationTurn] | None,
@@ -126,7 +240,33 @@ def ensure_fa_session(
     """
     _ = ctx  # retained for call-site compatibility / future DialogScope
     rid_from_history = fa_session_radar_id_from_history(history)
+    last_assistant = _last_assistant_content(history)
+    # Cross-turn scope carry (ADR 0012 §6): recover the locked (product,
+    # project, build) from the hidden `<!-- ee-wiki-scope: -->` marker embedded
+    # in a prior assistant reply. Open WebUI's OpenAI-compatible endpoint omits
+    # `conversation_id`, so this marker in `history` is the only carry vehicle.
+    # Gated by `carry_scope_across_turns` so it can never bypass the opt-out.
+    carried = (
+        parse_scope_marker(list(history))
+        if (config.api.carry_scope_across_turns and history)
+        else None
+    )
+
     if rid_from_history:
+        # Bound session: restore scope for follow-up turns. Caller TurnScope
+        # wins; gaps are filled from the history FA check-in scope line, then
+        # the ee-wiki-scope marker, then the Radar component (same deterministic
+        # alias mapping start_fa_checkin uses — NOT a second NL inference,
+        # ADR 0012 §6). This is what lets bound "建议/追模块" turns actually run
+        # scope-required tools (query_schematic / trace_net) instead of being
+        # skipped for missing scope.
+        product, project, build = _restore_bound_scope(
+            product, project, build,
+            last_assistant=last_assistant,
+            carried=carried,
+            config=config,
+            radar_id=rid_from_history,
+        )
         return FaSession(
             case_id=rid_from_history,
             radar_id=rid_from_history,
@@ -137,18 +277,6 @@ def ensure_fa_session(
         )
 
     new_rid = parse_fa_checkin_radar_id(question)
-    last_assistant = _last_assistant_content(history)
-
-    # Cross-turn scope carry (ADR 0012 §6): recover the locked (product,
-    # project, build) from the hidden `<!-- ee-wiki-scope: -->` marker embedded
-    # in a prior assistant reply. Open WebUI's OpenAI-compatible endpoint omits
-    # `conversation_id`, so this marker in `history` is the only carry vehicle.
-    # It is the *lowest-priority* source: the caller's TurnScope-locked scope
-    # wins, and the prior FA header (below) wins over the marker. Gated by
-    # `carry_scope_across_turns` so it can never bypass the opt-out.
-    carried = None
-    if config.api.carry_scope_across_turns and history:
-        carried = parse_scope_marker(list(history))
 
     if last_assistant is not None and _UNBOUND_HEADER.search(last_assistant):
         s_product, s_project, s_build = _parse_unbound_scope(last_assistant)

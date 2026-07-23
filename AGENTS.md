@@ -53,6 +53,7 @@ If a change crosses these lines, stop and propose an ADR instead of merging logi
 | Designator / voltage **shapes** once a token is known | Judging log/doc lines as PASS vs FAIL / failure-mode semantics |
 | Markdown / citation / figure structural parse | FA turn verbs (“开案”, “下一步”, “下载 vs 看内容”) as the sole router |
 | Config-driven scope **alias** string match (after TurnScope lock) | Keyword lists that preempt an existing LLM classifier |
+| Attachment file-name/extension + `kind` tokenizing for inventory/routing | **Which** attachments are strong-related evidence at FA check-in (NG/FAIL/ext filename gate) — that is LLM (`prompts/fa/checkin_background.md` → `RELATED_FILES`; ADR 0013 §5) |
 
 Repo scale (audit snapshot): ~100+ `re.compile` / `re.search` sites; **~8 groups / ~14 sites** are semantic and must migrate to LLM + `prompts/`. Do not add new semantic regex gates.
 
@@ -66,7 +67,8 @@ Migrate in this order unless an ADR says otherwise. Prefer structured LLM lines 
 | **1** | `agents/fa_mode.py` — `_WIKI_CONNECTIVITY`, `_FA_FAILURE_CUES` | FA vs Wiki before `classify_fa_mode` | Preempts existing LLM gate; wiki trace ↔ FA misroute | Keep structural fast path only (`rdar://`, own FA headers); ambiguous → `classify_fa_mode` alone |
 | **2** | `integrations/radar/attachments.py` — `_PASS_LINE`, `_FAIL_LINE` | Line PASS/FAIL | Non-literal / Chinese / “erase ok but verify not FF” miss | LLM line verdict + summary for “分析 log” |
 | **2** | `integrations/radar/attachments.py` — `_DOWNLOAD_INTENT`, `_CONTENT_INTENT` | Download vs read-content | Phrase drift | LLM FA action / slot classify |
-| **2** | `integrations/fa_chat.py` — `_CHECKIN_VERB`, `_EVIDENCE_MARKERS`, `_ATTACHMENT_LINE`, `_ABOUT_DIAGNOSIS_STEPS`, inline log/证据/下一步 | FA turn routing | Synonym miss | LLM `KIND:` for FA turns (already partially started) |
+| **2** | `integrations/fa_chat.py` — `_CHECKIN_VERB`, `_EVIDENCE_MARKERS`, `_ATTACHMENT_LINE`, inline log/证据/下一步 | FA turn routing | Synonym miss | LLM `KIND:` for FA turns (already partially started) |
+| **2** | `integrations/fa_chat.py` — `_ABOUT_DIAGNOSIS_STEPS` | Verbatim-router for "步骤/列出" (returned full diagnosis before LLM) | "简要总结" returned full verbatim | **MIGRATED 2026-07-22**: now a structural pre-filter only; list/summarize/latest decided by LLM `classify_diagnosis_intent` (`prompts/fa/diagnosis_intent.md`) + `summarize_radar_diagnosis`; fallback to deterministic verbatim list. See ADR 0013 §Migrated. |
 | **3** | `retrieval/query_intent.py` — `is_board_interface_pin_query` | Board pin vs datasheet pin | Keyword drift; “pin” in datasheet Q | LLM `query_kind` |
 | **3** | `agents/clarify.py` — `_VAGUE` / `needs_vague_clarify` | Underspecified utterance | “帮我看看这个”+attachment false vague | LLM + history: enough info? |
 | **3** | `retrieval/index_inventory.py` — project/build count patterns | Inventory questions | Paraphrase miss | LLM `inventory{build\|project}` |

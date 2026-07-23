@@ -80,6 +80,19 @@ Altium) may ground an answer-grade trace.
   `DEFAULT_AUTHORITATIVE_EVIDENCE = {"cad_netlist"}`; `config/default.yaml`
   `authoritative_evidence` lists only `cad_netlist`.
 
+### 5. Check-in attachment relevance = semantic → LLM (2026-07-22)
+
+FA check-in reads the Radar face first (title → description → diagnosis) and
+lets the LLM pick **which** attachments are strong-related evidence
+(`prompts/fa/checkin_background.md` → `RELATED_FILES`). This is semantic and
+MUST NOT be an NG/FAIL/extension filename regex gate. Structural tokens stay
+regex: parsing the attachment file-name/extension for the inventory
+(`attachment_type_label`), routing picture-vs-attachment download by `kind`,
+and scanning an already-selected log body for FAIL lines (`extract_fail_lines`,
+same acknowledged `_FAIL_LINE` debt as row 2 below). Selecting the file is the
+LLM's job; tokenizing its name/lines is structural. Flames is the lowest
+fallback, only when the face + selected attachments are empty.
+
 ## Recommended (planned work — keep here, do not promote to hard rules yet)
 
 Migrate semantic regex sites to LLM + `prompts/`, in this order, each with golden
@@ -101,6 +114,23 @@ each site; reviewer: human lab.
 TurnScope hardening (Decisions 1–2) is **already implemented** at the chat entry;
 the remaining action is a regression guard test (see Testing) plus keeping the
 contract explicit as code evolves.
+
+### Migrated (done — 2026-07-22)
+
+- **`integrations/fa_chat.py` — `_ABOUT_DIAGNOSIS_STEPS`** (P2 FA turn routing):
+  was a verbatim-router that matched "步骤/FA\s*步骤/列出/…" and returned the
+  full `format_radar_diagnosis_steps(include_history=True)` **before** any LLM
+  summarization — so "简要总结当前的 FA 步骤" returned the full verbatim text.
+  Now it is a **structural pre-filter only** (does the question touch diagnosis
+  steps at all?). The actual list/summarize/latest decision is made by the LLM
+  classifier `classify_diagnosis_intent` (`prompts/fa/diagnosis_intent.md`,
+  structured `KIND:`), added in `generation/classify.py`. New
+  `summarize_radar_diagnosis` (`prompts/fa/summarize_diagnosis.md`) produces a
+  3–5 bullet 已完成/待做 recap; `format_latest_diagnosis_action` returns only
+  the newest entry. Unrecognized / LLM-unavailable → safe fallback to the
+  deterministic verbatim list (precision over latency). Regression:
+  `tests/integrations/test_fa_diagnosis_intent.py`.
+
 
 ## Testing (gold-sample requirement)
 

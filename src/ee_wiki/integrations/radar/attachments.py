@@ -6,6 +6,11 @@ import re
 from pathlib import Path
 from urllib.parse import quote
 
+from ee_wiki.api.stream_status import (
+    FA_ATTACHMENT_ANALYZE_STATUS,
+    FA_DOWNLOAD_STATUS,
+)
+from ee_wiki.api.stream_status_context import push_stream_status
 from ee_wiki.common.config import AppConfig
 from ee_wiki.common.errors import IntegrationError
 from ee_wiki.common.logging import get_logger
@@ -38,10 +43,33 @@ _CONTENT_INTENT = re.compile(
 _PASS_LINE = re.compile(r"\bPASS\b|:\s*PASS\b|PASS:", re.IGNORECASE)
 _FAIL_LINE = re.compile(r"\bFAIL\b|:\s*FAIL\b|FAIL:|\bERROR\b", re.IGNORECASE)
 
+# Inventory intent: "有哪些附件 / 附件列表 / 有哪些文件 / 几个附件" and the
+# explicit "调用 radar 工具". Structural-only (ADR 0013: regex = structural
+# tokens, no semantic classification). Must stay narrow so it never swallows a
+# diagnosis / log-content / download question — those keep their own paths.
+_ABOUT_ATTACHMENT_INVENTORY = re.compile(
+    r"(?:有哪些附件|附件有哪些|附件列表|列出附件|附件清单|"
+    r"有哪些文件|文件清单|几个附件|几个文件|"
+    r"attachment list|list (?:the )?attachments|"
+    r"what (?:attachments|files) (?:are )?(?:there|listed)|"
+    r"调用\s*(?:radar|雷达)\s*工具)",
+    re.IGNORECASE,
+)
+
 
 def wants_attachment_download(question: str) -> bool:
     """Return whether the user is asking to download / open attachment bytes."""
     return bool(_DOWNLOAD_INTENT.search(question.strip()))
+
+
+def wants_attachment_inventory(question: str) -> bool:
+    """Return whether the user wants the full attachment inventory (no bytes).
+
+    "有哪些附件" / "调用 radar 工具" hit here — routed to the deterministic
+    ``format_attachment_inventory_markdown`` (never the LLM) so the count is
+    exact and we never claim "no log" when logs are listed.
+    """
+    return bool(_ABOUT_ATTACHMENT_INVENTORY.search(question.strip()))
 
 
 def wants_attachment_content(question: str) -> bool:
@@ -58,7 +86,8 @@ def wants_attachment_content(question: str) -> bool:
     # word-char class open, so ``.log吗`` would fail a ``\b`` check.
     if re.search(r"\.(?:log|txt|csv|json)(?![A-Za-z0-9_])", q, re.IGNORECASE):
         return True
-    if re.search(r"(?:附件|attachment|日志|(?<![A-Za-z0-9_])log(?![A-Za-z0-9_]))", q, re.IGNORECASE):
+    log_word = r"(?:附件|attachment|日志|(?<![A-Za-z0-9_])log(?![A-Za-z0-9_]))"
+    if re.search(log_word, q, re.IGNORECASE):
         return True
     return False
 
@@ -107,12 +136,101 @@ def resolve_requested_attachments(
     return []
 
 
+_TYPE_BY_EXT = {
+    "log": "Log",
+    "txt": "Text",
+    "csv": "CSV",
+    "json": "JSON",
+    "rtf": "RTF log",
+    "zip": "Archive",
+    "tar": "Archive",
+    "gz": "Archive",
+    "axl": "AXI scan",
+    "axi": "AXI scan",
+    "png": "Image",
+    "jpg": "Image",
+    "jpeg": "Image",
+    "gif": "Image",
+    "bmp": "Image",
+    "tiff": "Image",
+    "pdf": "PDF",
+    "xlsx": "Spreadsheet",
+    "xls": "Spreadsheet",
+    "key": "Keynote",
+    "pptx": "Slide deck",
+    "docx": "Document",
+}
+
+
+def attachment_type_label(file_name: str) -> str:
+    """Human-readable type for an attachment derived from its extension."""
+    ext = Path(file_name).suffix.lower().lstrip(".")
+    return _TYPE_BY_EXT.get(ext, "File")
+
+
+def cached_attachment_path(
+    config: AppConfig,
+    radar_id: str,
+    file_name: str,
+) -> Path | None:
+    """Return the cached path if ``file_name`` is already materialized.
+
+    This is a *read-only* check — it never downloads. Used by the check-in
+    inventory to report cached vs pending without triggering a fetch (the
+    whole point of fixing the eager-download stall in Problem 1).
+    """
+    rid = normalize_radar_id(radar_id)
+    rel = f"fa/{rid}/attachments/{Path(file_name).name}"
+    dest = config.cache_dir / rel
+    if dest.is_file() and dest.stat().st_size > 0:
+        return dest
+    return None
+
+
+def summarize_attachment_inventory(
+    config: AppConfig,
+    problem: RadarProblem,
+) -> tuple[list[dict], int, int]:
+    """List attachments with type / kind / cached status *without* downloading.
+
+    Returns:
+        ``(entries, total, cached_count)`` where each entry is a dict with
+        keys ``name``, ``type``, ``kind``, ``cached``. Intended for the FA
+        check-in reply so the user sees what is available and what is already
+        on disk, without the backend pulling every file up front.
+    """
+    entries: list[dict] = []
+    cached = 0
+    for att in problem.attachments:
+        if not att.file_name:
+            continue
+        is_cached = cached_attachment_path(config, problem.radar_id, att.file_name) is not None
+        if is_cached:
+            cached += 1
+        entries.append(
+            {
+                "name": att.file_name,
+                "type": attachment_type_label(att.file_name),
+                "kind": att.kind or "attachment",
+                "cached": is_cached,
+            }
+        )
+    return entries, len(entries), cached
+
+
 def materialize_attachment(
     config: AppConfig,
     radar_id: str,
     file_name: str,
+    *,
+    kind: str | None = None,
 ) -> tuple[Path, str, str]:
     """Ensure ``file_name`` exists under FA cache and return path + public URL.
+
+    ``kind`` should be ``"picture"`` for image attachments (``.png`` etc.) so
+    the download routes through the Radar *pictures* collection instead of
+    ``attachments`` — ``download_attachment`` cannot see pictures and would
+    raise "not found".
 
     Returns:
         ``(absolute_path, relative_cache_path, public_url)``.
@@ -128,11 +246,72 @@ def materialize_attachment(
         url = public_url(config, f"/v1/cache/{quote(rel, safe='/')}")
         return dest, rel, url
 
-    radar.download_attachment(rid, safe_name, dest_path=dest)
+    if (kind or "attachment") == "picture":
+        radar.download_picture(rid, safe_name, dest_path=dest)
+    else:
+        radar.download_attachment(rid, safe_name, dest_path=dest)
 
     url = public_url(config, f"/v1/cache/{quote(rel, safe='/')}")
     logger.info("Radar attachment ready rdar://%s -> %s", rid, dest)
     return dest, rel, url
+
+
+def materialize_named_attachments(
+    config: AppConfig,
+    radar_id: str,
+    names: list[str],
+    *,
+    kind_by_name: dict[str, str] | None = None,
+) -> tuple[list[tuple[str, Path, str, str]], list[tuple[str, str]]]:
+    """Materialize ``names`` on demand, emitting download progress when bound.
+
+    Skips files that are already cached. When a streaming status hub is active
+    (see ``stream_status_context``), emits ``FA_DOWNLOAD_STATUS`` before each
+    fetch that would hit Radar.
+
+    Returns:
+        ``(successes, failures)`` where successes are
+        ``(file_name, path, rel_cache_path, public_url)`` and failures are
+        ``(file_name, user_facing_note)``.
+    """
+    rid = normalize_radar_id(radar_id)
+    kinds = kind_by_name or {}
+    successes: list[tuple[str, Path, str, str]] = []
+    failures: list[tuple[str, str]] = []
+    pending = [
+        n
+        for n in names
+        if n and cached_attachment_path(config, rid, n) is None
+    ]
+    total = len(pending)
+    done = 0
+    for name in names:
+        if not name:
+            continue
+        if cached_attachment_path(config, rid, name) is None:
+            done += 1
+            if total:
+                push_stream_status(
+                    FA_DOWNLOAD_STATUS.format(done=done, total=total)
+                )
+        try:
+            path, rel, url = materialize_attachment(
+                config,
+                rid,
+                name,
+                kind=kinds.get(name, "attachment"),
+            )
+            successes.append((name, path, rel, url))
+        except IntegrationError as exc:
+            note = format_fa_error(exc, context="attachment", style="inline")
+            failures.append((name, note))
+            logger.warning(
+                "Skip attachment materialize rdar://%s name=%s",
+                rid,
+                name,
+                exc_info=True,
+            )
+    return successes, failures
 
 
 def _resolve_attachment_targets(
@@ -174,6 +353,24 @@ def read_attachment_text(path: Path, *, max_chars: int = _CONTENT_PREVIEW_CHARS)
             f"full file is {len(raw)} bytes on disk] …\n"
         )
     return text
+
+
+def extract_fail_lines(text: str, *, limit: int = 8) -> list[str]:
+    """Return up to ``limit`` FAIL/ERROR-like lines from log text.
+
+    Structural line scan (same ``_FAIL_LINE`` token as ``summarize_log_text``)
+    used only to surface concrete evidence lines from an attachment body the
+    LLM already selected as strong-related — it does NOT decide *which* file is
+    relevant (that is the LLM's job, ADR 0013).
+    """
+    hits: list[str] = []
+    for ln in text.splitlines():
+        stripped = ln.strip()
+        if stripped and _FAIL_LINE.search(stripped):
+            hits.append(stripped[:200])
+            if len(hits) >= limit:
+                break
+    return hits
 
 
 def summarize_log_text(text: str, *, file_name: str) -> list[str]:
@@ -224,13 +421,14 @@ def format_attachment_download_markdown(
         return "\n".join(lines) + "\n"
 
     lines.append("")
-    for name in targets:
-        try:
-            _path, _rel, url = materialize_attachment(config, rid, name)
-            lines.append(f"- [`{name}`]({url})")
-        except IntegrationError as exc:
-            note = format_fa_error(exc, context="attachment", style="inline")
-            lines.append(f"- `{name}` — 下载失败：{note}")
+    kind_by_name = {a.file_name: (a.kind or "attachment") for a in available}
+    materialized, failed = materialize_named_attachments(
+        config, rid, targets, kind_by_name=kind_by_name
+    )
+    for name, _path, _rel, url in materialized:
+        lines.append(f"- [`{name}`]({url})")
+    for name, note in failed:
+        lines.append(f"- `{name}` — 下载失败：{note}")
 
     if config.fa.radar.backend == "stub":
         lines.extend(
@@ -240,6 +438,54 @@ def format_attachment_download_markdown(
                 "Radar 二进制。切 `fa.radar.backend: radarclient` 后下载真附件。_",
             ]
         )
+    return "\n".join(lines) + "\n"
+
+
+def format_attachment_inventory_markdown(
+    config: AppConfig,
+    radar_id: str,
+) -> str:
+    """Deterministic list of every Radar attachment (incl. pictures).
+
+    Enumerates ``problem.attachments`` — pictures are merged in with
+    ``kind="picture"`` — and never downloads bytes (Problem 1: on-demand only).
+    Cached files get a clickable ``/v1/cache/…`` link; pending ones are marked
+    so the user knows to say "下载 <名>". This is the authoritative answer for
+    "有哪些附件" / "调用 radar 工具" and must never claim "no log" when logs
+    are listed.
+    """
+    rid = normalize_radar_id(radar_id)
+    problem = build_radar_backend(config).get_problem(rid)
+    available = list(problem.attachments)
+    entries, total, cached = summarize_attachment_inventory(config, problem)
+
+    lines = [
+        f"## FA check-in — rdar://{rid}",
+        "",
+        f"### Radar attachments（共 {total} 个）",
+        "",
+    ]
+    if not available:
+        lines.append("_这张 Radar 没有列出任何附件。_")
+        return "\n".join(lines) + "\n"
+
+    for entry in entries:
+        name = entry["name"]
+        kind_tag = "图片" if entry["kind"] == "picture" else "附件"
+        if entry["cached"]:
+            rel = f"fa/{rid}/attachments/{Path(name).name}"
+            url = public_url(config, f"/v1/cache/{quote(rel, safe='/')}")
+            lines.append(
+                f"- [`{name}`]({url}) — {entry['type']} · {kind_tag} · 已缓存"
+            )
+        else:
+            lines.append(
+                f"- `{name}` — {entry['type']} · {kind_tag} · 待下载"
+            )
+    lines.append("")
+    lines.append(
+        f"> 已缓存 {cached} / {total} 个；未缓存的说「下载 <文件名>」即可按需取回。"
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -270,15 +516,27 @@ def format_attachment_content_markdown(
     if not targets:
         return "\n".join(lines) + "\n"
 
+    push_stream_status(FA_ATTACHMENT_ANALYZE_STATUS)
+    kind_by_name = {
+        a.file_name: (a.kind or "attachment") for a in available if a.file_name
+    }
+    materialized, failed = materialize_named_attachments(
+        config, rid, targets, kind_by_name=kind_by_name
+    )
+    by_name = {name: (path, rel, url) for name, path, rel, url in materialized}
+    fail_by_name = dict(failed)
+
     for name in targets:
         lines.append("")
-        try:
-            path, _rel, url = materialize_attachment(config, rid, name)
-        except IntegrationError as exc:
-            note = format_fa_error(exc, context="attachment", style="inline")
+        if name in fail_by_name:
             lines.append(f"#### `{name}`")
-            lines.append(f"读取失败：{note}")
+            lines.append(f"读取失败：{fail_by_name[name]}")
             continue
+        if name not in by_name:
+            lines.append(f"#### `{name}`")
+            lines.append("读取失败：附件未物化")
+            continue
+        path, _rel, url = by_name[name]
 
         text = read_attachment_text(path)
         lines.extend(summarize_log_text(text, file_name=name))
@@ -302,36 +560,3 @@ def format_attachment_content_markdown(
             ]
         )
     return "\n".join(lines) + "\n"
-
-
-def materialize_all_attachment_links(
-    config: AppConfig,
-    problem: RadarProblem,
-) -> tuple[list[tuple[str, str]], list[str]]:
-    """Materialize every attachment.
-
-    Returns:
-        A pair ``(links, failed)`` where ``links`` is a list of
-        ``(file_name, public_url)`` pairs and ``failed`` is the list of
-        attachment file names that could not be materialized (so the caller
-        can surface a friendly note instead of silently dropping them).
-    """
-    out: list[tuple[str, str]] = []
-    failed: list[str] = []
-    for att in problem.attachments:
-        if not att.file_name:
-            continue
-        try:
-            _path, _rel, url = materialize_attachment(
-                config, problem.radar_id, att.file_name
-            )
-            out.append((att.file_name, url))
-        except IntegrationError:
-            logger.warning(
-                "Skip attachment materialize rdar://%s name=%s",
-                problem.radar_id,
-                att.file_name,
-                exc_info=True,
-            )
-            failed.append(att.file_name)
-    return out, failed

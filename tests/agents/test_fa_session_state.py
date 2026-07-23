@@ -413,3 +413,127 @@ def test_restore_unbound_from_wiki_marker(repo_root: Path) -> None:
     assert session.product == "ipad"
     assert session.project == "logan"
     assert session.build == "p1"
+
+
+# ── Bound scope restore from Radar component (Problem 3, Phase 0) ──────────
+
+
+def test_fa_session_bound_restores_scope_from_radar(repo_root: Path) -> None:
+    """A bound follow-up whose history has a check-in header but NO
+    `**EE-Wiki scope:**` line and NO `<!-- ee-wiki-scope: -->` marker must
+    restore product/project/build from the Radar component via
+    `resolve_scope_from_problem` (priority 4, ADR 0012 §6). This is what lets
+    bound "建议/追模块" turns run scope-required tools instead of being skipped.
+
+    `ensure_fa_session` must NOT call NL scope inference (ADR 0013) — only the
+    deterministic alias mapping `start_fa_checkin` uses. Both inference entry
+    points are asserted untouched.
+    """
+    config = _config(repo_root)
+    from unittest.mock import MagicMock
+
+    from ee_wiki.integrations.scope import ScopeResolution
+
+    history = [
+        ConversationTurn(
+            role="assistant",
+            content=(
+                "## FA check-in — rdar://182787079\n\n"
+                "### Fail items\n- flash erase incomplete\n"
+            ),
+        ),
+    ]
+
+    fake_problem = MagicMock(name="RadarProblem")
+    with (
+        patch(
+            "ee_wiki.integrations.factory.build_radar_backend"
+        ) as m_backend,
+        patch(
+            "ee_wiki.agents.fa_session.resolve_scope_from_problem"
+        ) as m_resolve,
+        patch(
+            "ee_wiki.retrieval.scope_from_question.merge_scope_from_question"
+        ) as m_merge,
+        patch("ee_wiki.retrieval.scope_extract.extract_scope_rules") as m_extract,
+    ):
+        m_backend.return_value.get_problem.return_value = fake_problem
+        m_resolve.return_value = ScopeResolution(
+            product="iphone",
+            project="logan",
+            build="p1",
+            source="component",
+            confidence="high",
+        )
+        session = ensure_fa_session(
+            "你有没有额外的建议动作？",
+            history=history,
+            product=None,
+            project=None,
+            build=None,
+            config=config,
+        )
+        # Radar backend was consulted to fetch the problem.
+        m_backend.return_value.get_problem.assert_called_once_with("182787079")
+        # Deterministic alias mapping ran (NOT NL inference).
+        m_resolve.assert_called_once()
+        assert m_merge.call_count == 0
+        assert m_extract.call_count == 0
+
+    assert session.bound is True
+    assert session.radar_id == "182787079"
+    assert session.product == "iphone"
+    assert session.project == "logan"
+    assert session.build == "p1"
+
+
+def test_fa_session_bound_scope_caller_wins_over_radar(repo_root: Path) -> None:
+    """Caller TurnScope still wins (priority 1). Even though the Radar
+    component resolves to iphone/logan/p1, an explicit caller product must be
+    preserved and never overwritten by the Radar restore."""
+    config = _config(repo_root)
+    from unittest.mock import MagicMock
+
+    from ee_wiki.integrations.scope import ScopeResolution
+
+    history = [
+        ConversationTurn(
+            role="assistant",
+            content=(
+                "## FA check-in — rdar://182787079\n\n"
+                "### Fail items\n- flash erase incomplete\n"
+            ),
+        ),
+    ]
+    fake_problem = MagicMock(name="RadarProblem")
+    with (
+        patch(
+            "ee_wiki.integrations.factory.build_radar_backend"
+        ) as m_backend,
+        patch(
+            "ee_wiki.agents.fa_session.resolve_scope_from_problem"
+        ) as m_resolve,
+    ):
+        m_backend.return_value.get_problem.return_value = fake_problem
+        m_resolve.return_value = ScopeResolution(
+            product="iphone",
+            project="logan",
+            build="p1",
+            source="component",
+            confidence="high",
+        )
+        session = ensure_fa_session(
+            "你有没有额外的建议动作？",
+            history=history,
+            product="ipad",  # caller locked at chat entry
+            project="logan",
+            build="p1",
+            config=config,
+        )
+        # Radar backend NOT consulted — all axes already supplied by caller.
+        m_backend.return_value.get_problem.assert_not_called()
+        m_resolve.assert_not_called()
+
+    assert session.product == "ipad"
+    assert session.project == "logan"
+    assert session.build == "p1"

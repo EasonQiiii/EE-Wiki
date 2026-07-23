@@ -24,7 +24,7 @@ from ee_wiki.integrations.radar.evidence import (
 )
 from ee_wiki.integrations.scope import ScopeResolution, resolve_scope_from_problem
 from ee_wiki.protocols.fa_report import FaReportRequest, FaReportResult
-from ee_wiki.protocols.flames import FailItemsResult, FlamesUnitRef
+from ee_wiki.protocols.flames import FailItem, FailItemsResult, FlamesUnitRef
 from ee_wiki.protocols.llm import LlmBackend
 from ee_wiki.protocols.radar import RadarProblem, RadarWriteResult
 
@@ -87,13 +87,22 @@ def start_fa_checkin(
     llm: LlmBackend | None = None,
     cancel_event: threading.Event | None = None,
 ) -> FaCheckinResult:
-    """Pull Radar + Flames (or Radar-text evidence, or ask for paste).
+    """Pull Radar face evidence first; fall back to Flames only if needed.
 
-    Evidence priority:
+    Evidence priority (field practice — ADR 0013):
 
-    1. Flames (live/stub/manual cache) when fail items are already available
-    2. Radar title → description → diagnosis (LLM extract; skip History rows)
-    3. Ask the user to paste a log / fail list
+    1. Radar **title** (most prominent symptom)
+    2. Radar **description** (station / DUT / configuration)
+    3. Radar **diagnosis** (FA notes; ``<Radar History>`` rows skipped)
+    4. LLM-selected **strong-related attachments** (downloaded on demand,
+       bounded by ``config.fa.checkin``; body text scanned for FAIL lines)
+    5. **Flames** — lowest fallback, only when 1–4 are insufficient
+    6. Ask the user to paste a log / fail list
+
+    Selecting *which* attachments are strong-related is semantic → LLM
+    (``prompts/fa/checkin_background.md``); there is no NG/FAIL filename
+    regex gate. When no LLM is available we degrade to caching the corpus +
+    listing the inventory (no batch download) and may ask the user to paste.
 
     Args:
         config: Loaded application configuration.
@@ -102,8 +111,8 @@ def start_fa_checkin(
         user_product: Optional scope override.
         user_project: Optional scope override.
         user_build: Optional scope override.
-        llm: Optional local LLM for Radar corpus → fail-item extraction.
-        cancel_event: Optional cancellation for the extract call.
+        llm: Optional local LLM for face read-through + fail extraction.
+        cancel_event: Optional cancellation for the LLM calls.
 
     Returns:
         Check-in result with fail items and downloadable log URLs.
@@ -120,64 +129,135 @@ def start_fa_checkin(
         user_build=user_build,
     )
     cache = fa_cache_dir(config.cache_dir, rid)
-    fails = flames.collect_fail_items(rid, serial=serial, cache_dir=cache)
 
-    if fails.fail_items and not fails.needs_user_input:
-        return _build_checkin_result(config, problem, scope, fails)
+    # (1–3) Read the Radar face (LLM) — the primary evidence tier.
+    background = None
+    if llm is not None and not (cancel_event and cancel_event.is_set()):
+        from ee_wiki.api.stream_status import FA_ANALYZE_STATUS
+        from ee_wiki.api.stream_status_context import push_stream_status
+        from ee_wiki.generation.fa_evidence import extract_checkin_background
 
-    radar_fails = _collect_radar_text_evidence(
+        push_stream_status(FA_ANALYZE_STATUS)
+        background = extract_checkin_background(
+            problem, llm=llm, repo_root=config.repo_root, cancel_event=cancel_event
+        )
+
+    # (4) Materialize only the LLM-selected strong-related attachments.
+    related = _materialize_related_evidence(
         config,
         problem,
-        cache_dir=cache,
-        serial=serial,
-        llm=llm,
+        background.related_files if background else (),
         cancel_event=cancel_event,
     )
-    if radar_fails is not None and radar_fails.fail_items:
-        return _build_checkin_result(config, problem, scope, radar_fails)
 
+    # Cache the face corpus (also written when no LLM, for the paste branch).
+    corpus_cache = _cache_radar_corpus(config, problem, cache)
+    radar_fails = None
+    if corpus_cache is not None:
+        radar_fails = _extract_radar_fail_items(
+            config,
+            corpus_cache[0],
+            corpus_cache[1],
+            problem,
+            serial=serial,
+            llm=llm,
+            cancel_event=cancel_event,
+        )
+
+    merged_items, cached_logs = _assemble_radar_fail_items(
+        radar_fails, background, related
+    )
+    if merged_items:
+        unit = (
+            radar_fails.unit
+            if radar_fails is not None
+            else FlamesUnitRef(
+                unit_id=f"radar-text-{rid}", serial=serial, radar_id=rid
+            )
+        )
+        fails = FailItemsResult(
+            unit=unit,
+            records=(),
+            fail_items=merged_items,
+            cached_logs=cached_logs,
+            source="radar",
+            needs_user_input=False,
+            user_prompt=None,
+        )
+        return _build_checkin_result(
+            config, problem, scope, fails, background=background, related=related
+        )
+
+    # (5) Flames — lowest priority; only reached when the face + attachments
+    # yielded nothing. A lab Flames may be empty (manual backend) → skip.
+    fails = flames.collect_fail_items(rid, serial=serial, cache_dir=cache)
+    if fails.fail_items and not fails.needs_user_input:
+        fails = _retag_result(fails, "flames")
+        return _build_checkin_result(
+            config, problem, scope, fails, background=background, related=related
+        )
+
+    # (6) Ask the user to paste evidence.
     prompt = (
         _RADAR_UNPARSED_PROMPT
         if radar_has_evidence_corpus(problem)
         else _NO_EVIDENCE_PROMPT
     )
-    if fails.needs_user_input or not fails.fail_items:
-        fails = FailItemsResult(
-            unit=fails.unit,
-            records=fails.records,
-            fail_items=fails.fail_items,
-            cached_logs=fails.cached_logs,
-            source=fails.source,
-            needs_user_input=True,
-            user_prompt=prompt,
+    extra_cached = tuple(
+        dict.fromkeys(
+            [*(fails.cached_logs), *cached_logs, *related.cached_rels()]
         )
-    return _build_checkin_result(config, problem, scope, fails)
+    )
+    fails = FailItemsResult(
+        unit=fails.unit,
+        records=fails.records,
+        fail_items=fails.fail_items,
+        cached_logs=extra_cached,
+        source=fails.source,
+        needs_user_input=True,
+        user_prompt=prompt,
+    )
+    return _build_checkin_result(
+        config, problem, scope, fails, background=background, related=related
+    )
 
 
-def _collect_radar_text_evidence(
+def _cache_radar_corpus(
     config: AppConfig,
     problem: RadarProblem,
-    *,
     cache_dir: Path,
-    serial: str | None,
-    llm: LlmBackend | None,
-    cancel_event: threading.Event | None,
-) -> FailItemsResult | None:
-    """Extract fail items from Radar title/description/diagnosis when possible."""
+) -> tuple[str, str] | None:
+    """Write the Radar face corpus to cache; return ``(corpus, rel_path)``.
+
+    Returns ``None`` when the face has no text. Written even when no LLM is
+    available so the paste branch can still reference ``radar_corpus.txt``.
+    """
     corpus = compose_radar_evidence_corpus(problem)
     if not corpus:
         return None
-
     cache_dir.mkdir(parents=True, exist_ok=True)
     corpus_path = cache_dir / "radar_corpus.txt"
     corpus_path.write_text(corpus, encoding="utf-8")
     rel = str(corpus_path.relative_to(config.cache_dir)).replace("\\", "/")
+    return corpus, rel
+
+
+def _extract_radar_fail_items(
+    config: AppConfig,
+    corpus: str,
+    corpus_rel: str,
+    problem: RadarProblem,
+    *,
+    serial: str | None,
+    llm: LlmBackend | None,
+    cancel_event: threading.Event | None,
+) -> FailItemsResult | None:
+    """Extract fail items from the cached Radar face corpus (LLM)."""
     unit = FlamesUnitRef(
         unit_id=f"radar-text-{problem.radar_id}",
         serial=serial,
         radar_id=problem.radar_id,
     )
-
     if llm is None:
         logger.info(
             "Radar corpus cached for %s but no LLM — cannot extract fail items",
@@ -195,25 +275,204 @@ def _collect_radar_text_evidence(
     )
     if items is None:
         return None
-    if not items:
-        return FailItemsResult(
-            unit=unit,
-            records=(),
-            fail_items=(),
-            cached_logs=(rel,),
-            source="radar",
-            needs_user_input=False,
-            user_prompt=None,
-        )
-
     return FailItemsResult(
         unit=unit,
         records=(),
         fail_items=tuple(items),
-        cached_logs=(rel,),
+        cached_logs=(corpus_rel,),
         source="radar",
         needs_user_input=False,
         user_prompt=None,
+    )
+
+
+@dataclass(frozen=True)
+class _RelatedFile:
+    """One LLM-selected strong-related attachment for a check-in."""
+
+    name: str
+    kind: str
+    status: str  # cached | image | over_count | over_size | failed
+    rel: str | None = None
+    url: str | None = None
+    text: str | None = None
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class _RelatedEvidence:
+    """Result of bounded materialization of strong-related attachments."""
+
+    files: tuple[_RelatedFile, ...] = ()
+
+    def cached_rels(self) -> list[str]:
+        """Return cache-relative paths of every materialized file."""
+        return [f.rel for f in self.files if f.rel]
+
+    def text_files(self) -> list[_RelatedFile]:
+        """Return materialized non-picture files that carry decoded text."""
+        return [f for f in self.files if f.text]
+
+
+def _materialize_related_evidence(
+    config: AppConfig,
+    problem: RadarProblem,
+    related_names: tuple[str, ...],
+    *,
+    cancel_event: threading.Event | None,
+) -> _RelatedEvidence:
+    """Download the LLM-selected strong-related attachments, bounded by caps.
+
+    Only names that exist in ``problem.attachments`` are fetched (the LLM step
+    already demoted unknown names to ``unresolved``). Count / per-file /
+    total byte caps from ``config.fa.checkin`` prevent a check-in stall; files
+    beyond a cap are recorded with ``status`` set but never downloaded. Picture
+    attachments are materialized for a link but not scanned as fail logs.
+    """
+    if not related_names:
+        return _RelatedEvidence()
+
+    from ee_wiki.integrations.fa_errors import format_fa_error
+    from ee_wiki.integrations.radar.attachments import (
+        materialize_attachment,
+        read_attachment_text,
+    )
+
+    caps = config.fa.checkin
+    meta_by_name = {
+        a.file_name: a for a in problem.attachments if a.file_name
+    }
+    files: list[_RelatedFile] = []
+    downloaded = 0
+    total_bytes = 0
+    for name in related_names:
+        meta = meta_by_name.get(name)
+        if meta is None:
+            continue
+        kind = meta.kind or "attachment"
+        if cancel_event and cancel_event.is_set():
+            break
+        if downloaded >= caps.max_related_files:
+            files.append(_RelatedFile(name, kind, status="over_count"))
+            continue
+        size = meta.file_size
+        if size is not None and size > caps.max_related_file_bytes:
+            files.append(_RelatedFile(name, kind, status="over_size"))
+            continue
+        if (
+            size is not None
+            and total_bytes + size > caps.max_related_total_bytes
+        ):
+            files.append(_RelatedFile(name, kind, status="over_size"))
+            continue
+        try:
+            path, rel, url = materialize_attachment(
+                config, problem.radar_id, name, kind=kind
+            )
+        except IntegrationError as exc:
+            note = format_fa_error(exc, context="attachment", style="inline")
+            files.append(_RelatedFile(name, kind, status="failed", note=note))
+            logger.warning(
+                "Skip related-evidence materialize rdar://%s name=%s",
+                problem.radar_id,
+                name,
+                exc_info=True,
+            )
+            continue
+        downloaded += 1
+        actual = path.stat().st_size if path.is_file() else 0
+        total_bytes += actual
+        if kind == "picture":
+            files.append(
+                _RelatedFile(name, kind, status="image", rel=rel, url=url)
+            )
+            continue
+        text = read_attachment_text(path)
+        files.append(
+            _RelatedFile(name, kind, status="cached", rel=rel, url=url, text=text)
+        )
+    return _RelatedEvidence(files=tuple(files))
+
+
+def _assemble_radar_fail_items(
+    radar_fails: FailItemsResult | None,
+    background,
+    related: _RelatedEvidence,
+) -> tuple[tuple[FailItem, ...], tuple[str, ...]]:
+    """Merge face-extracted fails + attachment FAIL lines + true-fail hint.
+
+    Returns ``(fail_items, cached_logs)`` with per-item ``source`` tags and a
+    de-duplicated cache path list (corpus + materialized related files).
+    """
+    from ee_wiki.integrations.radar.attachments import extract_fail_lines
+
+    items: list[FailItem] = []
+    cached: list[str] = []
+
+    if radar_fails is not None:
+        for it in radar_fails.fail_items:
+            items.append(_retag_item(it, "radar_text"))
+        cached.extend(radar_fails.cached_logs)
+
+    for rf in related.files:
+        if rf.rel:
+            cached.append(rf.rel)
+        if not rf.text:
+            continue
+        for line in extract_fail_lines(rf.text):
+            items.append(
+                FailItem(
+                    message=line,
+                    station=rf.name,
+                    log_rel_path=rf.rel,
+                    source="radar_attachment",
+                )
+            )
+
+    if not items and background is not None and background.true_fail_hint:
+        items.append(
+            FailItem(
+                message=background.true_fail_hint,
+                station="radar",
+                source="radar_title",
+            )
+        )
+
+    seen: set[str] = set()
+    deduped: list[FailItem] = []
+    for it in items:
+        key = it.message.strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(it)
+    cached_unique = tuple(dict.fromkeys(c for c in cached if c))
+    return tuple(deduped), cached_unique
+
+
+def _retag_item(item: FailItem, source: str) -> FailItem:
+    """Return ``item`` with ``source`` set when it is currently unset."""
+    if item.source:
+        return item
+    return FailItem(
+        message=item.message,
+        station=item.station,
+        record_id=item.record_id,
+        log_rel_path=item.log_rel_path,
+        line_no=item.line_no,
+        source=source,
+    )
+
+
+def _retag_result(fails: FailItemsResult, source: str) -> FailItemsResult:
+    """Return ``fails`` with every fail item's ``source`` tagged."""
+    return FailItemsResult(
+        unit=fails.unit,
+        records=fails.records,
+        fail_items=tuple(_retag_item(it, source) for it in fails.fail_items),
+        cached_logs=fails.cached_logs,
+        source=fails.source,
+        needs_user_input=fails.needs_user_input,
+        user_prompt=fails.user_prompt,
     )
 
 
@@ -281,11 +540,14 @@ def generate_fa_summary(
     product: str | None = None,
     project: str | None = None,
     build: str | None = None,
+    title: str | None = None,
+    state: str | None = None,
+    substate: str | None = None,
     fail_items: tuple[str, ...] = (),
     true_fail_notes: str | None = None,
     root_cause: str | None = None,
     steps: tuple[str, ...] = (),
-    title: str | None = None,
+    conclusion: str | None = None,
 ) -> tuple[FaReportResult, str]:
     """Generate Keynote FA summary and return result + download URL.
 
@@ -295,29 +557,33 @@ def generate_fa_summary(
         product: Optional product label for the template.
         project: Optional project label for the template.
         build: Optional build label.
+        title: Optional title override (Radar title).
+        state: Radar state.
+        substate: Radar substate.
         fail_items: Fail item strings.
         true_fail_notes: Human true-fail notes.
         root_cause: Root-cause text when known.
         steps: FA step summaries (often from Radar diagnosis).
-        title: Optional title override.
+        conclusion: Latest-status conclusion (Radar-sourced).
 
     Returns:
         Report result and browser download URL.
     """
     backend = build_fa_report_backend(config)
-    project_label = (
-        f"{product}/{project}" if product and project else project
-    )
     result = backend.generate(
         FaReportRequest(
             radar_id=radar_id,
-            project=project_label,
+            product=product,
+            project=project,
             build=build,
             title=title,
+            state=state,
+            substate=substate,
             fail_items=fail_items,
             true_fail_notes=true_fail_notes,
             root_cause=root_cause,
             steps=steps,
+            conclusion=conclusion,
         )
     )
     url = public_url(
@@ -379,6 +645,9 @@ def _build_checkin_result(
     problem: RadarProblem,
     scope: ScopeResolution,
     fails: FailItemsResult,
+    *,
+    background=None,
+    related: _RelatedEvidence | None = None,
 ) -> FaCheckinResult:
     """Attach download URLs and markdown to a fail-items payload."""
     log_urls = tuple(
@@ -387,7 +656,13 @@ def _build_checkin_result(
     )
     awaiting = bool(fails.needs_user_input)
     summary = _format_checkin_markdown(
-        config, problem, scope, fails, log_urls
+        config,
+        problem,
+        scope,
+        fails,
+        log_urls,
+        background=background,
+        related=related or _RelatedEvidence(),
     )
     logger.info(
         "FA check-in radar=%s product=%s project=%s build=%s fails=%d awaiting=%s source=%s",
@@ -410,14 +685,74 @@ def _build_checkin_result(
     )
 
 
+def _append_background_section(lines: list[str], background) -> None:
+    """Append a short LLM face read-through (Background / true fail / notes)."""
+    if background is None or background.is_empty():
+        return
+    lines.extend(["", "### Background（票面通读）"])
+    if background.background:
+        lines.append(background.background)
+    if background.true_fail_hint:
+        lines.append(f"\n**最突出的 fail：** {background.true_fail_hint}")
+    if background.fa_notes:
+        lines.append("\n**FA notes：**")
+        for note in background.fa_notes:
+            lines.append(f"- {note}")
+
+
+def _append_related_evidence_section(
+    config: AppConfig,
+    lines: list[str],
+    problem: RadarProblem,
+    related: _RelatedEvidence,
+    background,
+) -> None:
+    """Append the LLM-selected strong-related evidence files + unresolved."""
+    unresolved = tuple(background.unresolved) if background is not None else ()
+    if not related.files and not unresolved:
+        return
+    lines.extend(["", "### 强关联证据（LLM 依票面/FA 批注选取）", ""])
+    if not related.files:
+        lines.append("_票面未指向任何已上传的附件。_")
+    for rf in related.files:
+        kind_tag = "图片" if rf.kind == "picture" else "附件"
+        if rf.status == "cached" and rf.url:
+            lines.append(f"- [`{rf.name}`]({rf.url}) — {kind_tag} · 已下载并读取")
+        elif rf.status == "image" and rf.url:
+            lines.append(f"- [`{rf.name}`]({rf.url}) — {kind_tag} · 已下载（未作日志解析）")
+        elif rf.status == "over_count":
+            lines.append(
+                f"- `{rf.name}` — {kind_tag} · 超出开案下载数量上限，"
+                "说「下载 <文件名>」再取"
+            )
+        elif rf.status == "over_size":
+            lines.append(
+                f"- `{rf.name}` — {kind_tag} · 文件较大，未在开案时下载，"
+                "说「下载 <文件名>」再取"
+            )
+        elif rf.status == "failed":
+            lines.append(f"- `{rf.name}` — {kind_tag} · 下载失败：{rf.note}")
+        else:
+            lines.append(f"- `{rf.name}` — {kind_tag}")
+    if unresolved:
+        lines.append("")
+        lines.append("**票面点名但未在附件里的文件（缺证据）：**")
+        for name in unresolved:
+            lines.append(f"- `{name}`")
+
+
 def _format_checkin_markdown(
     config: AppConfig,
     problem: RadarProblem,
     scope: ScopeResolution,
     fails: FailItemsResult,
     log_urls: tuple[str, ...],
+    *,
+    background=None,
+    related: _RelatedEvidence | None = None,
 ) -> str:
     """Build the assistant markdown for Open WebUI."""
+    related = related or _RelatedEvidence()
     lines = [
         f"## FA check-in — rdar://{problem.radar_id}",
         "",
@@ -441,31 +776,37 @@ def _format_checkin_markdown(
     )
     lines.append(f"**Evidence source:** `{fails.source}`")
 
+    _append_background_section(lines, background)
+    _append_related_evidence_section(config, lines, problem, related, background)
+
     att_names = [a.file_name for a in problem.attachments if a.file_name]
     if att_names:
         lines.append(
             "**Radar attachments:** " + ", ".join(f"`{n}`" for n in att_names)
         )
         from ee_wiki.integrations.radar.attachments import (
-            materialize_all_attachment_links,
+            summarize_attachment_inventory,
         )
 
-        links, failed = materialize_all_attachment_links(config, problem)
-        if links:
-            lines.extend(["", "### Radar attachment downloads", ""])
-            for name, url in links:
-                lines.append(f"- [`{name}`]({url})")
-            if failed:
-                names = ", ".join(f"`{n}`" for n in failed)
-                lines.append(
-                    f"\n> 以下附件下载链接未能生成（Radar 权限 / 网络问题）：{names}。"
-                    "可在 Radar 网页端查看，或把相关片段贴到对话里。"
-                )
-            if config.fa.radar.backend == "stub":
-                lines.append(
-                    "\n_Stub：链接可下载占位内容；真附件需 "
-                    "`fa.radar.backend: radarclient`。_"
-                )
+        # Problem 1 fix: do NOT eagerly download every attachment at check-in
+        # (that serial download stalled the UI on "检索中" for ~56s). Only list
+        # what is available + what is already cached; pull bytes on demand when
+        # the user asks to download / analyze a log or view a picture.
+        inventory, att_total, att_cached = summarize_attachment_inventory(
+            config, problem
+        )
+        lines.extend(["", "### Radar attachments（按需下载）", ""])
+        for entry in inventory:
+            kind_tag = "图片" if entry["kind"] == "picture" else "附件"
+            cached_tag = "已缓存" if entry["cached"] else "待下载"
+            lines.append(
+                f"- `{entry['name']}` — {entry['type']} · {kind_tag} · {cached_tag}"
+            )
+        lines.append(
+            f"\n> 已缓存 {att_cached} / {att_total} 个附件"
+            "（其余在你说「下载 / 分析 log」或需要查看图片时按需拉取；"
+            "开案不再整批下载）。"
+        )
 
     user_diag = user_diagnosis_entries(problem)
     if user_diag:
@@ -495,11 +836,15 @@ def _format_checkin_markdown(
         else:
             for item in fails.fail_items:
                 station = item.station or "?"
-                lines.append(f"- [{station}] {item.message}")
+                src = f" _(src: {item.source})_" if item.source else ""
+                lines.append(f"- [{station}] {item.message}{src}")
 
         lines.extend(["", "### Evidence files"])
         if not log_urls:
-            lines.append("_No Flames/Radar corpus files cached for download._")
+            lines.append(
+                "_暂无已缓存的证据文件可下载"
+                "（票面 corpus / 强关联附件会在开案或按需下载后出现在这里）。_"
+            )
         else:
             for rel, url in zip(fails.cached_logs, log_urls, strict=True):
                 lines.append(f"- [{Path(rel).name}]({url})")

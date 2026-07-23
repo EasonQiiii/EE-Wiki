@@ -120,6 +120,8 @@ Stub 金样：`rdar://101493937`（Scarif / radar.log）。
 | 「帮我FA一下 U8600…」→ FaMode | 落入 WikiMode / hw+RAG |
 | FaAgent 选技 | Supervisor → `radar` recipe / classify 补丁 |
 | `radar_id=null` session | 无 |
+| 有票 FA 会话「额外的建议动作？」→ ToolBus 追网/搜 case | 旧：只读 recap，答“没有”，不追网（bug）；新：bound 走 `select_fa_skills` → 命中 `INVESTIGATION_TOOLS` 即跑 ToolBus，`bound_suggestion_summary.md` 落地（Radar 已有 / 非 Radar 原文 分栏）。见 `fa_agent.py` bound 分支（Act→Exec→Ground→Say） |
+| 「整理成 FA one page keynote / 导出报告」→ 生成 .key 下载 | 旧：未接入 / LLM 自由 markdown；新：`_ABOUT_FA_KEYNOTE` → `generate_fa_summary`：Summary 表（radar/项目/state）+ diagnosis 步骤 + Conclusion（最新状态），macOS 上 AppleScript 生成真 `.key`，并写 `FA_summary.md` 预览 |
 
 ## 验收金句（Lab）
 

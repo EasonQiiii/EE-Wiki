@@ -84,8 +84,15 @@ def build_fa_report_backend(config: AppConfig) -> FaReportBackend:
         candidate = Path(template)
         if not candidate.is_absolute():
             candidate = (config.repo_root / candidate).resolve()
-        template_path = candidate
+        if candidate.is_file():
+            template_path = candidate
+    timeout = int(
+        getattr(config.iwork, "keynote_export_timeout_seconds", 600) or 180
+    )
+    # Cap FA fill slightly below full ingest export timeout.
+    fa_timeout = min(max(timeout, 60), 300)
     return StubKeynoteFaReportBackend(
         exports_dir=config.exports_dir,
         template_path=template_path,
+        keynote_timeout_seconds=fa_timeout,
     )

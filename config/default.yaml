@@ -214,6 +214,12 @@ fa:
     timeout_seconds: 60
   report:
     template_path: assets/templates/fa/one_page.key
+  checkin:
+    # On-demand download of LLM-selected strong-related attachments only
+    # (never the whole attachment list). Over-cap files are listed by name.
+    max_related_files: 5
+    max_related_file_bytes: 2000000
+    max_related_total_bytes: 8000000
 
 api:
   host: 0.0.0.0

@@ -215,9 +215,10 @@ def warn_lab_readiness(config: AppConfig) -> None:
     if config.fa.enabled:
         template = config.repo_root / "assets" / "templates" / "fa" / "one_page.key"
         if not template.is_file():
-            logger.warning(
-                "Lab readiness: FA Keynote template missing (%s) — "
-                "FA report export will stub/copy-fail until you place the "
-                "company one-pager (see assets/templates/fa/README.md).",
+            logger.info(
+                "FA Keynote: no company template at %s — export creates a "
+                "one-slide Keynote from Radar fields (Summary / FA Steps / "
+                "Conclusion), or a text one-pager if Keynote.app is unavailable. "
+                "Optional placeholders: assets/templates/fa/README.md.",
                 template,
             )

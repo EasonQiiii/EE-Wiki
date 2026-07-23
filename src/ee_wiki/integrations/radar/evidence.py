@@ -100,6 +100,52 @@ def format_radar_diagnosis_steps(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def diagnosis_steps_text(
+    problem: RadarProblem,
+    *,
+    preview_chars: int = 1200,
+) -> str:
+    """Return raw numbered diagnosis text (no markdown header / History).
+
+    Used to feed the LLM summarizer. Each line is ``N. [who] body``. Empty
+    string when there are no human diagnosis entries.
+    """
+    entries = user_diagnosis_entries(problem)
+    if not entries:
+        return ""
+    lines: list[str] = []
+    for i, item in enumerate(entries, start=1):
+        who = (item.added_by or "—").strip()
+        body = item.text.strip()
+        if len(body) > preview_chars:
+            body = body[: preview_chars - 1].rstrip() + "…"
+        lines.append(f"{i}. [{who}] {body}")
+    return "\n".join(lines)
+
+
+def format_latest_diagnosis_action(problem: RadarProblem) -> str:
+    """Return only the most recent human diagnosis entry (source of truth).
+
+    Used when the user asks for the latest / most recent FA step. Reuses
+    ``user_diagnosis_entries`` so ordering and history filtering stay in one
+    place.
+    """
+    rid = problem.radar_id
+    entries = user_diagnosis_entries(problem)
+    if not entries:
+        return (
+            f"## FA check-in — rdar://{rid}\n\n"
+            "_No user diagnosis notes on this Radar yet._"
+        )
+    item = entries[-1]
+    who = (item.added_by or "—").strip()
+    body = item.text.strip()
+    return (
+        f"## FA check-in — rdar://{rid}\n\n"
+        f"**最新一条 diagnosis（{who}）：**\n\n{body}"
+    )
+
+
 def compose_radar_evidence_corpus(problem: RadarProblem) -> str:
     """Build a single text corpus from title, description, and user diagnosis.
 
